@@ -40,14 +40,6 @@ db-upgrade:
 db-status:
     atlas migrate status --env local --url "sqlite://{{ db }}"
 
-# Check migrations/ against atlas.sum.
-db-validate:
-    atlas migrate validate --env local
-
-# Recompute atlas.sum after editing migrations/ by hand.
-db-hash:
-    atlas migrate hash --env local
-
 # Tests build their schema with Schema.Create rather than by replaying
 # migrations/, so a forgotten db-migrate breaks nothing until someone opens a
 # real database. This is what catches it.
