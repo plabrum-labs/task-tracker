@@ -58,6 +58,6 @@ func Convert(e *ent.Comment) contract.Comment {
 		UpdatedAt: e.UpdatedAt,
 		Author:    e.Author,
 		Body:      e.Body,
-		Actions:   Actions(e),
+		Actions:   commentActions.Available(e),
 	}
 }

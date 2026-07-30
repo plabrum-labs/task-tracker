@@ -172,7 +172,7 @@ func convert(e *ent.Issue) (contract.Issue, error) {
 		Blocks:    []contract.Issue{},
 		Comments:  []contract.Comment{},
 		Blocked:   blocked(e),
-		Actions:   Actions(e),
+		Actions:   issueActions.Available(e),
 	}
 	if e.ClosedAt != nil {
 		// Copied, not aliased: the ent row is discarded here and nothing above

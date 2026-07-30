@@ -15,15 +15,11 @@ import (
 type action[P any] = actions.Action[contract.CommentKey, *ent.Comment, P, contract.Comment]
 
 // commentActions is every action a comment has. It is the only place a rule is
-// checked: Actions reads it and every write goes through it.
+// checked: a converted row asks it what to carry, and every write goes
+// through it.
 var commentActions = actions.NewGroup[contract.CommentKey, *ent.Comment, contract.Comment](
 	func(e *ent.Comment) string { return fmt.Sprintf("comment %d", e.ID) },
 )
-
-// Actions is what one comment offers: a loaded row in, its actions out.
-func Actions(e *ent.Comment) []contract.Action[contract.CommentKey] {
-	return commentActions.Available(e)
-}
 
 // Neither action declares a rule, and there is no machine: a comment has no
 // status and no relations, so there is nothing about one that can withhold an
@@ -35,14 +31,6 @@ var Edit = actions.Register(commentActions, action[string]{
 	Label:    "edit",
 	Priority: 10,
 	Execute:  edit,
-})
-
-// Delete removes a comment.
-var Delete = actions.Register(commentActions, action[actions.None]{
-	Key:      contract.KeyCommentDelete,
-	Label:    "delete",
-	Priority: 20,
-	Execute:  deleteComment,
 })
 
 // edit replaces a comment's body.
@@ -60,6 +48,14 @@ func edit(ctx context.Context, _ *ent.Client, e *ent.Comment, body string) (cont
 	}
 	return Convert(updated), nil
 }
+
+// Delete removes a comment.
+var Delete = actions.Register(commentActions, action[actions.None]{
+	Key:      contract.KeyCommentDelete,
+	Label:    "delete",
+	Priority: 20,
+	Execute:  deleteComment,
+})
 
 // deleteComment drops a comment. The zero comment comes back because there is
 // none left, and every action in a group returns the same type.

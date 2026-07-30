@@ -1,4 +1,4 @@
-package issues_test
+package issues
 
 import (
 	"slices"
@@ -7,7 +7,6 @@ import (
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entissue "github.com/Plabrum/tt/backend/internal/ent/issue"
-	"github.com/Plabrum/tt/backend/internal/issues"
 )
 
 // Actions needs no database: a table of literal ent rows is the whole test.
@@ -55,7 +54,7 @@ func TestActionsByStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			offered := issues.Actions(&ent.Issue{ID: 1, Status: tt.status})
+			offered := issueActions.Available(&ent.Issue{ID: 1, Status: tt.status})
 			for _, key := range tt.present {
 				action, ok := find(offered, key)
 				if !ok {
@@ -116,7 +115,7 @@ func TestActionsRefusals(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			action, ok := find(issues.Actions(tt.issue), tt.key)
+			action, ok := find(issueActions.Available(tt.issue), tt.key)
 			if !ok {
 				t.Fatalf("the issue does not offer %q at all", tt.key)
 			}
@@ -172,7 +171,7 @@ func TestActionsWithheldWhenThereIsNothingToActOn(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if _, ok := find(issues.Actions(tt.issue), tt.key); ok != tt.want {
+			if _, ok := find(issueActions.Available(tt.issue), tt.key); ok != tt.want {
 				t.Errorf("offers %q = %v, want %v", tt.key, ok, tt.want)
 			}
 		})
@@ -196,7 +195,7 @@ func TestActionsAlwaysOffered(t *testing.T) {
 	statuses := []entissue.Status{entissue.StatusTodo, entissue.StatusDoing, entissue.StatusDone}
 
 	for _, status := range statuses {
-		offered := issues.Actions(&ent.Issue{ID: 1, Status: status})
+		offered := issueActions.Available(&ent.Issue{ID: 1, Status: status})
 		for _, key := range always {
 			action, ok := find(offered, key)
 			if !ok {
@@ -237,7 +236,7 @@ func TestEveryKeyIsReachable(t *testing.T) {
 
 	seen := map[contract.IssueKey]bool{}
 	for _, row := range rows {
-		for _, a := range issues.Actions(row) {
+		for _, a := range issueActions.Available(row) {
 			seen[a.Key] = true
 		}
 	}
@@ -270,7 +269,7 @@ func TestActionsComeBackInPriorityOrder(t *testing.T) {
 	}
 
 	// A todo issue carrying a label and a blocker offers everything but reopen.
-	offered := issues.Actions(&ent.Issue{ID: 1, Status: entissue.StatusTodo, Edges: ent.IssueEdges{
+	offered := issueActions.Available(&ent.Issue{ID: 1, Status: entissue.StatusTodo, Edges: ent.IssueEdges{
 		Labels:    []*ent.Label{{Name: "bug"}},
 		BlockedBy: []*ent.Issue{{ID: 2, Status: entissue.StatusDone}},
 	}})

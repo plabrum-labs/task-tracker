@@ -103,7 +103,7 @@ func Convert(e *ent.Project) (contract.Project, error) {
 		Status:      status,
 		CreatedAt:   e.CreatedAt,
 		UpdatedAt:   e.UpdatedAt,
-		Actions:     Actions(e),
+		Actions:     projectActions.Available(e),
 	}, nil
 }
 

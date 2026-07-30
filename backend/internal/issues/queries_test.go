@@ -1,6 +1,7 @@
 package issues_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Plabrum/tt/backend/contract"
@@ -52,6 +53,15 @@ func list(t *testing.T, cl *ent.Client, p contract.IssueListParams) []contract.I
 }
 
 // The default hides done work.
+// find returns the action for key, and whether it is offered at all.
+func find(offered []contract.Action[contract.IssueKey], key contract.IssueKey) (contract.Action[contract.IssueKey], bool) {
+	i := slices.IndexFunc(offered, func(a contract.Action[contract.IssueKey]) bool { return a.Key == key })
+	if i < 0 {
+		return contract.Action[contract.IssueKey]{}, false
+	}
+	return offered[i], true
+}
+
 func TestListDefaultsToOpenWork(t *testing.T) {
 	t.Parallel()
 	cl := dbtest.Client(t)
