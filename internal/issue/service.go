@@ -63,7 +63,7 @@ func (s *Service) AddIn(ctx context.Context, cl *ent.Client, p AddParams) (Issue
 	if p.Milestone != "" {
 		return Issue{}, errors.New("milestones are not wired yet")
 	}
-	if p.SubOf != 0 {
+	if p.SubOf != nil {
 		return Issue{}, errors.New("--sub-of is not wired yet")
 	}
 

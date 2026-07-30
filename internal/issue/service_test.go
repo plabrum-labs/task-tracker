@@ -22,6 +22,8 @@ func newService(t *testing.T) (*ent.Client, *issue.Service) {
 	return client, issue.NewService(client, project.NewService(client))
 }
 
+func ptr[T any](v T) *T { return &v }
+
 func TestAddCreatesProject(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -134,7 +136,7 @@ func TestAddRejects(t *testing.T) {
 		{"bad priority", func(p *issue.AddParams) { p.Priority = "urgent" }, "unknown priority"},
 		{"labels", func(p *issue.AddParams) { p.Labels = []string{"backend"} }, "not wired yet"},
 		{"milestone", func(p *issue.AddParams) { p.Milestone = "v1" }, "not wired yet"},
-		{"sub-of", func(p *issue.AddParams) { p.SubOf = 12 }, "not wired yet"},
+		{"sub-of", func(p *issue.AddParams) { p.SubOf = ptr(12) }, "not wired yet"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

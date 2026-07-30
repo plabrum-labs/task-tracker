@@ -109,7 +109,7 @@ type AddParams struct {
 	Priority  Priority // -! ; the zero value normalises to PriorityNormal
 	Labels    []string // -l, repeatable
 	Milestone string   // -M
-	SubOf     int      // --sub-of; 0 = none
+	SubOf     *int     // --sub-of; nil = none
 }
 
 // ErrNotFound is returned for an id that does not exist.
