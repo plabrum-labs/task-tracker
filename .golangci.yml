@@ -1,0 +1,66 @@
+version: "2"
+
+run:
+  go: "1.26"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  enable:
+    - copyloopvar
+    - errorlint
+    - exhaustive
+    - intrange
+    - makezero
+    - nakedret
+    - nolintlint
+    - prealloc
+    - revive
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - wastedassign
+  settings:
+    copyloopvar:
+      check-alias: true
+    exhaustive:
+      default-signifies-exhaustive: true
+      # reflect.Kind has 27 members and the type-walkers in the tests handle
+      # only the composite ones on purpose; enumerating the scalars would say
+      # nothing. The domain enums are what this linter is here for.
+      ignore-enum-types: ^reflect\.Kind$
+    nakedret:
+      max-func-lines: 0
+    staticcheck:
+      checks:
+        - all
+    revive:
+      severity: warning
+      rules:
+        - name: atomic
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: time-naming
+        - name: indent-error-flow
+        - name: errorf
+        - name: superfluous-else
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+
+formatters:
+  enable:
+    - goimports
+  exclusions:
+    generated: lax
