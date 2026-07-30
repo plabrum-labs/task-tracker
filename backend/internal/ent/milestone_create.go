@@ -119,7 +119,9 @@ func (_c *MilestoneCreate) Mutation() *MilestoneMutation {
 
 // Save creates the Milestone in the database.
 func (_c *MilestoneCreate) Save(ctx context.Context) (*Milestone, error) {
-	_c.defaults()
+	if err := _c.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -146,12 +148,18 @@ func (_c *MilestoneCreate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_c *MilestoneCreate) defaults() {
+func (_c *MilestoneCreate) defaults() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
+		if milestone.DefaultCreatedAt == nil {
+			return fmt.Errorf("ent: uninitialized milestone.DefaultCreatedAt (forgotten import ent/runtime?)")
+		}
 		v := milestone.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
+		if milestone.DefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized milestone.DefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := milestone.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
@@ -159,6 +167,7 @@ func (_c *MilestoneCreate) defaults() {
 		v := milestone.DefaultDescription
 		_c.mutation.SetDescription(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.

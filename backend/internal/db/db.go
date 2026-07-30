@@ -15,6 +15,17 @@ import (
 
 	"github.com/Plabrum/tt/backend/internal/ent"
 
+	// Registers the schema descriptors — field defaults, validators and the
+	// TimeMixin create hook — onto the generated packages.
+	//
+	// Load-bearing, and easy to mistake for cruft. Ent normally emits that init
+	// into ent/runtime.go, in package ent, where it runs for anyone holding a
+	// client. A hook on a schema mixin moves it out to this separate package
+	// instead, and an unimported init is one that never runs: every Create then
+	// fails with "uninitialized project.DefaultCreatedAt". It sits here because
+	// Open is the only way to get a client, so importing db is importing this.
+	_ "github.com/Plabrum/tt/backend/internal/ent/runtime"
+
 	_ "modernc.org/sqlite"
 )
 

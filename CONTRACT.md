@@ -236,6 +236,9 @@ Archiving is what takes a project's work out of the way, so it does three things
 `ListProjects` hides it, `ListIssues` drops its issues unless `Project` names it, and
 capture into it is refused until it is restored.
 
+There is no `paused`. A project is either somewhere work can land or it is out of the
+way, and archiving already says the second.
+
 ### comments.go
 
 ```go
@@ -265,11 +268,19 @@ No list or show method. A list of comments is only ever the comments on one issu
 There is no `EditedAt`. Every entity carries `created_at`/`updated_at`, and an edited
 comment is one whose two stamps have come apart.
 
-> **Landmine.** `TimeMixin` defaults each stamp to `time.Now` separately, so a row written
-> that way lands with `updated_at` a few microseconds after `created_at` — and `Edited()`
-> would report every fresh comment as edited. `comments.AddIn` therefore sets both from one
-> clock read. Deleting those two `Set…` calls does not fail a build or a query; it makes
-> `Edited()` return true for everything.
+`TimeMixin` defaults each stamp to `time.Now` separately, so a create would otherwise
+leave `updated_at` a fraction after `created_at` — 125–167ns in practice, occasionally
+zero — and `Edited()` would be answering a race. A create hook on the mixin copies
+`created_at` across, so the invariant holds for every entity rather than for whichever
+domain remembered to set both.
+
+> **Landmine.** `backend/internal/db` blank-imports `backend/internal/ent/runtime`, and it
+> looks exactly like a stray import. Ent normally emits its schema-stitching `init` into
+> `ent/runtime.go` in package `ent`, which compiles for anyone holding a client. Adding a
+> hook to a schema mixin moves that `init` out into the separate `ent/runtime` package,
+> and an unimported `init` never runs: every `Create` in the repository then fails with
+> `uninitialized project.DefaultCreatedAt`. It lives in `db` because `Open` is the only
+> way to get a client, so importing `db` is importing it.
 
 ### taxonomy.go
 

@@ -171,7 +171,9 @@ func (_u *ProjectUpdate) RemoveMilestones(v ...*Milestone) *ProjectUpdate {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *ProjectUpdate) Save(ctx context.Context) (int, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return 0, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -198,11 +200,15 @@ func (_u *ProjectUpdate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *ProjectUpdate) defaults() {
+func (_u *ProjectUpdate) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if project.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized project.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := project.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -511,7 +517,9 @@ func (_u *ProjectUpdateOne) Select(field string, fields ...string) *ProjectUpdat
 
 // Save executes the query and returns the updated Project entity.
 func (_u *ProjectUpdateOne) Save(ctx context.Context) (*Project, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -538,11 +546,15 @@ func (_u *ProjectUpdateOne) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *ProjectUpdateOne) defaults() {
+func (_u *ProjectUpdateOne) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if project.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized project.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := project.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.

@@ -2,7 +2,169 @@
 
 package runtime
 
-// The schema-stitching logic is generated in github.com/Plabrum/tt/backend/internal/ent/runtime.go
+import (
+	"time"
+
+	"github.com/Plabrum/tt/backend/internal/ent/comment"
+	"github.com/Plabrum/tt/backend/internal/ent/issue"
+	"github.com/Plabrum/tt/backend/internal/ent/label"
+	"github.com/Plabrum/tt/backend/internal/ent/milestone"
+	"github.com/Plabrum/tt/backend/internal/ent/project"
+	"github.com/Plabrum/tt/backend/internal/ent/ref"
+	"github.com/Plabrum/tt/backend/internal/ent/schema"
+)
+
+// The init function reads all schema descriptors with runtime code
+// (default values, validators, hooks and policies) and stitches it
+// to their package variables.
+func init() {
+	commentMixin := schema.Comment{}.Mixin()
+	commentMixinHooks0 := commentMixin[0].Hooks()
+	comment.Hooks[0] = commentMixinHooks0[0]
+	commentMixinFields0 := commentMixin[0].Fields()
+	_ = commentMixinFields0
+	commentFields := schema.Comment{}.Fields()
+	_ = commentFields
+	// commentDescCreatedAt is the schema descriptor for created_at field.
+	commentDescCreatedAt := commentMixinFields0[0].Descriptor()
+	// comment.DefaultCreatedAt holds the default value on creation for the created_at field.
+	comment.DefaultCreatedAt = commentDescCreatedAt.Default.(func() time.Time)
+	// commentDescUpdatedAt is the schema descriptor for updated_at field.
+	commentDescUpdatedAt := commentMixinFields0[1].Descriptor()
+	// comment.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	comment.DefaultUpdatedAt = commentDescUpdatedAt.Default.(func() time.Time)
+	// comment.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	comment.UpdateDefaultUpdatedAt = commentDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// commentDescAuthor is the schema descriptor for author field.
+	commentDescAuthor := commentFields[0].Descriptor()
+	// comment.AuthorValidator is a validator for the "author" field. It is called by the builders before save.
+	comment.AuthorValidator = commentDescAuthor.Validators[0].(func(string) error)
+	// commentDescBody is the schema descriptor for body field.
+	commentDescBody := commentFields[1].Descriptor()
+	// comment.DefaultBody holds the default value on creation for the body field.
+	comment.DefaultBody = commentDescBody.Default.(string)
+	issueMixin := schema.Issue{}.Mixin()
+	issueMixinHooks0 := issueMixin[0].Hooks()
+	issue.Hooks[0] = issueMixinHooks0[0]
+	issueMixinFields0 := issueMixin[0].Fields()
+	_ = issueMixinFields0
+	issueFields := schema.Issue{}.Fields()
+	_ = issueFields
+	// issueDescCreatedAt is the schema descriptor for created_at field.
+	issueDescCreatedAt := issueMixinFields0[0].Descriptor()
+	// issue.DefaultCreatedAt holds the default value on creation for the created_at field.
+	issue.DefaultCreatedAt = issueDescCreatedAt.Default.(func() time.Time)
+	// issueDescUpdatedAt is the schema descriptor for updated_at field.
+	issueDescUpdatedAt := issueMixinFields0[1].Descriptor()
+	// issue.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	issue.DefaultUpdatedAt = issueDescUpdatedAt.Default.(func() time.Time)
+	// issue.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	issue.UpdateDefaultUpdatedAt = issueDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// issueDescTitle is the schema descriptor for title field.
+	issueDescTitle := issueFields[0].Descriptor()
+	// issue.TitleValidator is a validator for the "title" field. It is called by the builders before save.
+	issue.TitleValidator = issueDescTitle.Validators[0].(func(string) error)
+	// issueDescBody is the schema descriptor for body field.
+	issueDescBody := issueFields[1].Descriptor()
+	// issue.DefaultBody holds the default value on creation for the body field.
+	issue.DefaultBody = issueDescBody.Default.(string)
+	labelMixin := schema.Label{}.Mixin()
+	labelMixinHooks0 := labelMixin[0].Hooks()
+	label.Hooks[0] = labelMixinHooks0[0]
+	labelMixinFields0 := labelMixin[0].Fields()
+	_ = labelMixinFields0
+	labelFields := schema.Label{}.Fields()
+	_ = labelFields
+	// labelDescCreatedAt is the schema descriptor for created_at field.
+	labelDescCreatedAt := labelMixinFields0[0].Descriptor()
+	// label.DefaultCreatedAt holds the default value on creation for the created_at field.
+	label.DefaultCreatedAt = labelDescCreatedAt.Default.(func() time.Time)
+	// labelDescUpdatedAt is the schema descriptor for updated_at field.
+	labelDescUpdatedAt := labelMixinFields0[1].Descriptor()
+	// label.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	label.DefaultUpdatedAt = labelDescUpdatedAt.Default.(func() time.Time)
+	// label.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	label.UpdateDefaultUpdatedAt = labelDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// labelDescName is the schema descriptor for name field.
+	labelDescName := labelFields[0].Descriptor()
+	// label.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	label.NameValidator = labelDescName.Validators[0].(func(string) error)
+	// labelDescDescription is the schema descriptor for description field.
+	labelDescDescription := labelFields[1].Descriptor()
+	// label.DefaultDescription holds the default value on creation for the description field.
+	label.DefaultDescription = labelDescDescription.Default.(string)
+	milestoneMixin := schema.Milestone{}.Mixin()
+	milestoneMixinHooks0 := milestoneMixin[0].Hooks()
+	milestone.Hooks[0] = milestoneMixinHooks0[0]
+	milestoneMixinFields0 := milestoneMixin[0].Fields()
+	_ = milestoneMixinFields0
+	milestoneFields := schema.Milestone{}.Fields()
+	_ = milestoneFields
+	// milestoneDescCreatedAt is the schema descriptor for created_at field.
+	milestoneDescCreatedAt := milestoneMixinFields0[0].Descriptor()
+	// milestone.DefaultCreatedAt holds the default value on creation for the created_at field.
+	milestone.DefaultCreatedAt = milestoneDescCreatedAt.Default.(func() time.Time)
+	// milestoneDescUpdatedAt is the schema descriptor for updated_at field.
+	milestoneDescUpdatedAt := milestoneMixinFields0[1].Descriptor()
+	// milestone.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	milestone.DefaultUpdatedAt = milestoneDescUpdatedAt.Default.(func() time.Time)
+	// milestone.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	milestone.UpdateDefaultUpdatedAt = milestoneDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// milestoneDescName is the schema descriptor for name field.
+	milestoneDescName := milestoneFields[0].Descriptor()
+	// milestone.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	milestone.NameValidator = milestoneDescName.Validators[0].(func(string) error)
+	// milestoneDescDescription is the schema descriptor for description field.
+	milestoneDescDescription := milestoneFields[2].Descriptor()
+	// milestone.DefaultDescription holds the default value on creation for the description field.
+	milestone.DefaultDescription = milestoneDescDescription.Default.(string)
+	projectMixin := schema.Project{}.Mixin()
+	projectMixinHooks0 := projectMixin[0].Hooks()
+	project.Hooks[0] = projectMixinHooks0[0]
+	projectMixinFields0 := projectMixin[0].Fields()
+	_ = projectMixinFields0
+	projectFields := schema.Project{}.Fields()
+	_ = projectFields
+	// projectDescCreatedAt is the schema descriptor for created_at field.
+	projectDescCreatedAt := projectMixinFields0[0].Descriptor()
+	// project.DefaultCreatedAt holds the default value on creation for the created_at field.
+	project.DefaultCreatedAt = projectDescCreatedAt.Default.(func() time.Time)
+	// projectDescUpdatedAt is the schema descriptor for updated_at field.
+	projectDescUpdatedAt := projectMixinFields0[1].Descriptor()
+	// project.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	project.DefaultUpdatedAt = projectDescUpdatedAt.Default.(func() time.Time)
+	// project.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	project.UpdateDefaultUpdatedAt = projectDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// projectDescSlug is the schema descriptor for slug field.
+	projectDescSlug := projectFields[0].Descriptor()
+	// project.SlugValidator is a validator for the "slug" field. It is called by the builders before save.
+	project.SlugValidator = projectDescSlug.Validators[0].(func(string) error)
+	// projectDescTitle is the schema descriptor for title field.
+	projectDescTitle := projectFields[1].Descriptor()
+	// project.DefaultTitle holds the default value on creation for the title field.
+	project.DefaultTitle = projectDescTitle.Default.(string)
+	// projectDescDescription is the schema descriptor for description field.
+	projectDescDescription := projectFields[2].Descriptor()
+	// project.DefaultDescription holds the default value on creation for the description field.
+	project.DefaultDescription = projectDescDescription.Default.(string)
+	refMixin := schema.Ref{}.Mixin()
+	refMixinHooks0 := refMixin[0].Hooks()
+	ref.Hooks[0] = refMixinHooks0[0]
+	refMixinFields0 := refMixin[0].Fields()
+	_ = refMixinFields0
+	refFields := schema.Ref{}.Fields()
+	_ = refFields
+	// refDescCreatedAt is the schema descriptor for created_at field.
+	refDescCreatedAt := refMixinFields0[0].Descriptor()
+	// ref.DefaultCreatedAt holds the default value on creation for the created_at field.
+	ref.DefaultCreatedAt = refDescCreatedAt.Default.(func() time.Time)
+	// refDescUpdatedAt is the schema descriptor for updated_at field.
+	refDescUpdatedAt := refMixinFields0[1].Descriptor()
+	// ref.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	ref.DefaultUpdatedAt = refDescUpdatedAt.Default.(func() time.Time)
+	// ref.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	ref.UpdateDefaultUpdatedAt = refDescUpdatedAt.UpdateDefault.(func() time.Time)
+}
 
 const (
 	Version = "v0.14.6"                                         // Version of ent codegen.

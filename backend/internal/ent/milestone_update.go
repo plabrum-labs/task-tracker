@@ -144,7 +144,9 @@ func (_u *MilestoneUpdate) RemoveIssues(v ...*Issue) *MilestoneUpdate {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *MilestoneUpdate) Save(ctx context.Context) (int, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return 0, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -171,11 +173,15 @@ func (_u *MilestoneUpdate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *MilestoneUpdate) defaults() {
+func (_u *MilestoneUpdate) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if milestone.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized milestone.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := milestone.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -439,7 +445,9 @@ func (_u *MilestoneUpdateOne) Select(field string, fields ...string) *MilestoneU
 
 // Save executes the query and returns the updated Milestone entity.
 func (_u *MilestoneUpdateOne) Save(ctx context.Context) (*Milestone, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -466,11 +474,15 @@ func (_u *MilestoneUpdateOne) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *MilestoneUpdateOne) defaults() {
+func (_u *MilestoneUpdateOne) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if milestone.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized milestone.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := milestone.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.

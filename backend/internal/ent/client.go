@@ -371,7 +371,8 @@ func (c *CommentClient) QueryIssue(_m *Comment) *IssueQuery {
 
 // Hooks returns the client hooks.
 func (c *CommentClient) Hooks() []Hook {
-	return c.hooks.Comment
+	hooks := c.hooks.Comment
+	return append(hooks[:len(hooks):len(hooks)], comment.Hooks[:]...)
 }
 
 // Interceptors returns the client interceptors.
@@ -664,7 +665,8 @@ func (c *IssueClient) QueryBlockedRefs(_m *Issue) *RefQuery {
 
 // Hooks returns the client hooks.
 func (c *IssueClient) Hooks() []Hook {
-	return c.hooks.Issue
+	hooks := c.hooks.Issue
+	return append(hooks[:len(hooks):len(hooks)], issue.Hooks[:]...)
 }
 
 // Interceptors returns the client interceptors.
@@ -813,7 +815,8 @@ func (c *LabelClient) QueryIssues(_m *Label) *IssueQuery {
 
 // Hooks returns the client hooks.
 func (c *LabelClient) Hooks() []Hook {
-	return c.hooks.Label
+	hooks := c.hooks.Label
+	return append(hooks[:len(hooks):len(hooks)], label.Hooks[:]...)
 }
 
 // Interceptors returns the client interceptors.
@@ -978,7 +981,8 @@ func (c *MilestoneClient) QueryIssues(_m *Milestone) *IssueQuery {
 
 // Hooks returns the client hooks.
 func (c *MilestoneClient) Hooks() []Hook {
-	return c.hooks.Milestone
+	hooks := c.hooks.Milestone
+	return append(hooks[:len(hooks):len(hooks)], milestone.Hooks[:]...)
 }
 
 // Interceptors returns the client interceptors.
@@ -1143,7 +1147,8 @@ func (c *ProjectClient) QueryMilestones(_m *Project) *MilestoneQuery {
 
 // Hooks returns the client hooks.
 func (c *ProjectClient) Hooks() []Hook {
-	return c.hooks.Project
+	hooks := c.hooks.Project
+	return append(hooks[:len(hooks):len(hooks)], project.Hooks[:]...)
 }
 
 // Interceptors returns the client interceptors.
@@ -1308,7 +1313,8 @@ func (c *RefClient) QueryBlocker(_m *Ref) *IssueQuery {
 
 // Hooks returns the client hooks.
 func (c *RefClient) Hooks() []Hook {
-	return c.hooks.Ref
+	hooks := c.hooks.Ref
+	return append(hooks[:len(hooks):len(hooks)], ref.Hooks[:]...)
 }
 
 // Interceptors returns the client interceptors.

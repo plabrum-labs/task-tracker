@@ -447,7 +447,9 @@ func (_u *IssueUpdate) RemoveBlockedRefs(v ...*Ref) *IssueUpdate {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *IssueUpdate) Save(ctx context.Context) (int, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return 0, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -474,11 +476,15 @@ func (_u *IssueUpdate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *IssueUpdate) defaults() {
+func (_u *IssueUpdate) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if issue.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized issue.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := issue.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -771,7 +777,7 @@ func (_u *IssueUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			},
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -791,7 +797,7 @@ func (_u *IssueUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -811,7 +817,7 @@ func (_u *IssueUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
@@ -828,7 +834,7 @@ func (_u *IssueUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			},
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -848,7 +854,7 @@ func (_u *IssueUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -868,7 +874,7 @@ func (_u *IssueUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
@@ -1410,7 +1416,9 @@ func (_u *IssueUpdateOne) Select(field string, fields ...string) *IssueUpdateOne
 
 // Save executes the query and returns the updated Issue entity.
 func (_u *IssueUpdateOne) Save(ctx context.Context) (*Issue, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -1437,11 +1445,15 @@ func (_u *IssueUpdateOne) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *IssueUpdateOne) defaults() {
+func (_u *IssueUpdateOne) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if issue.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized issue.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := issue.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -1751,7 +1763,7 @@ func (_u *IssueUpdateOne) sqlSave(ctx context.Context) (_node *Issue, err error)
 			},
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -1771,7 +1783,7 @@ func (_u *IssueUpdateOne) sqlSave(ctx context.Context) (_node *Issue, err error)
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -1791,7 +1803,7 @@ func (_u *IssueUpdateOne) sqlSave(ctx context.Context) (_node *Issue, err error)
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
@@ -1808,7 +1820,7 @@ func (_u *IssueUpdateOne) sqlSave(ctx context.Context) (_node *Issue, err error)
 			},
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -1828,7 +1840,7 @@ func (_u *IssueUpdateOne) sqlSave(ctx context.Context) (_node *Issue, err error)
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
@@ -1848,7 +1860,7 @@ func (_u *IssueUpdateOne) sqlSave(ctx context.Context) (_node *Issue, err error)
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _u.config, mutation: newRefMutation(_u.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)

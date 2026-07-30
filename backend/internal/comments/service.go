@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
@@ -33,18 +32,10 @@ func AddIn(ctx context.Context, tx *ent.Client, issueID int, body string) (contr
 	if body == "" {
 		return contract.Comment{}, errs.Invalidf("comment body is required")
 	}
-	// Both stamps are set from one clock read rather than left to the schema.
-	// TimeMixin defaults each of them to time.Now separately, so a comment
-	// written that way lands with updated_at a few microseconds after
-	// created_at — and Edited(), which is exactly that comparison, would report
-	// every fresh comment as edited.
-	now := time.Now()
 	created, err := tx.Comment.Create().
 		SetIssueID(issueID).
 		SetAuthor(DefaultAuthor).
 		SetBody(body).
-		SetCreatedAt(now).
-		SetUpdatedAt(now).
 		Save(ctx)
 	if err != nil {
 		return contract.Comment{}, fmt.Errorf("commenting on issue %d: %w", issueID, err)

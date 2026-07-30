@@ -106,7 +106,9 @@ func (_u *LabelUpdate) RemoveIssues(v ...*Issue) *LabelUpdate {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *LabelUpdate) Save(ctx context.Context) (int, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return 0, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -133,11 +135,15 @@ func (_u *LabelUpdate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *LabelUpdate) defaults() {
+func (_u *LabelUpdate) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if label.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized label.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := label.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -326,7 +332,9 @@ func (_u *LabelUpdateOne) Select(field string, fields ...string) *LabelUpdateOne
 
 // Save executes the query and returns the updated Label entity.
 func (_u *LabelUpdateOne) Save(ctx context.Context) (*Label, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -353,11 +361,15 @@ func (_u *LabelUpdateOne) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *LabelUpdateOne) defaults() {
+func (_u *LabelUpdateOne) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if label.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized label.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := label.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.

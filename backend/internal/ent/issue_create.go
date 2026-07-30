@@ -278,7 +278,9 @@ func (_c *IssueCreate) Mutation() *IssueMutation {
 
 // Save creates the Issue in the database.
 func (_c *IssueCreate) Save(ctx context.Context) (*Issue, error) {
-	_c.defaults()
+	if err := _c.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -305,12 +307,18 @@ func (_c *IssueCreate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_c *IssueCreate) defaults() {
+func (_c *IssueCreate) defaults() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
+		if issue.DefaultCreatedAt == nil {
+			return fmt.Errorf("ent: uninitialized issue.DefaultCreatedAt (forgotten import ent/runtime?)")
+		}
 		v := issue.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
+		if issue.DefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized issue.DefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := issue.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
@@ -326,6 +334,7 @@ func (_c *IssueCreate) defaults() {
 		v := issue.DefaultPriority
 		_c.mutation.SetPriority(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -535,7 +544,7 @@ func (_c *IssueCreate) createSpec() (*Issue, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _c.config, mutation: newRefMutation(_c.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges = append(_spec.Edges, edge)
@@ -555,7 +564,7 @@ func (_c *IssueCreate) createSpec() (*Issue, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		createE := &RefCreate{config: _c.config, mutation: newRefMutation(_c.config, OpCreate)}
-		createE.defaults()
+		_ = createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
 		_spec.Edges = append(_spec.Edges, edge)

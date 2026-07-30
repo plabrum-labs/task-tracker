@@ -80,7 +80,9 @@ func (_c *RefCreate) Mutation() *RefMutation {
 
 // Save creates the Ref in the database.
 func (_c *RefCreate) Save(ctx context.Context) (*Ref, error) {
-	_c.defaults()
+	if err := _c.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -107,15 +109,22 @@ func (_c *RefCreate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_c *RefCreate) defaults() {
+func (_c *RefCreate) defaults() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
+		if ref.DefaultCreatedAt == nil {
+			return fmt.Errorf("ent: uninitialized ref.DefaultCreatedAt (forgotten import ent/runtime?)")
+		}
 		v := ref.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
+		if ref.DefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized ref.DefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := ref.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.

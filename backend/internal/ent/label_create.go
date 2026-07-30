@@ -93,7 +93,9 @@ func (_c *LabelCreate) Mutation() *LabelMutation {
 
 // Save creates the Label in the database.
 func (_c *LabelCreate) Save(ctx context.Context) (*Label, error) {
-	_c.defaults()
+	if err := _c.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -120,12 +122,18 @@ func (_c *LabelCreate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_c *LabelCreate) defaults() {
+func (_c *LabelCreate) defaults() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
+		if label.DefaultCreatedAt == nil {
+			return fmt.Errorf("ent: uninitialized label.DefaultCreatedAt (forgotten import ent/runtime?)")
+		}
 		v := label.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
+		if label.DefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized label.DefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := label.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
@@ -133,6 +141,7 @@ func (_c *LabelCreate) defaults() {
 		v := label.DefaultDescription
 		_c.mutation.SetDescription(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.

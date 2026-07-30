@@ -137,7 +137,9 @@ func (_c *ProjectCreate) Mutation() *ProjectMutation {
 
 // Save creates the Project in the database.
 func (_c *ProjectCreate) Save(ctx context.Context) (*Project, error) {
-	_c.defaults()
+	if err := _c.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -164,12 +166,18 @@ func (_c *ProjectCreate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_c *ProjectCreate) defaults() {
+func (_c *ProjectCreate) defaults() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
+		if project.DefaultCreatedAt == nil {
+			return fmt.Errorf("ent: uninitialized project.DefaultCreatedAt (forgotten import ent/runtime?)")
+		}
 		v := project.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
+		if project.DefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized project.DefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := project.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
@@ -185,6 +193,7 @@ func (_c *ProjectCreate) defaults() {
 		v := project.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
