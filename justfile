@@ -1,5 +1,6 @@
-# Path to the SQLite store the db-* recipes operate on.
-db := env("TT_DB", "tt.db")
+# Path to the SQLite store the db-* recipes operate on. Absolute, because the
+# db-* recipes run from backend/ and a relative TT_DB would resolve there.
+db := absolute_path(env("TT_DB", "tt.db"))
 
 default:
     @just --list
@@ -24,21 +25,26 @@ test:
 test-race:
     go test -race ./...
 
-# Regenerate ent. Run after editing ent/schema/, and commit the result.
+# Regenerate ent. Run after editing backend/internal/ent/schema/, and commit the result.
 generate:
-    go generate ./ent
+    go generate ./backend/internal/ent
+
+# The db-* recipes run from backend/, where atlas.hcl lives. Atlas's ent loader
+# writes a temp package into .entc/ in the working directory, and from the
+# repository root that package cannot import backend/internal/ent/schema.
+# migrations/ stays at the root; atlas.hcl reaches it as ../migrations.
 
 # Generate a new versioned migration from the current ent schema.
 db-migrate name:
-    atlas migrate diff --env local {{ name }}
+    cd backend && atlas migrate diff --env local {{ name }}
 
 # Apply every pending migration to the store.
 db-upgrade:
-    atlas migrate apply --env local --url "sqlite://{{ db }}"
+    cd backend && atlas migrate apply --env local --url "sqlite://{{ db }}"
 
 # Which migrations the store has applied, and what is pending.
 db-status:
-    atlas migrate status --env local --url "sqlite://{{ db }}"
+    cd backend && atlas migrate status --env local --url "sqlite://{{ db }}"
 
 # Tests build their schema with Schema.Create rather than by replaying
 # migrations/, so a forgotten db-migrate breaks nothing until someone opens a
@@ -48,17 +54,18 @@ db-status:
 # is a file it wrote — so the file is the signal. Writing one also rewrites
 # atlas.sum, hence the hash on the way out.
 
-# Fail if ent/schema has drifted from migrations/.
+# Fail if the ent schema has drifted from migrations/.
 db-check:
     #!/usr/bin/env bash
     set -euo pipefail
+    cd backend
     atlas migrate diff --env local drift_check
     shopt -s nullglob
-    drift=(migrations/*_drift_check.sql)
+    drift=(../migrations/*_drift_check.sql)
     if (( ${#drift[@]} )); then
         rm -f "${drift[@]}"
         atlas migrate hash --env local
-        echo "ent/schema has drifted from migrations/ — run 'just db-migrate <name>'" >&2
+        echo "the ent schema has drifted from migrations/ — run 'just db-migrate <name>'" >&2
         exit 1
     fi
 

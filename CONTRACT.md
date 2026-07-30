@@ -7,19 +7,20 @@
 ```
 backend/                   the backend
   contract.go              package backend — API, Open, every method a frontend calls
+  atlas.hcl                the `local` env: ent:// source, dev database, dir
   models/                  public: the contract types. Imports no ent.
-    action.go              Action[K], Rollup
-    issues.go              Issue, IssueStatus, Priority, IssueKey, params
-    projects.go            Project, ProjectStatus, ProjectKey, params
+    action.go              Action[K]
+    issues.go              Issue, IssueStatus, Priority, IssueKey, params, parsers
+    projects.go            Project, ProjectStatus, ProjectKey, params, parser
     comments.go            Comment, CommentKey
     taxonomy.go            Milestone, Label
   errs/                    public: the four sentinels
   internal/                private: cli/ and tui/ cannot import any of this
     issues/                queries.go  actions.go  service.go
-    projects/
-    comments/
+    projects/              queries.go  actions.go  service.go  resolve.go
+    comments/              queries.go  actions.go  service.go
     milestones/            queries.go  service.go — not an object, no actions.go
-    labels/
+    labels/                queries.go  service.go — not an object, no actions.go
     db/                    open, pragmas, WithTx
     dbtest/
     ent/                   schema/ + generated client
@@ -33,7 +34,7 @@ main.go
 Import direction:
 
 ```
-models          imports nothing
+models          imports nothing but errs
   ↑        ↑
 domains    contract.go
 ```
@@ -58,6 +59,12 @@ Ent lives at `backend/internal/ent` rather than the repository root: it is the b
 persistence detail, not a peer of the frontends. `migrations/` stays at the root — it is
 an ops artifact read by the Atlas CLI, not a Go dependency.
 
+`atlas.hcl` sits in `backend/`, and the `db-*` recipes `cd` there before running Atlas.
+They have to: Atlas's ent loader writes a temporary package into `.entc/` in the working
+directory, and from the repository root that package cannot import
+`backend/internal/ent/schema`. Its paths are therefore relative to `backend/` —
+`ent://internal/ent/schema`, `file://../migrations`.
+
 Ent types are not the contract: a contract object carries its own `Actions`, and an Ent
 entity cannot.
 
@@ -72,20 +79,19 @@ entity cannot.
 // Reason == "" means it can run now. Present with a Reason means it applies but is
 // refused, and Reason says why.
 type Action[K ~string] struct {
-	Key       K      `json:"key"`
-	Label     string `json:"label"`
-	Reason    string `json:"reason"`    // "" when runnable
-	Forceable bool   `json:"forceable"` // refusal is overridable with --force
+	Key    K      `json:"key"`
+	Label  string `json:"label"`
+	Reason string `json:"reason"` // "" when runnable
 }
 
-type Rollup struct {
-	Done  int `json:"done"`
-	Total int `json:"total"`
-}
+func (a Action[K]) Runnable() bool { return a.Reason == "" }
 ```
 
 Each object has its own `Key` type so the type and its constants sit in one package and
 `exhaustive` can check a frontend's dispatch switch.
+
+There is no `Forceable`. An action either applies, or is refused with a reason; a refusal
+the user can shrug off is not a rule worth having.
 
 ### issues.go
 
@@ -137,21 +143,20 @@ type Issue struct {
 	Milestone *Milestone `json:"milestone"` // nil when none
 	Labels    []Label    `json:"labels"`    // sorted by name
 
-	Parents  []Issue `json:"parents"`  // this issue is a subtask of these
-	Subtasks []Issue `json:"subtasks"` // ref kind = subtask
-	Blockers []Issue `json:"blockers"` // ref kind = dep, must close before this starts
-	Blocks   []Issue `json:"blocks"`   // ref kind = dep, reverse edge
+	Parent   *Issue  `json:"parent"`   // nil unless this is a sub-issue
+	Subtasks []Issue `json:"subtasks"` // sub-issues of this one
+	Blockers []Issue `json:"blockers"` // must close before this starts
+	Blocks   []Issue `json:"blocks"`   // the reverse edge
 
 	Comments []Comment `json:"comments"` // oldest first
 
-	Blocked bool   `json:"blocked"` // any Blockers not done — the ⊘ badge
-	Rollup  Rollup `json:"rollup"`  // over Subtasks — the 3/5 badge
+	Blocked bool `json:"blocked"` // any blocker not done — the ⊘ badge
 
 	Actions []Action[IssueKey] `json:"-"`
 }
 
 type IssueListParams struct {
-	Project     string        // "" means every project
+	Project     string        // "" means every active project
 	Statuses    []IssueStatus // empty means todo+doing
 	Labels      []string      // ANDed
 	Milestone   string
@@ -167,7 +172,6 @@ type IssueAddParams struct {
 	Priority  Priority // "" normalises to PriorityNormal
 	Labels    []string
 	Milestone string
-	SubOf     *int
 }
 
 type IssueEditParams struct {
@@ -175,6 +179,14 @@ type IssueEditParams struct {
 	Body  *string
 }
 ```
+
+`Parent` is singular. A sub-issue has exactly one parent, and that is a plain nullable
+`parent_id` column on `issues` rather than another kind of `Ref`: the column can hold one
+value, so the rule needs no index and no service guard. Blocking stays many-to-many in
+both directions and keeps `Ref` to itself.
+
+`IssueAddParams` has no `SubOf`. Filing work under a parent is `IssueAddSubIssue`, so
+there is one write that does it rather than two.
 
 ### projects.go
 
@@ -203,8 +215,6 @@ type Project struct {
 	CreatedAt   time.Time     `json:"created_at"`
 	UpdatedAt   time.Time     `json:"updated_at"`
 
-	Rollup Rollup `json:"rollup"` // over the project's issues
-
 	Actions []Action[ProjectKey] `json:"-"`
 }
 
@@ -222,6 +232,10 @@ type ProjectEditParams struct {
 A project does not carry its issues — that is `ListIssues` with `Project` set, which a
 detail pane wants anyway for filtering and limits.
 
+Archiving is what takes a project's work out of the way, so it does three things:
+`ListProjects` hides it, `ListIssues` drops its issues unless `Project` names it, and
+capture into it is refused until it is restored.
+
 ### comments.go
 
 ```go
@@ -233,18 +247,29 @@ const (
 )
 
 type Comment struct {
-	ID       int        `json:"id"`
-	At       time.Time  `json:"at"`
-	EditedAt *time.Time `json:"edited_at"` // nil when never edited
-	Author   string     `json:"author"`
-	Body     string     `json:"body"`
+	ID        int       `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
 
 	Actions []Action[CommentKey] `json:"-"`
 }
+
+func (c Comment) Edited() bool { return c.UpdatedAt.After(c.CreatedAt) }
 ```
 
 No list or show method. A list of comments is only ever the comments on one issue, and
 `ShowIssue` already returns them.
+
+There is no `EditedAt`. Every entity carries `created_at`/`updated_at`, and an edited
+comment is one whose two stamps have come apart.
+
+> **Landmine.** `TimeMixin` defaults each stamp to `time.Now` separately, so a row written
+> that way lands with `updated_at` a few microseconds after `created_at` — and `Edited()`
+> would report every fresh comment as edited. `comments.AddIn` therefore sets both from one
+> clock read. Deleting those two `Set…` calls does not fail a build or a query; it makes
+> `Edited()` return true for everything.
 
 ### taxonomy.go
 
@@ -272,6 +297,9 @@ type API struct {
 }
 
 func Open(ctx context.Context, dsn string) (*API, error)
+func New(client *ent.Client) *API
+func DSN(path string) string
+func ResolveProject(override string) (string, error)
 func (a *API) Close() error
 
 // Reads
@@ -279,12 +307,14 @@ func (a *API) ListIssues(ctx context.Context, p models.IssueListParams) ([]model
 func (a *API) ShowIssue(ctx context.Context, id int) (models.Issue, error)
 func (a *API) ListProjects(ctx context.Context, p models.ProjectListParams) ([]models.Project, error)
 func (a *API) ShowProject(ctx context.Context, slug string) (models.Project, error)
+func (a *API) ListLabels(ctx context.Context) ([]models.Label, error)
+func (a *API) ListMilestones(ctx context.Context, slug string) ([]models.Milestone, error)
 
 // Writes — one per Key, plus Add, which has no subject and so no Key.
 func (a *API) Add(ctx context.Context, p models.IssueAddParams) (models.Issue, error)
 
 func (a *API) IssueStart(ctx context.Context, id int) (models.Issue, error)
-func (a *API) IssueClose(ctx context.Context, id int, force bool) (models.Issue, error)
+func (a *API) IssueClose(ctx context.Context, id int) (models.Issue, error)
 func (a *API) IssueReopen(ctx context.Context, id int) (models.Issue, error)
 func (a *API) IssueEdit(ctx context.Context, id int, p models.IssueEditParams) (models.Issue, error)
 func (a *API) IssueDelete(ctx context.Context, id int) error
@@ -325,26 +355,31 @@ func Load(ctx context.Context, cl *ent.Client, id int) (models.Issue, error)
 func List(ctx context.Context, cl *ent.Client, p models.IssueListParams) ([]models.Issue, error)
 
 // actions.go — pure. No context, no client, no error, no queries.
-func Actions(i models.Issue) []models.Action[models.IssueKey]
+func Actions(e *ent.Issue) []models.Action[models.IssueKey]
 
 // service.go — writes. Paired: the plain one owns the transaction via db.WithTx,
 // the …In one composes into a caller's.
-func Close(ctx context.Context, cl *ent.Client, id int, force bool) (models.Issue, error)
-func CloseIn(ctx context.Context, tx *ent.Client, id int, force bool) (models.Issue, error)
+func Close(ctx context.Context, cl *ent.Client, id int) (models.Issue, error)
+func CloseIn(ctx context.Context, tx *ent.Client, id int) (models.Issue, error)
 ```
 
-Domains may import sibling domains — `issues.Add` calls `projects.EnsureIn` inside its own
-transaction. `queries.go` replaces the `query/` package: a list read that joins labels and
-refs is the issues domain's read.
+Domains may import sibling domains — `issues.CreateIn` calls `projects.EnsureIn` inside its
+own transaction. `queries.go` replaces the `query/` package: a list read that joins labels
+and refs is the issues domain's read.
+
+Taxonomy never depends on work: `projects`, `milestones` and `labels` do not import
+`issues`. A read that needs a table the issues domain also uses reaches for the generated
+`ent/issue` package, not the domain.
 
 ## Depth
 
 The graph is recursive, so loading stops one level down.
 
-A top-level `Issue` has everything populated. The `Issue` values inside `Parents`,
-`Subtasks`, `Blockers` and `Blocks` have their **scalars, `Project`, `Labels`, `Blocked`,
-`Rollup` and `Actions`** populated, and their own `Parents`, `Subtasks`, `Blockers`,
-`Blocks` and `Comments` empty.
+A top-level `Issue` from `ShowIssue` has everything populated. The `Issue` values inside
+`Parent`, `Subtasks`, `Blockers` and `Blocks` have their **scalars, `Project`,
+`Milestone`, `Labels`, `Blocked` and `Actions`** populated, and their own `Parent`,
+`Subtasks`, `Blockers`, `Blocks` and `Comments` empty. `ListIssues` returns rows at that
+same depth.
 
 A rule may read one level down, never two. Anything needing a deeper walk — the cycle
 check on `IssueAddDep` — is not a menu rule and belongs in `service.go`.
@@ -353,11 +388,21 @@ Every slice is non-nil. Empty means empty.
 
 ## Rules
 
-`Actions` is computed in `actions.go` from the loaded object and nothing else. Every fact
-a rule reads is a field on the object, which is what the one-level depth guarantee is for.
+`Actions` takes the **ent row**, not the contract type. The loader eager-loads whichever
+edges the rules read, so a menu is computed from real data at every depth rather than from
+a contract object that may or may not have been filled in. Eager loading is batched — one
+query per edge for a whole page, not one per row — so a list row carries a menu as correct
+as a detail view's.
+
+Which edges those are is decided by `actions.go` and supplied by `withMenuEdges` in
+`queries.go`. That coupling is the one sharp edge here: an unloaded edge looks exactly like
+an empty one, so dropping an edge from the loader does not fail a query, it silently
+changes what the menu decides.
 
 The same rule is checked twice: once to build `Actions`, once in `service.go` against live
-rows. The menu is a snapshot; the write enforces. Each Key needs both tests.
+rows. The menu is a snapshot; the write enforces. Each Key needs both tests. `service.go`
+does not restate the rules — it calls `Actions` and turns a refusal into an
+`errs.ErrConflict` carrying the same `Reason`, so the two cannot drift.
 
 Presentation is the frontend's: which keystroke, what a prompt asks for, menu order. The
 frontend switches on the `Key` with no `default` arm so `exhaustive` fails the lint when a
@@ -369,20 +414,14 @@ Only `Issue` and `Project` have a status. Transition topology is an exhaustive s
 the current value, not a map. All transitions are user-initiated — no system or cascade
 edges. No transition log.
 
+There are no derived count fields. A `3/5` badge is a rendering decision a frontend makes
+from `Subtasks`, not a number the contract carries.
+
 ## Open
 
-- `ProjectStatus` values. `active`/`archived` assumed above. Whether `paused`, or a `done`
-  distinct from archived, is unsettled.
-- Whether an archived project's issues drop out of `ListIssues` by default, and what
-  `projects.Ensure` does when capture targets an archived project.
-- `Parents []Issue` — the schema permits an issue to be a subtask of several. If a
-  uniqueness rule is wanted, this becomes `Parent *Issue`.
-- `Comment.EditedAt` assumes edits are traceable and deletes are hard. Both are schema
-  changes.
-- `Forceable` exists for `IssueClose` against open subtasks, per `IMPLEMENTATION.md`. If no
-  other action needs an override, it may not deserve a field on every `Action`.
+- Whether `ProjectStatus` wants a `paused`, or a `done` distinct from archived.
 - Whether `KeyIssueRemoveDep` and `KeyIssueRemoveLabel` appear once on the issue with the
   frontend prompting, or once per blocker/label row. The types above assume the former.
-- Moving ent to `backend/internal/ent` changes the `entc` target path, the `ent://` source
-  in `atlas.hcl`, and every reference to `ent/schema/` in `DESIGN.md` and
-  `IMPLEMENTATION.md`. Mechanical, but it lands in the same change as the tree move.
+- `DESIGN.md`, `IMPLEMENTATION.md` and `PHASES.md` still describe the superseded model:
+  `Ref.kind`, subtask-as-a-kind-of-dependency, `--force`, rollups, and the
+  `internal/app`+`internal/query` layout.
