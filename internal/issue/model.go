@@ -7,10 +7,10 @@
 package issue
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Plabrum/tt/internal/errs"
 )
 
 // Status is the lifecycle position of an issue.
@@ -112,9 +112,8 @@ type AddParams struct {
 	SubOf     int      // --sub-of; 0 = none
 }
 
-// ErrNotFound is returned for an id that does not exist. The CLI maps it to
-// exit code 3 with errors.Is, so it must be wrapped, never replaced.
-var ErrNotFound = errors.New("not found")
+// ErrNotFound is returned for an id that does not exist.
+var ErrNotFound = errs.ErrNotFound
 
 // ParseStatus converts user input to a Status. Shared by the CLI's flag parsing
 // and the TUI's filter so the two cannot accept different spellings.
@@ -127,7 +126,7 @@ func ParseStatus(s string) (Status, error) {
 	case StatusDone:
 		return StatusDone, nil
 	default:
-		return "", fmt.Errorf("unknown status %q: want todo, doing or done", s)
+		return "", errs.Invalidf("unknown status %q: want todo, doing or done", s)
 	}
 }
 
@@ -139,7 +138,7 @@ func ParsePriority(s string) (Priority, error) {
 	case PriorityHi:
 		return PriorityHi, nil
 	default:
-		return "", fmt.Errorf("unknown priority %q: want normal or hi", s)
+		return "", errs.Invalidf("unknown priority %q: want normal or hi", s)
 	}
 }
 
@@ -150,15 +149,15 @@ func ParsePriority(s string) (Priority, error) {
 // live next to the code that will delete them.
 func (p AddParams) validate() error {
 	if strings.TrimSpace(p.Project) == "" {
-		return errors.New("project is required")
+		return errs.Invalidf("project is required")
 	}
 	if strings.TrimSpace(p.Title) == "" {
-		return errors.New("title is required")
+		return errs.Invalidf("title is required")
 	}
 	switch p.Priority {
 	case "", PriorityNormal, PriorityHi:
 	default:
-		return fmt.Errorf("unknown priority %q: want normal or hi", p.Priority)
+		return errs.Invalidf("unknown priority %q: want normal or hi", p.Priority)
 	}
 	return nil
 }

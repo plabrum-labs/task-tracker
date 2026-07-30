@@ -2,10 +2,10 @@ package project
 
 import (
 	"context"
-	"errors"
 
 	"github.com/Plabrum/tt/ent"
 	"github.com/Plabrum/tt/internal/db"
+	"github.com/Plabrum/tt/internal/errs"
 )
 
 // Service creates and looks up projects.
@@ -43,7 +43,7 @@ func (s *Service) EnsureIn(ctx context.Context, cl *ent.Client, slug string) (in
 	// takes to end up with `My-Repo` and `my-repo` as separate projects.
 	slug = Slugify(slug)
 	if slug == "" {
-		return 0, errors.New("project is required")
+		return 0, errs.Invalidf("project is required")
 	}
 	return s.repo.upsert(ctx, cl, slug)
 }

@@ -11,6 +11,7 @@ import (
 	entissue "github.com/Plabrum/tt/ent/issue"
 	entlabel "github.com/Plabrum/tt/ent/label"
 	entref "github.com/Plabrum/tt/ent/ref"
+	"github.com/Plabrum/tt/internal/errs"
 )
 
 // repository is the boundary between ent rows and the view types in model.go.
@@ -58,7 +59,7 @@ func (repository) view(ctx context.Context, cl *ent.Client, id int) (Detail, err
 		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return Detail{}, fmt.Errorf("issue %d: %w", id, ErrNotFound)
+			return Detail{}, errs.NotFoundf("issue %d", id)
 		}
 		return Detail{}, fmt.Errorf("loading issue %d: %w", id, err)
 	}
