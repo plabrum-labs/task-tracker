@@ -546,8 +546,10 @@ commands, theming.
   `subtask` and `dep` block eligibility identically, `done` refuses on a parent with an open
   subtask and succeeds with `--force`, rollup counts only `kind = subtask`, and a subtask
   under two parents counts toward both.
-- CLI tests are golden-file comparisons on stdout with `--json`, which is exactly the
-  contract an agent depends on.
+- The `--json` contract is pinned on the view types rather than on CLI stdout: marshal a
+  literal `Detail` or `Row`, compare against an inline expected string. The keys are what
+  an agent depends on, and they are declared on the struct, so that is where they are
+  checked. The CLI's own tests cover exit codes and flag handling.
 - TUI tests cover the three pure functions and nothing else:
   - `columns()` for each `GroupBy`, including empty input and a status with zero issues.
   - Selection resolution — the selected ID survives a layout switch, and degrades to the
