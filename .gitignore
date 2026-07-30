@@ -1,0 +1,4 @@
+/tt
+*.db
+*.db-wal
+*.db-shm
