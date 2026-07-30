@@ -17,7 +17,7 @@ import (
 const DefaultAuthor = "me"
 
 // Action is an action on a comment, taking a payload of type P.
-type Action[P any] = actions.Action[contract.CommentKey, *ent.Comment, P, contract.Comment]
+type Action[P any] = actions.Bound[contract.CommentKey, *ent.Comment, P, contract.Comment]
 
 // Run performs an action on the comment with this id.
 func Run[P any](ctx context.Context, cl *ent.Client, id int, a *Action[P], p P) (contract.Comment, error) {
@@ -88,33 +88,6 @@ func AddIn(ctx context.Context, tx *ent.Client, issueID int, body string) (contr
 		return contract.Comment{}, fmt.Errorf("commenting on issue %d: %w", issueID, err)
 	}
 	return Convert(created), nil
-}
-
-// edit replaces a comment's body.
-//
-// updated_at moves off created_at here, which is the whole record that an edit
-// happened — there is no separate edited-at stamp.
-func edit(ctx context.Context, _ *ent.Client, e *ent.Comment, body string) (contract.Comment, error) {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return contract.Comment{}, errs.Invalidf("comment body is required")
-	}
-	updated, err := e.Update().SetBody(body).Save(ctx)
-	if err != nil {
-		return contract.Comment{}, fmt.Errorf("editing comment %d: %w", e.ID, err)
-	}
-	return Convert(updated), nil
-}
-
-// remove deletes a comment.
-//
-// It returns the zero comment because there is no comment left to return, and
-// every action in a group returns the same type.
-func remove(ctx context.Context, tx *ent.Client, e *ent.Comment, _ actions.None) (contract.Comment, error) {
-	if err := tx.Comment.DeleteOne(e).Exec(ctx); err != nil {
-		return contract.Comment{}, fmt.Errorf("deleting comment %d: %w", e.ID, err)
-	}
-	return contract.Comment{}, nil
 }
 
 // row reads the ent row a write is about to change.

@@ -1,14 +1,18 @@
 // Package actions is the write path over an object: what its menu offers, why
 // an entry is refused, and what running it does.
 //
-// One Group per object type. A Group holds its entries in menu order and is the
-// only place a rule is checked, so the menu a frontend renders and the write it
-// then calls cannot disagree — they are the same Spec consulted twice.
+// An action is a type. Key and Label say what it is, IsAvailable and IsDisabled
+// are its rules, and Execute is its write — so everything about one action is
+// one block, and the compiler checks the shape rather than a convention doing
+// it. Embed Default to take the two rules' defaults.
 //
-// An action is defined with Define, which keeps its payload type. Entry erases
-// that type so a Group can hold actions with different payloads side by side;
-// Invoke is the typed way in and Dispatch is the key-driven one. Both go
-// through Check first.
+// One Group per object type. A Group holds its actions in menu order and is the
+// only place a rule is checked, so the menu a frontend renders and the write it
+// then calls cannot disagree — they are the same action asked twice.
+//
+// Bind keeps an action's payload type. Entry erases it so a Group can hold
+// actions with different payloads side by side; Invoke is the typed way in and
+// Dispatch is the key-driven one. Both go through Check first.
 package actions
 
 import (
@@ -22,49 +26,44 @@ import (
 // None is the payload of an action that takes no arguments.
 type None struct{}
 
-// Spec is everything about an action except what it does.
+// Action is one action on an object: its identity, its rules and its write.
 //
-// Applies decides whether the action is on the menu at all and Refuse whether
-// it can run, which is the contract's absent/refused distinction. A nil Applies
-// always applies and a nil Refuse never refuses.
-type Spec[K ~string, O any] struct {
-	Key     K
-	Label   string
-	Applies func(O) bool
-	Refuse  func(O) string
+// IsAvailable decides whether the action is on the menu at all and IsDisabled
+// whether it can run, which is the contract's absent/refused distinction.
+// Execute is handed a loaded row inside the caller's transaction, and only once
+// both rules have cleared it, so a write restates no rule.
+type Action[K ~string, O, P, R any] interface {
+	Key() K
+	Label() string
+	IsAvailable(O) bool
+	IsDisabled(O) string
+	Execute(ctx context.Context, tx *ent.Client, o O, p P) (R, error)
 }
 
-// reason is why this action cannot run against o, "" when it can.
-func (s Spec[K, O]) reason(o O) string {
-	if s.Refuse == nil {
-		return ""
-	}
-	return s.Refuse(o)
-}
-
-// applies reports whether the action belongs on o's menu at all.
-func (s Spec[K, O]) applies(o O) bool {
-	return s.Applies == nil || s.Applies(o)
-}
-
-// Action is one action: its Spec and the write it performs.
+// Default is the two rules an action gets when it declares neither: it always
+// applies and it never refuses. Embed it and override either one.
 //
-// Payload and result are type parameters rather than any, so a caller that
-// names the action it wants has both checked at compile time.
-type Action[K ~string, O, P, R any] struct {
-	spec Spec[K, O]
-	run  func(ctx context.Context, tx *ent.Client, o O, p P) (R, error)
+// Overriding is by method name and nothing checks the spelling, so an
+// IsAvailible on an action that embeds this compiles and leaves the real rule
+// unreachable. A rule that quietly stopped taking effect is the symptom.
+type Default[O any] struct{}
+
+// IsAvailable reports that the action applies to every object.
+func (Default[O]) IsAvailable(O) bool { return true }
+
+// IsDisabled reports that the action is never refused.
+func (Default[O]) IsDisabled(O) string { return "" }
+
+// Bound is an action with its payload type kept, so a caller that names the
+// action it wants has payload and result checked at compile time.
+type Bound[K ~string, O, P, R any] struct {
+	action Action[K, O, P, R]
 }
 
-// Define builds an action from its spec and its write.
-//
-// The write is handed a loaded row inside the caller's transaction, and only
-// once the spec has cleared it, so a write restates no rule.
-func Define[K ~string, O, P, R any](
-	spec Spec[K, O],
-	run func(ctx context.Context, tx *ent.Client, o O, p P) (R, error),
-) *Action[K, O, P, R] {
-	return &Action[K, O, P, R]{spec: spec, run: run}
+// Bind registers an action. Every type parameter is inferred from the action's
+// own method set.
+func Bind[K ~string, O, P, R any](a Action[K, O, P, R]) *Bound[K, O, P, R] {
+	return &Bound[K, O, P, R]{action: a}
 }
 
 // Entry is this action with its payload type erased, which is what lets a Group
@@ -73,24 +72,31 @@ func Define[K ~string, O, P, R any](
 // The assertion inside can only fail on the Dispatch path, where a caller
 // supplies a payload against a key chosen at runtime. Invoke cannot reach it:
 // there the payload's type comes from the action itself.
-func (a *Action[K, O, P, R]) Entry() Entry[K, O, R] {
+func (b *Bound[K, O, P, R]) Entry() Entry[K, O, R] {
+	a := b.action
 	return Entry[K, O, R]{
-		spec: a.spec,
+		key:       a.Key(),
+		label:     a.Label(),
+		available: a.IsAvailable,
+		disabled:  a.IsDisabled,
 		run: func(ctx context.Context, tx *ent.Client, o O, payload any) (R, error) {
 			p, ok := payload.(P)
 			if !ok {
 				var zero R
-				return zero, errs.Invalidf("action %q got the wrong payload type", a.spec.Key)
+				return zero, errs.Invalidf("action %q got the wrong payload type", a.Key())
 			}
-			return a.run(ctx, tx, o, p)
+			return a.Execute(ctx, tx, o, p)
 		},
 	}
 }
 
 // Entry is a payload-erased action inside a Group.
 type Entry[K ~string, O, R any] struct {
-	spec Spec[K, O]
-	run  func(ctx context.Context, tx *ent.Client, o O, payload any) (R, error)
+	key       K
+	label     string
+	available func(O) bool
+	disabled  func(O) string
+	run       func(ctx context.Context, tx *ent.Client, o O, payload any) (R, error)
 }
 
 // Group is one object type's whole menu, in the order a frontend shows it.
@@ -112,13 +118,13 @@ func NewGroup[K ~string, O, R any](subject func(O) string, entries ...Entry[K, O
 func (g *Group[K, O, R]) Menu(o O) []contract.Action[K] {
 	out := make([]contract.Action[K], 0, len(g.entries))
 	for _, e := range g.entries {
-		if !e.spec.applies(o) {
+		if !e.available(o) {
 			continue
 		}
 		out = append(out, contract.Action[K]{
-			Key:    e.spec.Key,
-			Label:  e.spec.Label,
-			Reason: e.spec.reason(o),
+			Key:    e.key,
+			Label:  e.label,
+			Reason: e.disabled(o),
 		})
 	}
 	return out
@@ -132,13 +138,13 @@ func (g *Group[K, O, R]) Menu(o O) []contract.Action[K] {
 // against the live row, so the menu stays a snapshot and this decides.
 func (g *Group[K, O, R]) Check(o O, key K) error {
 	for _, e := range g.entries {
-		if e.spec.Key != key {
+		if e.key != key {
 			continue
 		}
-		if !e.spec.applies(o) {
+		if !e.available(o) {
 			break
 		}
-		if reason := e.spec.reason(o); reason != "" {
+		if reason := e.disabled(o); reason != "" {
 			return errs.Conflictf("%s: %s", g.subject(o), reason)
 		}
 		return nil
@@ -162,7 +168,7 @@ func (g *Group[K, O, R]) Dispatch(
 ) (R, error) {
 	var zero R
 	for _, e := range g.entries {
-		if e.spec.Key != key {
+		if e.key != key {
 			continue
 		}
 		if err := g.Check(o, key); err != nil {
@@ -183,12 +189,12 @@ func Invoke[K ~string, O, P, R any](
 	g *Group[K, O, R],
 	tx *ent.Client,
 	o O,
-	a *Action[K, O, P, R],
+	b *Bound[K, O, P, R],
 	p P,
 ) (R, error) {
-	if err := g.Check(o, a.spec.Key); err != nil {
+	if err := g.Check(o, b.action.Key()); err != nil {
 		var zero R
 		return zero, err
 	}
-	return a.run(ctx, tx, o, p)
+	return b.action.Execute(ctx, tx, o, p)
 }

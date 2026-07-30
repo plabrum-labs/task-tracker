@@ -8,11 +8,9 @@ import (
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/actions"
-	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/db"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entissue "github.com/Plabrum/tt/backend/internal/ent/issue"
-	entlabel "github.com/Plabrum/tt/backend/internal/ent/label"
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
 	entref "github.com/Plabrum/tt/backend/internal/ent/ref"
 	"github.com/Plabrum/tt/backend/internal/labels"
@@ -21,13 +19,12 @@ import (
 )
 
 // Action is an action on an issue, taking a payload of type P.
-type Action[P any] = actions.Action[contract.IssueKey, *ent.Issue, P, contract.Issue]
+type Action[P any] = actions.Bound[contract.IssueKey, *ent.Issue, P, contract.Issue]
 
 // Run performs an action on the issue with this id.
 //
 // The pair is the one transaction boundary the domain has: Run owns the
-// transaction and RunIn composes into a caller's, so the thirteen writes below
-// declare a rule and a payload and nothing else.
+// transaction and RunIn composes into a caller's, so no action declares one.
 func Run[P any](ctx context.Context, cl *ent.Client, id int, a *Action[P], p P) (contract.Issue, error) {
 	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
@@ -72,7 +69,7 @@ func Dispatch(
 
 // Create captures a new issue, creating its project on first use.
 //
-// It has no subject, so it is not on any menu and is not an Action: there is no
+// It has no subject, so it is not on any menu and is not an action: there is no
 // issue yet for a rule to read.
 func Create(ctx context.Context, cl *ent.Client, p contract.IssueAddParams) (contract.Issue, error) {
 	var out contract.Issue
@@ -101,37 +98,6 @@ func CreateIn(ctx context.Context, tx *ent.Client, p contract.IssueAddParams) (c
 		return contract.Issue{}, err
 	}
 	return insert(ctx, tx, projectID, nil, p)
-}
-
-// The writes behind the actions in actions.go. Each is handed a loaded row that
-// its Spec has already cleared, so none of them restates a rule; what they do
-// restate — an archived project, a dependency cycle — is what a menu cannot
-// decide, because it needs a query.
-
-// addSubIssue files a new issue under this one.
-//
-// The child lands in its parent's project whatever the params say: a sub-issue
-// filed somewhere else would leave the parent's project showing a rollup over
-// work it does not contain.
-func addSubIssue(
-	ctx context.Context,
-	tx *ent.Client,
-	e *ent.Issue,
-	p contract.IssueAddParams,
-) (contract.Issue, error) {
-	projectID, err := e.QueryProject().OnlyID(ctx)
-	if err != nil {
-		return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", e.ID, err)
-	}
-	if err := refuseArchived(ctx, tx, projectID); err != nil {
-		return contract.Issue{}, err
-	}
-
-	p.Project = "" // resolved from the parent, not from the caller
-	if err := validateChild(p); err != nil {
-		return contract.Issue{}, err
-	}
-	return insert(ctx, tx, projectID, &e.ID, p)
 }
 
 // insert writes a new issue and reloads it. Status and the timestamps come from
@@ -185,159 +151,6 @@ func insert(
 	return Load(ctx, tx, created.ID)
 }
 
-// edit changes an issue's title or body.
-func edit(
-	ctx context.Context,
-	tx *ent.Client,
-	e *ent.Issue,
-	p contract.IssueEditParams,
-) (contract.Issue, error) {
-	if p.Title == nil && p.Body == nil {
-		return contract.Issue{}, errs.Invalidf("nothing to change")
-	}
-
-	u := e.Update()
-	if p.Title != nil {
-		title := strings.TrimSpace(*p.Title)
-		if title == "" {
-			return contract.Issue{}, errs.Invalidf("title is required")
-		}
-		u = u.SetTitle(title)
-	}
-	if p.Body != nil {
-		u = u.SetBody(*p.Body)
-	}
-	if _, err := u.Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("editing issue %d: %w", e.ID, err)
-	}
-	return Load(ctx, tx, e.ID)
-}
-
-// remove deletes an issue.
-//
-// Its comments and refs go with it by cascade, and its sub-issues survive with
-// their parent_id cleared: deleting a parent should not delete work nobody
-// asked to lose.
-//
-// It returns the zero issue because there is no issue left to return, and every
-// action in a group returns the same type.
-func remove(ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None) (contract.Issue, error) {
-	if err := tx.Issue.DeleteOne(e).Exec(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("deleting issue %d: %w", e.ID, err)
-	}
-	return contract.Issue{}, nil
-}
-
-// setPriority changes an issue's pick-order bump.
-func setPriority(
-	ctx context.Context,
-	tx *ent.Client,
-	e *ent.Issue,
-	p contract.Priority,
-) (contract.Issue, error) {
-	stored, err := priorityToEnt(p)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if _, err := e.Update().SetPriority(stored).Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("setting priority of issue %d: %w", e.ID, err)
-	}
-	return Load(ctx, tx, e.ID)
-}
-
-// setMilestone files an issue under a milestone, creating it on first use. An
-// empty name clears it.
-func setMilestone(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
-	u := e.Update()
-	if strings.TrimSpace(name) == "" {
-		u = u.ClearMilestone()
-	} else {
-		projectID, err := e.QueryProject().OnlyID(ctx)
-		if err != nil {
-			return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", e.ID, err)
-		}
-		milestoneID, err := milestones.EnsureIn(ctx, tx, projectID, name)
-		if err != nil {
-			return contract.Issue{}, err
-		}
-		u = u.SetMilestoneID(milestoneID)
-	}
-	if _, err := u.Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("setting milestone of issue %d: %w", e.ID, err)
-	}
-	return Load(ctx, tx, e.ID)
-}
-
-// addLabel puts a label on an issue, creating it on first use.
-func addLabel(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
-	labelID, err := labels.EnsureIn(ctx, tx, name)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	// Already-present is not an error: the label is on the issue either way,
-	// and AddLabelIDs on an existing edge violates the join table's key.
-	has, err := e.QueryLabels().Where(entlabel.IDEQ(labelID)).Exist(ctx)
-	if err != nil {
-		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", e.ID, err)
-	}
-	if !has {
-		if _, err := e.Update().AddLabelIDs(labelID).Save(ctx); err != nil {
-			return contract.Issue{}, fmt.Errorf("labelling issue %d: %w", e.ID, err)
-		}
-	}
-	return Load(ctx, tx, e.ID)
-}
-
-// removeLabel takes a label off an issue.
-func removeLabel(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
-	labelID, err := labels.Lookup(ctx, tx, name)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	has, err := e.QueryLabels().Where(entlabel.IDEQ(labelID)).Exist(ctx)
-	if err != nil {
-		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", e.ID, err)
-	}
-	if !has {
-		return contract.Issue{}, errs.Conflictf("issue %d is not labelled %q", e.ID, labels.Normalise(name))
-	}
-	if _, err := e.Update().RemoveLabelIDs(labelID).Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("unlabelling issue %d: %w", e.ID, err)
-	}
-	return Load(ctx, tx, e.ID)
-}
-
-// addDep records that an issue waits on another.
-//
-// The cycle check walks the dependency graph, so it is not a menu rule: a menu
-// reads one level down and this needs however many the chain is deep.
-func addDep(ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int) (contract.Issue, error) {
-	if e.ID == blockerID {
-		return contract.Issue{}, errs.Conflictf("issue %d cannot block itself", e.ID)
-	}
-	if _, err := row(ctx, tx, blockerID); err != nil {
-		return contract.Issue{}, err
-	}
-
-	exists, err := tx.Ref.Query().
-		Where(entref.BlockedIDEQ(e.ID), entref.BlockerIDEQ(blockerID)).
-		Exist(ctx)
-	if err != nil {
-		return contract.Issue{}, fmt.Errorf("checking dependencies of issue %d: %w", e.ID, err)
-	}
-	if exists {
-		return contract.Issue{}, errs.Conflictf("issue %d already waits on issue %d", e.ID, blockerID)
-	}
-	if err := refuseCycle(ctx, tx, e.ID, blockerID); err != nil {
-		return contract.Issue{}, err
-	}
-
-	if _, err := tx.Ref.Create().SetBlockedID(e.ID).SetBlockerID(blockerID).Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("adding dependency %d -> %d: %w", e.ID, blockerID, err)
-	}
-	return Load(ctx, tx, e.ID)
-}
-
 // refuseCycle rejects a dependency that would close a loop, by walking from the
 // proposed blocker to see whether the issue itself is already upstream of it.
 func refuseCycle(ctx context.Context, tx *ent.Client, id, blockerID int) error {
@@ -363,28 +176,6 @@ func refuseCycle(ctx context.Context, tx *ent.Client, id, blockerID int) error {
 		}
 	}
 	return nil
-}
-
-// removeDep drops a dependency.
-func removeDep(ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int) (contract.Issue, error) {
-	deleted, err := tx.Ref.Delete().
-		Where(entref.BlockedIDEQ(e.ID), entref.BlockerIDEQ(blockerID)).
-		Exec(ctx)
-	if err != nil {
-		return contract.Issue{}, fmt.Errorf("removing dependency %d -> %d: %w", e.ID, blockerID, err)
-	}
-	if deleted == 0 {
-		return contract.Issue{}, errs.Conflictf("issue %d does not wait on issue %d", e.ID, blockerID)
-	}
-	return Load(ctx, tx, e.ID)
-}
-
-// comment appends a comment and returns the issue it landed on.
-func comment(ctx context.Context, tx *ent.Client, e *ent.Issue, body string) (contract.Issue, error) {
-	if _, err := comments.AddIn(ctx, tx, e.ID, body); err != nil {
-		return contract.Issue{}, err
-	}
-	return Load(ctx, tx, e.ID)
 }
 
 // refuseArchived keeps new work out of a project that was archived to get it
@@ -416,9 +207,9 @@ func validateChild(p contract.IssueAddParams) error {
 	}
 }
 
-// row reads the ent row a write is about to change, with the edges the menu
-// rules need. Going through withMenuEdges is what lets the group's Check
-// consult the same Actions a frontend rendered.
+// row reads the ent row a write is about to change, with the edges the rules
+// need. Going through withMenuEdges is what lets the group's Check consult the
+// same menu a frontend rendered.
 func row(ctx context.Context, tx *ent.Client, id int) (*ent.Issue, error) {
 	e, err := withMenuEdges(tx.Issue.Query().Where(entissue.IDEQ(id))).Only(ctx)
 	if err != nil {

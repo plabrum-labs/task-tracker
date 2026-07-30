@@ -35,34 +35,52 @@ func subject(w *widget) string { return fmt.Sprintf("widget %d", w.id) }
 
 const reasonLocked = "locked"
 
-// group builds the menu under test, recording into ran which writes fired.
-func group(ran *[]key) *actions.Group[key, *widget, string] {
-	poke := actions.Define(actions.Spec[key, *widget]{
-		Key:    keyPoke,
-		Label:  "poke",
-		Refuse: refuseLocked,
-	}, func(_ context.Context, _ *ent.Client, _ *widget, p string) (string, error) {
-		*ran = append(*ran, keyPoke)
-		return p, nil
-	})
+// poke takes a payload and refuses a locked widget; drain takes none and
+// withholds itself from an empty one. Both record that they ran.
 
-	drain := actions.Define(actions.Spec[key, *widget]{
-		Key:     keyDrain,
-		Label:   "drain",
-		Applies: func(w *widget) bool { return !w.empty },
-	}, func(_ context.Context, _ *ent.Client, _ *widget, _ actions.None) (string, error) {
-		*ran = append(*ran, keyDrain)
-		return "drained", nil
-	})
-
-	return actions.NewGroup(subject, poke.Entry(), drain.Entry())
+type poke struct {
+	actions.Default[*widget]
+	ran *[]key
 }
 
-func refuseLocked(w *widget) string {
+func (poke) Key() key      { return keyPoke }
+func (poke) Label() string { return "poke" }
+
+func (poke) IsDisabled(w *widget) string {
 	if w.locked {
 		return reasonLocked
 	}
 	return ""
+}
+
+func (p poke) Execute(_ context.Context, _ *ent.Client, _ *widget, s string) (string, error) {
+	*p.ran = append(*p.ran, keyPoke)
+	return s, nil
+}
+
+type drain struct {
+	actions.Default[*widget]
+	ran *[]key
+}
+
+func (drain) Key() key      { return keyDrain }
+func (drain) Label() string { return "drain" }
+
+func (drain) IsAvailable(w *widget) bool { return !w.empty }
+
+func (d drain) Execute(_ context.Context, _ *ent.Client, _ *widget, _ actions.None) (string, error) {
+	*d.ran = append(*d.ran, keyDrain)
+	return "drained", nil
+}
+
+// group builds the menu under test, recording into ran which writes fired.
+func group(ran *[]key) *actions.Group[key, *widget, string] {
+	return actions.NewGroup(subject, pokeAction(ran).Entry(), actions.Bind(drain{ran: ran}).Entry())
+}
+
+// pokeAction is the poke action on its own, for the typed Invoke path.
+func pokeAction(ran *[]key) *actions.Bound[key, *widget, string, string] {
+	return actions.Bind(poke{ran: ran})
 }
 
 func TestMenu(t *testing.T) {
@@ -194,18 +212,6 @@ func TestInvoke(t *testing.T) {
 		if len(ran) != 0 {
 			t.Errorf("writes ran = %v, want none", ran)
 		}
-	})
-}
-
-// pokeAction is the same action group() registers, for the typed Invoke path.
-func pokeAction(ran *[]key) *actions.Action[key, *widget, string, string] {
-	return actions.Define(actions.Spec[key, *widget]{
-		Key:    keyPoke,
-		Label:  "poke",
-		Refuse: refuseLocked,
-	}, func(_ context.Context, _ *ent.Client, _ *widget, p string) (string, error) {
-		*ran = append(*ran, keyPoke)
-		return p, nil
 	})
 }
 

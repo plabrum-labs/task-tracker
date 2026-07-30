@@ -3,7 +3,6 @@ package projects
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
@@ -14,7 +13,7 @@ import (
 )
 
 // Action is an action on a project, taking a payload of type P.
-type Action[P any] = actions.Action[contract.ProjectKey, *ent.Project, P, contract.Project]
+type Action[P any] = actions.Bound[contract.ProjectKey, *ent.Project, P, contract.Project]
 
 // Run performs an action on the project with this slug.
 func Run[P any](ctx context.Context, cl *ent.Client, slug string, a *Action[P], p P) (contract.Project, error) {
@@ -101,30 +100,6 @@ func EnsureIn(ctx context.Context, tx *ent.Client, slug string) (int, error) {
 		return 0, fmt.Errorf("upserting project %q: %w", slug, err)
 	}
 	return id, nil
-}
-
-// edit changes a project's title or description.
-func edit(
-	ctx context.Context,
-	tx *ent.Client,
-	e *ent.Project,
-	p contract.ProjectEditParams,
-) (contract.Project, error) {
-	if p.Title == nil && p.Description == nil {
-		return contract.Project{}, errs.Invalidf("nothing to change")
-	}
-
-	u := e.Update()
-	if p.Title != nil {
-		u = u.SetTitle(strings.TrimSpace(*p.Title))
-	}
-	if p.Description != nil {
-		u = u.SetDescription(*p.Description)
-	}
-	if _, err := u.Save(ctx); err != nil {
-		return contract.Project{}, fmt.Errorf("editing project %q: %w", e.Slug, err)
-	}
-	return LoadByID(ctx, tx, e.ID)
 }
 
 // row reads the ent row a write is about to change.
