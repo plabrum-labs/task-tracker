@@ -40,8 +40,12 @@ func (s *Service) List(ctx context.Context, p ListParams) ([]Row, error) {
 // blocked flag and subtask rollup are batched over the ids the first query
 // produced. Nothing here scales with the row count.
 func (s *Service) ListIn(ctx context.Context, cl *ent.Client, p ListParams) ([]Row, error) {
+	preds, err := predicates(p)
+	if err != nil {
+		return nil, err
+	}
 	q := cl.Issue.Query().
-		Where(predicates(p)...).
+		Where(preds...).
 		WithProject().
 		WithMilestone().
 		WithLabels(func(lq *ent.LabelQuery) { lq.Order(entlabel.ByName()) }).
@@ -75,11 +79,19 @@ func (s *Service) ListIn(ctx context.Context, cl *ent.Client, p ListParams) ([]R
 
 	rows := make([]Row, 0, len(found))
 	for _, e := range found {
+		status, err := issue.StatusFromEnt(e.Status)
+		if err != nil {
+			return nil, fmt.Errorf("issue %d: %w", e.ID, err)
+		}
+		priority, err := issue.PriorityFromEnt(e.Priority)
+		if err != nil {
+			return nil, fmt.Errorf("issue %d: %w", e.ID, err)
+		}
 		row := Row{
 			ID:       e.ID,
 			Title:    e.Title,
-			Status:   issue.Status(e.Status),
-			Priority: issue.Priority(e.Priority),
+			Status:   status,
+			Priority: priority,
 			Labels:   []string{},
 			Blocked:  blocked[e.ID],
 			// A miss is the zero Rollup, which is exactly right: Total == 0
@@ -104,7 +116,7 @@ func (s *Service) ListIn(ctx context.Context, cl *ent.Client, p ListParams) ([]R
 }
 
 // predicates turns the filters into a WHERE clause.
-func predicates(p ListParams) []predicate.Issue {
+func predicates(p ListParams) ([]predicate.Issue, error) {
 	var preds []predicate.Issue
 
 	// "" is not a project, it is the absence of scoping — what -A passes.
@@ -120,7 +132,11 @@ func predicates(p ListParams) []predicate.Issue {
 	}
 	want := make([]entissue.Status, len(statuses))
 	for i, st := range statuses {
-		want[i] = entissue.Status(st)
+		stored, err := issue.StatusToEnt(st)
+		if err != nil {
+			return nil, err
+		}
+		want[i] = stored
 	}
 	preds = append(preds, entissue.StatusIn(want...))
 
@@ -140,7 +156,7 @@ func predicates(p ListParams) []predicate.Issue {
 	if p.BlockedOnly {
 		preds = append(preds, isBlocked())
 	}
-	return preds
+	return preds, nil
 }
 
 // isBlocked is the single definition of "blocked", used by both --blocked and

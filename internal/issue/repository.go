@@ -22,14 +22,18 @@ type repository struct{}
 // defaults, so there is nothing here that a second write path could set
 // differently.
 func (repository) insert(ctx context.Context, cl *ent.Client, projectID int, p AddParams) (*ent.Issue, error) {
-	priority := p.Priority
-	if priority == "" {
-		priority = PriorityNormal
+	domainPriority := p.Priority
+	if domainPriority == "" {
+		domainPriority = PriorityNormal
+	}
+	priority, err := PriorityToEnt(domainPriority)
+	if err != nil {
+		return nil, err
 	}
 	created, err := cl.Issue.Create().
 		SetTitle(strings.TrimSpace(p.Title)).
 		SetBody(p.Body).
-		SetPriority(entissue.Priority(priority)).
+		SetPriority(priority).
 		SetProjectID(projectID).
 		Save(ctx)
 	if err != nil {
@@ -63,21 +67,29 @@ func (repository) view(ctx context.Context, cl *ent.Client, id int) (Detail, err
 		}
 		return Detail{}, fmt.Errorf("loading issue %d: %w", id, err)
 	}
-	return toDetail(e), nil
+	return toDetail(e)
 }
 
 // toIssue flattens an ent row and its eager-loaded edges.
 //
-// The enum casts are safe because the domain constants in model.go are spelled
-// exactly as the schema's Values(...) — TestEnumsMatchSchema is what keeps that
-// true when someone edits one side.
-func toIssue(e *ent.Issue) Issue {
+// It can fail: a row written by a newer binary carries an enum value this one
+// has no constant for, which is a real situation for a tool installed on two
+// machines at different times.
+func toIssue(e *ent.Issue) (Issue, error) {
+	status, err := StatusFromEnt(e.Status)
+	if err != nil {
+		return Issue{}, fmt.Errorf("issue %d: %w", e.ID, err)
+	}
+	priority, err := PriorityFromEnt(e.Priority)
+	if err != nil {
+		return Issue{}, fmt.Errorf("issue %d: %w", e.ID, err)
+	}
 	iss := Issue{
 		ID:        e.ID,
 		Title:     e.Title,
 		Body:      e.Body,
-		Status:    Status(e.Status),
-		Priority:  Priority(e.Priority),
+		Status:    status,
+		Priority:  priority,
 		Labels:    []string{},
 		CreatedAt: e.CreatedAt,
 		UpdatedAt: e.UpdatedAt,
@@ -97,14 +109,18 @@ func toIssue(e *ent.Issue) Issue {
 	for _, l := range e.Edges.Labels {
 		iss.Labels = append(iss.Labels, l.Name)
 	}
-	return iss
+	return iss, nil
 }
 
 // toDetail assembles the full view. Every slice is initialised, because the
 // --json contract says an empty list prints as [] and never as null.
-func toDetail(e *ent.Issue) Detail {
+func toDetail(e *ent.Issue) (Detail, error) {
+	iss, err := toIssue(e)
+	if err != nil {
+		return Detail{}, err
+	}
 	d := Detail{
-		Issue:      toIssue(e),
+		Issue:      iss,
 		Blockers:   []Link{},
 		Subtasks:   []Link{},
 		Dependents: []Link{},
@@ -120,7 +136,10 @@ func toDetail(e *ent.Issue) Detail {
 		if other == nil {
 			continue
 		}
-		link := toLink(r, other)
+		link, err := toLink(r, other)
+		if err != nil {
+			return Detail{}, err
+		}
 		if r.Kind == entref.KindSubtask {
 			d.Subtasks = append(d.Subtasks, link)
 		} else {
@@ -131,9 +150,15 @@ func toDetail(e *ent.Issue) Detail {
 	// and a parent that would disappear from a child's view is worse than a
 	// list with two kinds in it.
 	for _, r := range e.Edges.BlockerRefs {
-		if other := r.Edges.Blocked; other != nil {
-			d.Dependents = append(d.Dependents, toLink(r, other))
+		other := r.Edges.Blocked
+		if other == nil {
+			continue
 		}
+		link, err := toLink(r, other)
+		if err != nil {
+			return Detail{}, err
+		}
+		d.Dependents = append(d.Dependents, link)
 	}
 
 	// By id, so `tt show` renders the same list twice in a row. Ent gives no
@@ -159,14 +184,22 @@ func toDetail(e *ent.Issue) Detail {
 			d.Rollup.Done++
 		}
 	}
-	return d
+	return d, nil
 }
 
-func toLink(r *ent.Ref, other *ent.Issue) Link {
+func toLink(r *ent.Ref, other *ent.Issue) (Link, error) {
+	status, err := StatusFromEnt(other.Status)
+	if err != nil {
+		return Link{}, fmt.Errorf("issue %d: %w", other.ID, err)
+	}
+	kind, err := KindFromEnt(r.Kind)
+	if err != nil {
+		return Link{}, fmt.Errorf("ref %d: %w", r.ID, err)
+	}
 	return Link{
 		ID:     other.ID,
 		Title:  other.Title,
-		Status: Status(other.Status),
-		Kind:   Kind(r.Kind),
-	}
+		Status: status,
+		Kind:   kind,
+	}, nil
 }
