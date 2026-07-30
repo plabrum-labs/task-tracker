@@ -30,12 +30,14 @@ SQLite specifics that bite:
 
 - Foreign keys are **off by default**. The DSN must enable them:
   `file:tt.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)`.
-- `ALTER TABLE` is limited, so column drops and renames require a table rebuild. This
-  is the reason to use Atlas-backed versioned migrations rather than Ent's runtime
-  auto-migrate, which is more conservative and will silently leave dropped columns in
-  place.
-- Migrations are generated with a throwaway dev database:
-  `atlas migrate diff --to ent://ent/schema --dev-url "sqlite://dev?mode=memory&_pragma=foreign_keys(1)"`
+- `ALTER TABLE` is limited, so column drops and renames require a table rebuild.
+- Versioned migrations rather than Ent's runtime auto-migrate, because a backfill and a
+  rename are statements someone has to write. Auto-migrate cannot express either at any
+  flag setting: it diffs a schema against a database and emits DDL, so a rename reads as
+  a drop plus an add, and there is no point at which data can be moved between them.
+  Auto-migrate is still what the tests use — they have no data to preserve.
+- Migrations are generated against a throwaway dev database, wired up in `atlas.hcl`:
+  `just db-migrate <name>` → `atlas migrate diff --env local <name>`
 
 ## Data model
 

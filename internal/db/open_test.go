@@ -14,20 +14,22 @@ import (
 	"github.com/Plabrum/tt/ent"
 	"github.com/Plabrum/tt/ent/issue"
 	"github.com/Plabrum/tt/ent/ref"
-	"github.com/Plabrum/tt/migrations"
 )
 
-// newTestClient returns a fresh, fully migrated in-memory client. It goes
-// through the same Open production does, so a broken migration path fails here
-// rather than on someone's real database.
+// newTestClient returns a fresh in-memory client with the schema in place.
+// It duplicates internal/dbtest, which package db cannot import without a
+// cycle.
 //
 // SetMaxOpenConns(1) inside Open is what keeps `:memory:` coherent: one
 // connection means one database, with no cache=shared lifetime games.
 func newTestClient(t *testing.T) *ent.Client {
 	t.Helper()
-	client, err := OpenAndMigrate(t.Context(), DSN(":memory:"))
+	client, err := Open(t.Context(), DSN(":memory:"))
 	if err != nil {
 		t.Fatalf("opening test client: %v", err)
+	}
+	if err := client.Schema.Create(t.Context()); err != nil {
+		t.Fatalf("creating test schema: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := client.Close(); err != nil {
@@ -142,16 +144,20 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestOpenFileTwice is the embedded-migration path end to end: a brand-new
-// database file comes up migrated with no external tool, and reopening it
-// applies nothing a second time.
+// TestOpenFileTwice pins the contract Open has now that it no longer migrates:
+// it attaches to an existing database without touching it. The reopen does not
+// create the schema, so anything Open did to it would show up as a missing
+// table or a lost row.
 func TestOpenFileTwice(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "tt.db")
 
-	first, err := OpenAndMigrate(ctx, DSN(path))
+	first, err := Open(ctx, DSN(path))
 	if err != nil {
 		t.Fatalf("first open: %v", err)
+	}
+	if err := first.Schema.Create(ctx); err != nil {
+		t.Fatalf("creating schema: %v", err)
 	}
 	proj := first.Project.Create().SetSlug("tt").SaveX(ctx)
 	first.Issue.Create().SetTitle("survives a reopen").SetProject(proj).SaveX(ctx)
@@ -163,7 +169,7 @@ func TestOpenFileTwice(t *testing.T) {
 		t.Fatalf("database file was not created: %v", err)
 	}
 
-	second, err := OpenAndMigrate(ctx, DSN(path))
+	second, err := Open(ctx, DSN(path))
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
@@ -175,13 +181,6 @@ func TestOpenFileTwice(t *testing.T) {
 
 	if n := second.Issue.Query().CountX(ctx); n != 1 {
 		t.Errorf("issues after reopen = %d, want 1", n)
-	}
-
-	// One revision per migration file, written once — a second application
-	// would have re-run the CREATE TABLEs and failed long before this.
-	want := len(embeddedSQLFiles(t))
-	if got := countRevisions(t, path); got != want {
-		t.Errorf("revisions = %d, want %d", got, want)
 	}
 }
 
@@ -216,7 +215,7 @@ func TestDSNEscapesPath(t *testing.T) {
 
 			// The parse above only proves the string is well formed. Opening
 			// proves SQLite reads the same path back out of it.
-			client, err := OpenAndMigrate(t.Context(), dsn)
+			client, err := Open(t.Context(), dsn)
 			if err != nil {
 				t.Fatalf("opening %q: %v", dsn, err)
 			}
@@ -244,7 +243,7 @@ func TestDSNInMemory(t *testing.T) {
 		t.Fatalf("DSN(%q) = %q, want it to start with %q", ":memory:", dsn, want)
 	}
 
-	client, err := OpenAndMigrate(t.Context(), dsn)
+	client, err := Open(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("opening in-memory: %v", err)
 	}
@@ -268,39 +267,6 @@ func TestDSNInMemory(t *testing.T) {
 	if file != "" {
 		t.Errorf("main database file = %q, want empty — it landed on disk", file)
 	}
-}
-
-func embeddedSQLFiles(t *testing.T) []string {
-	t.Helper()
-	entries, err := migrations.FS.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading embedded migrations: %v", err)
-	}
-	var names []string
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) == ".sql" {
-			names = append(names, e.Name())
-		}
-	}
-	if len(names) == 0 {
-		t.Fatal("no embedded migrations found")
-	}
-	return names
-}
-
-func countRevisions(t *testing.T, path string) int {
-	t.Helper()
-	raw, err := sql.Open("sqlite", DSN(path))
-	if err != nil {
-		t.Fatalf("opening raw: %v", err)
-	}
-	defer raw.Close()
-
-	var n int
-	if err := raw.QueryRow(`SELECT count(*) FROM ` + revisionsTable).Scan(&n); err != nil {
-		t.Fatalf("counting revisions: %v", err)
-	}
-	return n
 }
 
 // TestStartCompareAndSwap covers the predicate-guarded update that `start`

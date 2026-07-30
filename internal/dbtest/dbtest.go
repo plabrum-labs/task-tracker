@@ -1,7 +1,9 @@
-// Package dbtest hands tests a migrated, throwaway database.
+// Package dbtest hands tests a throwaway database with the schema in place.
 //
-// It goes through the real db.OpenAndMigrate, so a broken migration fails in
-// whichever package's tests run first rather than on someone's real database.
+// The schema comes from Ent's auto-migrate, not from replaying migrations/:
+// tests are about the code, and coupling every package's tests to the
+// migration history would make an unrelated schema change fail everywhere at
+// once. `just db-check` is what keeps migrations/ honest instead.
 //
 // It cannot be used from package db itself — dbtest imports db, so that would
 // be an import cycle. internal/db keeps its own newTestClient helper.
@@ -22,9 +24,12 @@ import (
 // between parallel tests.
 func Client(t *testing.T) *ent.Client {
 	t.Helper()
-	client, err := db.OpenAndMigrate(t.Context(), db.DSN(":memory:"))
+	client, err := db.Open(t.Context(), db.DSN(":memory:"))
 	if err != nil {
 		t.Fatalf("opening test client: %v", err)
+	}
+	if err := client.Schema.Create(t.Context()); err != nil {
+		t.Fatalf("creating test schema: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := client.Close(); err != nil {

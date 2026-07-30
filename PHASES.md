@@ -37,16 +37,24 @@ Nothing else can start.
 - `atlas.hcl`, first migration generated into `migrations/`.
 - Connection helper: `modernc.org/sqlite` → `entsql.OpenDB`, DSN pragmas
   (`foreign_keys`, `journal_mode(WAL)`, `busy_timeout`).
-- Embedded `//go:embed migrations/*.sql` + apply-pending-on-open.
-- Test harness: one helper returning a fresh migrated in-memory client.
+- Test harness: one helper returning a fresh in-memory client, schema via `Schema.Create`.
 
-**Done when** `go test ./...` passes with a test that opens an in-memory DB, applies
-migrations, and round-trips one issue with a label, a milestone, a comment, and a ref.
+**Done when** `go test ./...` passes with a test that opens an in-memory DB, creates the
+schema, and round-trips one issue with a label, a milestone, a comment, and a ref.
 
-**Verify here, not later:** the two Ent/Atlas API details flagged in `IMPLEMENTATION.md` —
-the Atlas embedded-executor call for applying migrations, and predicate support on Ent's
-update builder (needed for the `start` compare-and-swap). Both are version-sensitive, and
-both are cheaper to discover now than in Phase 2.
+**Verify here, not later:** predicate support on Ent's update builder, needed for the
+`start` compare-and-swap. Version-sensitive, and cheaper to discover now than in Phase 2.
+
+**Applying migrations is not part of opening.** An earlier revision of this phase had
+`internal/db` apply pending migrations on open, so that a fresh database was always
+usable. That is reversed: applying is `just db-upgrade`, run by the Atlas CLI as its own
+step, and `Open` only connects.
+
+The cost is a real failure mode that did not exist before — a fresh database now gives
+`no such table: projects` on the first verb. **Phase 2 owns the fix**, and it is not
+optional: the CLI needs a first-run path and an upgrade path of its own. It also needs to
+settle the store location, which nothing has yet — the `db-*` recipes default to `tt.db`
+in the working directory, overridable via `TT_DB`, purely as a placeholder.
 
 ---
 
@@ -54,7 +62,7 @@ both are cheaper to discover now than in Phase 2.
 
 The types and reads everything else is written against.
 
-- `internal/db/open.go`, `internal/db/tx.go` — connection, pragmas, migration apply, `WithTx`.
+- `internal/db/open.go`, `internal/db/tx.go` — connection, pragmas, `WithTx`.
 - `internal/errs/` — the four sentinels every layer returns.
 - `internal/app/` — `api.go`, `capture.go`, `read.go`. One transaction per write method.
 - `internal/issue/model.go` — `Issue`, `Detail`, `AddParams`. The ent-free view types.
