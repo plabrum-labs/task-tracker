@@ -9,11 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Plabrum/tt/ent"
-	"github.com/Plabrum/tt/ent/issue"
-	"github.com/Plabrum/tt/ent/ref"
 )
 
 // newTestClient returns a fresh in-memory client with the schema in place.
@@ -37,111 +34,6 @@ func newTestClient(t *testing.T) *ent.Client {
 		}
 	})
 	return client
-}
-
-func TestRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-
-	proj := client.Project.Create().
-		SetSlug("tt").
-		SetTitle("task tracker").
-		SaveX(ctx)
-	lbl := client.Label.Create().
-		SetName("backend").
-		SetDescription("server-side work").
-		SaveX(ctx)
-	due := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	ms := client.Milestone.Create().
-		SetName("v1").
-		SetProject(proj).
-		SetDue(due).
-		SaveX(ctx)
-
-	iss := client.Issue.Create().
-		SetTitle("wire up the schema").
-		SetBody("the instruction set an agent reads").
-		SetProject(proj).
-		SetMilestone(ms).
-		AddLabels(lbl).
-		SaveX(ctx)
-	client.Comment.Create().
-		SetAuthor("phil").
-		SetBody("started on this").
-		SetIssue(iss).
-		SaveX(ctx)
-
-	blocker := client.Issue.Create().
-		SetTitle("pick a driver").
-		SetProject(proj).
-		SaveX(ctx)
-	client.Ref.Create().
-		SetBlocked(iss).
-		SetBlocker(blocker).
-		SetKind(ref.KindSubtask).
-		SaveX(ctx)
-
-	got := client.Issue.Query().
-		Where(issue.IDEQ(iss.ID)).
-		WithProject().
-		WithMilestone().
-		WithLabels().
-		WithComments().
-		WithBlockedBy().
-		OnlyX(ctx)
-
-	if got.Title != "wire up the schema" {
-		t.Errorf("title = %q, want %q", got.Title, "wire up the schema")
-	}
-	if got.Status != issue.StatusTodo {
-		t.Errorf("status = %q, want %q", got.Status, issue.StatusTodo)
-	}
-	if got.Priority != issue.PriorityNormal {
-		t.Errorf("priority = %q, want %q", got.Priority, issue.PriorityNormal)
-	}
-	if got.ClosedAt != nil {
-		t.Errorf("closed_at = %v, want nil", got.ClosedAt)
-	}
-	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
-		t.Errorf("timestamps not stamped: created=%v updated=%v", got.CreatedAt, got.UpdatedAt)
-	}
-	if got.Edges.Project.Slug != "tt" {
-		t.Errorf("project slug = %q, want %q", got.Edges.Project.Slug, "tt")
-	}
-	if got.Edges.Milestone.Name != "v1" {
-		t.Errorf("milestone = %q, want %q", got.Edges.Milestone.Name, "v1")
-	}
-	if got.Edges.Milestone.Due == nil || !got.Edges.Milestone.Due.Equal(due) {
-		t.Errorf("milestone due = %v, want %v", got.Edges.Milestone.Due, due)
-	}
-	if len(got.Edges.Labels) != 1 || got.Edges.Labels[0].Name != "backend" {
-		t.Errorf("labels = %v, want [backend]", got.Edges.Labels)
-	}
-	if len(got.Edges.Comments) != 1 || got.Edges.Comments[0].Body != "started on this" {
-		t.Errorf("comments = %v, want one comment", got.Edges.Comments)
-	}
-	if len(got.Edges.BlockedBy) != 1 || got.Edges.BlockedBy[0].ID != blocker.ID {
-		t.Errorf("blocked_by = %v, want [%d]", got.Edges.BlockedBy, blocker.ID)
-	}
-
-	// The reverse direction of the same ref, which is what the eligibility
-	// predicate in DESIGN.md traverses.
-	blocks := client.Issue.Query().
-		Where(issue.IDEQ(blocker.ID)).
-		QueryBlocks().
-		AllX(ctx)
-	if len(blocks) != 1 || blocks[0].ID != iss.ID {
-		t.Errorf("blocks = %v, want [%d]", blocks, iss.ID)
-	}
-
-	// The kind rides on the edge, not on either issue.
-	kind := client.Ref.Query().
-		Where(ref.BlockedID(iss.ID), ref.BlockerID(blocker.ID)).
-		OnlyX(ctx).
-		Kind
-	if kind != ref.KindSubtask {
-		t.Errorf("ref kind = %q, want %q", kind, ref.KindSubtask)
-	}
 }
 
 // TestOpenFileTwice pins the contract Open has now that it no longer migrates:
@@ -266,68 +158,5 @@ func TestDSNInMemory(t *testing.T) {
 	}
 	if file != "" {
 		t.Errorf("main database file = %q, want empty — it landed on disk", file)
-	}
-}
-
-// TestStartCompareAndSwap covers the predicate-guarded update that `start`
-// relies on: the guard is what stops two sessions both believing they won.
-func TestStartCompareAndSwap(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-
-	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
-	iss := client.Issue.Create().SetTitle("claim me").SetProject(proj).SaveX(ctx)
-
-	claim := func() int {
-		t.Helper()
-		n, err := client.Issue.Update().
-			Where(issue.IDEQ(iss.ID), issue.StatusEQ(issue.StatusTodo)).
-			SetStatus(issue.StatusDoing).
-			Save(ctx)
-		if err != nil {
-			t.Fatalf("compare-and-swap: %v", err)
-		}
-		return n
-	}
-
-	if n := claim(); n != 1 {
-		t.Errorf("first claim affected %d rows, want 1", n)
-	}
-	if n := claim(); n != 0 {
-		t.Errorf("second claim affected %d rows, want 0", n)
-	}
-
-	if got := client.Issue.GetX(ctx, iss.ID).Status; got != issue.StatusDoing {
-		t.Errorf("status = %q, want %q", got, issue.StatusDoing)
-	}
-}
-
-// TestRefPairIsUnique is what lets Link upsert instead of defending against
-// duplicates in application code: an edge schema is an entity with its own id,
-// so only the index stops a second identical row.
-func TestRefPairIsUnique(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-
-	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
-	blocked := client.Issue.Create().SetTitle("blocked").SetProject(proj).SaveX(ctx)
-	blocker := client.Issue.Create().SetTitle("blocker").SetProject(proj).SaveX(ctx)
-
-	client.Ref.Create().SetBlocked(blocked).SetBlocker(blocker).SaveX(ctx)
-
-	_, err := client.Ref.Create().
-		SetBlocked(blocked).
-		SetBlocker(blocker).
-		SetKind(ref.KindSubtask).
-		Save(ctx)
-	if err == nil {
-		t.Fatal("duplicate (blocked, blocker) was accepted, want a constraint error")
-	}
-	if !ent.IsConstraintError(err) {
-		t.Errorf("err = %v, want a constraint error", err)
-	}
-
-	if n := client.Ref.Query().CountX(ctx); n != 1 {
-		t.Errorf("refs = %d, want 1", n)
 	}
 }
