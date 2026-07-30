@@ -22,7 +22,7 @@ import (
 // connection means one database, with no cache=shared lifetime games.
 func newTestClient(t *testing.T) *ent.Client {
 	t.Helper()
-	client, err := Open(t.Context(), DSN(":memory:"))
+	client, err := OpenAndMigrate(t.Context(), DSN(":memory:"))
 	if err != nil {
 		t.Fatalf("opening test client: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestOpenFileTwice(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "tt.db")
 
-	first, err := Open(ctx, DSN(path))
+	first, err := OpenAndMigrate(ctx, DSN(path))
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestOpenFileTwice(t *testing.T) {
 		t.Fatalf("database file was not created: %v", err)
 	}
 
-	second, err := Open(ctx, DSN(path))
+	second, err := OpenAndMigrate(ctx, DSN(path))
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}

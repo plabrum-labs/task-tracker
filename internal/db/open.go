@@ -33,9 +33,9 @@ func DSN(path string) string {
 		"&_pragma=busy_timeout(5000)"
 }
 
-// Open connects to dsn, applies any pending migrations, and returns a ready
-// Ent client. Closing the client closes the underlying database.
-func Open(ctx context.Context, dsn string) (*ent.Client, error) {
+// OpenAndMigrate connects to dsn, applies any pending migrations, and returns a
+// ready Ent client. Closing the client closes the underlying database.
+func OpenAndMigrate(ctx context.Context, dsn string) (*ent.Client, error) {
 	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", dsn, err)

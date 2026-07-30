@@ -2,7 +2,7 @@
 //
 // It exists because six packages need the same twelve lines, and six copies is
 // six places to change when Open grows a parameter. It goes through the real
-// db.Open, so a broken migration fails in whichever package's tests run first
+// db.OpenAndMigrate, so a broken migration fails in whichever package's tests run first
 // rather than on someone's actual database.
 //
 // It cannot be used from package db itself — dbtest imports db, so that would
@@ -23,7 +23,7 @@ import (
 // lifetime games between parallel tests.
 func Client(t *testing.T) *ent.Client {
 	t.Helper()
-	client, err := db.Open(t.Context(), db.DSN(":memory:"))
+	client, err := db.OpenAndMigrate(t.Context(), db.DSN(":memory:"))
 	if err != nil {
 		t.Fatalf("opening test client: %v", err)
 	}
