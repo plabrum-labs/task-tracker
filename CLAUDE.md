@@ -7,20 +7,40 @@ Personal task tracker. Go CLI + TUI over SQLite, backed by Ent.
 Use the `justfile` recipes (`just --list`) rather than rediscovering the
 underlying commands.
 
-- `just format` — `gofmt -w .`. Run before every commit.
-- `just lint` — checks formatting and runs `go vet`.
+- `just format` — apply formatting. Run before every commit.
+- `just lint` — formatting, `go vet` and the enabled linters.
 - `just test` / `just test-race` — unit tests, in-memory SQLite.
 - `just generate` — regenerate ent. Run after editing `ent/schema/`, and commit
   the result.
 - `just migrate <name>` — generate a new versioned migration.
 - `just verify` — the full gate. A change is not complete until it passes.
+- `just hooks` — install the git hooks. Run once per clone.
 
 If a recipe is missing or broken, report that. Do not silently bypass or
 substitute it. Never claim verification succeeded unless the command was
 actually run.
 
-Linting is `gofmt` + `go vet` only; `golangci-lint` and `gofumpt` are not
-installed. Adding them is a stop-and-ask.
+Linting is `golangci-lint`, pinned as a `tool` directive in `go.mod` and run
+via `go tool` — there is nothing to install. `.golangci.yml` holds the enabled
+linters; `goimports` and `go vet` are part of it, so `just lint` subsumes both.
+Enabling or disabling a linter is a stop-and-ask, and every suppression in that
+file says why.
+
+## Hooks
+
+`pre-commit` runs the same justfile recipes, so a hook can never check
+something different from what you get at the terminal.
+
+- pre-commit: `just format`, `just lint`, `just build`.
+- pre-push: `just verify`, which adds the tests.
+
+Never commit with `--no-verify`. If a hook is in the way, that is a
+stop-and-ask.
+
+`pre-commit` stashes unstaged changes before running. A change to `go.mod` that
+is not yet staged is therefore invisible to the hooks, and a tool the commit
+itself introduces will fail to resolve — stage `go.mod` and `go.sum` in the
+same commit as whatever needs them.
 
 ## Surface decisions; decide them together
 
@@ -149,4 +169,9 @@ appears, not before.
 - Changing a `--json` key, an exit code, or a flag name.
 - Altering a committed migration — never do this; schema changes are a new
   forward migration.
+- Silencing a linter, whether by a `//nolint` directive or by disabling a check
+  in `.golangci.yml`. Fix the finding instead; if it is a false positive, say
+  so and let me decide. A `//nolint` without a reason fails the lint run
+  anyway.
+- Bypassing a git hook with `--no-verify`.
 - Expanding the task beyond its stated scope.
