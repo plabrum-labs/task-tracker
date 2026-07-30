@@ -18,10 +18,8 @@ import (
 
 // List returns the rows matching p, in pick order.
 //
-// It is four statements, and stays four statements whether it returns one row
-// or three hundred: labels and the milestone name are eager-loaded, and the
-// blocked flag and subtask rollup are batched over the ids the first query
-// produced. Nothing here scales with the row count.
+// Four statements whether it returns one row or three hundred: the blocked flag
+// and the rollup are batched over the ids the first query produced.
 func List(ctx context.Context, cl *ent.Client, p ListParams) ([]Row, error) {
 	preds, err := predicates(p)
 	if err != nil {
@@ -41,8 +39,7 @@ func List(ctx context.Context, cl *ent.Client, p ListParams) ([]Row, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing issues: %w", err)
 	}
-	// Non-nil, so `tt ls --json` prints [] rather than null on a fresh
-	// database. The empty case also skips three pointless round trips.
+	// Non-nil, so `tt ls --json` prints [] rather than null.
 	if len(found) == 0 {
 		return []Row{}, nil
 	}
@@ -77,9 +74,7 @@ func List(ctx context.Context, cl *ent.Client, p ListParams) ([]Row, error) {
 			Priority: priority,
 			Labels:   []string{},
 			Blocked:  blocked[e.ID],
-			// A miss is the zero Rollup, which is exactly right: Total == 0
-			// renders no badge, and an issue with no subtasks is absent from
-			// the map rather than present with a zero.
+			// A miss is the zero Rollup, and Total == 0 renders no badge.
 			Subtasks:  rollups[e.ID],
 			CreatedAt: e.CreatedAt,
 			UpdatedAt: e.UpdatedAt,
@@ -102,13 +97,12 @@ func List(ctx context.Context, cl *ent.Client, p ListParams) ([]Row, error) {
 func predicates(p ListParams) ([]predicate.Issue, error) {
 	var preds []predicate.Issue
 
-	// "" is not a project, it is the absence of scoping — what -A passes.
+	// "" is the absence of scoping, which is what -A passes.
 	if p.Project != "" {
 		preds = append(preds, entissue.HasProjectWith(entproject.SlugEQ(p.Project)))
 	}
 
-	// The default hides done work: a list you have to filter every time is a
-	// list you stop reading. -a passes all three explicitly.
+	// The default hides done work; -a passes all three explicitly.
 	statuses := p.Statuses
 	if len(statuses) == 0 {
 		statuses = []issue.Status{issue.StatusTodo, issue.StatusDoing}
@@ -130,9 +124,7 @@ func predicates(p ListParams) ([]predicate.Issue, error) {
 	if p.Milestone != "" {
 		preds = append(preds, entissue.HasMilestoneWith(entmilestone.NameEQ(p.Milestone)))
 	}
-	// Title only. Searching bodies would need the bodies loaded, and a
-	// substring hit inside a paragraph is not what someone typing two words at
-	// a prompt is looking for.
+	// Title only: searching bodies would mean loading them.
 	if p.Search != "" {
 		preds = append(preds, entissue.TitleContainsFold(p.Search))
 	}
@@ -142,31 +134,17 @@ func predicates(p ListParams) ([]predicate.Issue, error) {
 	return preds, nil
 }
 
-// isBlocked is the single definition of "blocked", used by both --blocked and
-// the Blocked column. One expression means the flag and the column cannot
-// disagree about which issues they are talking about.
-//
-// It ignores kind deliberately: a subtask blocks its parent exactly as a
-// dependency does, which is the whole reason subtask is a subset of ref rather
-// than a parallel relation.
+// isBlocked is the one definition of "blocked", so --blocked and the Blocked
+// column cannot disagree. It ignores kind: every ref blocks.
 func isBlocked() predicate.Issue {
 	return entissue.HasBlockedByWith(entissue.StatusNEQ(entissue.StatusDone))
 }
 
-// pickOrder is what the top of the list means: high priority first, then
-// oldest first, then by id.
+// pickOrder is high priority first, then oldest first, then by id.
 //
-// The priority term is a CASE rather than an ORDER BY on the column because
-// the enum is stored as text. `DESC` would sort "normal" above "hi", the exact
-// inverse of the intent; `ASC` happens to be right today only because
-// "hi" < "normal" alphabetically, and would silently break the day a third
-// level is added. Spelling the order out means the sort follows the enum's
-// meaning rather than its spelling. TestListPickOrder is the regression test.
-//
-// The id tiebreak is not cosmetic: the TUI degrades its selection by id across
-// refreshes, which needs the list to be stable when two issues share a
-// created_at — and at SQLite's timestamp resolution, two issues added in one
-// script often do.
+// The priority term is a CASE rather than an ORDER BY on the column: the enum
+// is stored as text, so the column sorts alphabetically. ASC happens to put
+// "hi" above "normal" today and would invert the day a third level is added.
 func pickOrder() []entissue.OrderOption {
 	return []entissue.OrderOption{
 		func(s *sql.Selector) {
@@ -205,16 +183,12 @@ type refCount struct {
 
 // subtaskRollup counts each issue's subtask children, and how many are done.
 //
-// Two queries rather than one because the done count needs the *child's*
-// status, which lives on a joined table, and ent cannot express a filtered
-// aggregate alongside a plain one in a single GROUP BY without dropping to a
-// raw modifier.
+// Two queries rather than one: the done count needs the child's status, which
+// lives on a joined table, and ent cannot express a filtered aggregate
+// alongside a plain one in a single GROUP BY without a raw modifier.
 //
-// Both group by blocked_id. A ref reads "blocked is blocked by blocker", so on
-// a subtask edge the parent is the blocked end and the child is the blocker —
-// grouping by blocked_id groups by parent. A child under two parents therefore
-// counts toward both, which is the DAG behaviour a tree could not express and
-// the reason subtasks are refs at all.
+// Both group by blocked_id, which is the parent — a ref reads "blocked is
+// blocked by blocker", so on a subtask edge the child is the blocker.
 func subtaskRollup(ctx context.Context, cl *ent.Client, ids []int) (map[int]issue.Rollup, error) {
 	count := func(extra ...predicate.Ref) ([]refCount, error) {
 		preds := append([]predicate.Ref{

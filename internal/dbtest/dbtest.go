@@ -1,9 +1,7 @@
 // Package dbtest hands tests a migrated, throwaway database.
 //
-// It exists because six packages need the same twelve lines, and six copies is
-// six places to change when Open grows a parameter. It goes through the real
-// db.OpenAndMigrate, so a broken migration fails in whichever package's tests run first
-// rather than on someone's actual database.
+// It goes through the real db.OpenAndMigrate, so a broken migration fails in
+// whichever package's tests run first rather than on someone's real database.
 //
 // It cannot be used from package db itself — dbtest imports db, so that would
 // be an import cycle. internal/db keeps its own newTestClient helper.
@@ -19,9 +17,9 @@ import (
 
 // Client returns a fresh in-memory client, closed when the test finishes.
 //
-// Each call gets its own database: SetMaxOpenConns(1) inside Open means one
-// connection and therefore one private `:memory:`, with no shared-cache
-// lifetime games between parallel tests.
+// Each call gets its own database: SetMaxOpenConns(1) means one connection and
+// therefore one private `:memory:`, with no shared-cache lifetime games
+// between parallel tests.
 func Client(t *testing.T) *ent.Client {
 	t.Helper()
 	client, err := db.OpenAndMigrate(t.Context(), db.DSN(":memory:"))

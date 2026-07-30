@@ -11,17 +11,12 @@ import (
 // WithTx runs fn inside a transaction, committing if it returns nil and rolling
 // back otherwise.
 //
-// The deferred recover is not defensive tidiness. Open pins the pool to a
-// single connection, so a transaction that is neither committed nor rolled back
-// holds the only connection there is: the next query blocks forever rather than
-// failing. A panic escaping fn would therefore turn a crash — which a caller can
-// see and fix — into a hang, which looks like the tool is broken. Rolling back
-// and re-panicking preserves the original stack while freeing the connection.
+// The deferred recover is load-bearing. The pool is pinned to a single
+// connection, so a transaction that is neither committed nor rolled back holds
+// the only connection there is and the next query blocks forever. Rolling back
+// and re-panicking turns that hang back into the crash it was.
 //
-// Transactions do not nest. Only the outermost service method calls WithTx;
-// everything it composes takes an *ent.Client and inherits whichever one it is
-// handed, which is what lets a composed Add and a standalone Add run the same
-// code.
+// Transactions do not nest: only an app method calls WithTx.
 func WithTx(ctx context.Context, client *ent.Client, fn func(tx *ent.Client) error) error {
 	tx, err := client.Tx(ctx)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	entissue "github.com/Plabrum/tt/ent/issue"
 	entref "github.com/Plabrum/tt/ent/ref"
 	"github.com/Plabrum/tt/internal/dbtest"
+	"github.com/Plabrum/tt/internal/errs"
 	"github.com/Plabrum/tt/internal/issue"
 	"github.com/Plabrum/tt/internal/project"
 )
@@ -142,7 +143,7 @@ func TestGetNotFound(t *testing.T) {
 	client := dbtest.Client(t)
 
 	_, err := issue.Get(ctx, client, 404)
-	if !errors.Is(err, issue.ErrNotFound) {
-		t.Errorf("err = %v, want it to wrap issue.ErrNotFound", err)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want it to wrap errs.ErrNotFound", err)
 	}
 }

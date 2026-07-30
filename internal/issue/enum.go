@@ -6,14 +6,12 @@ import (
 	"github.com/Plabrum/tt/internal/errs"
 )
 
-// The six conversions across the ent/domain boundary. They are exhaustive
-// switches rather than casts so that a value added to one side and not the
-// other fails at the default arm instead of travelling as a Status the rest of
-// the code has never heard of.
+// The conversions across the ent/domain boundary. Exhaustive switches rather
+// than casts, so a value added to one side and not the other fails at the
+// default arm instead of travelling as a constant nothing matches.
 //
-// Ent appears in the signatures, which is deliberate: an exported *function*
-// taking entissue.Status is still unreachable from cli/ and ui/, since neither
-// can name the type without importing ent.
+// Ent in an exported function signature is still unreachable from cli/ and ui/:
+// neither can name entissue.Status without importing ent.
 
 // StatusFromEnt converts a stored status to the domain value.
 func StatusFromEnt(s entissue.Status) (Status, error) {

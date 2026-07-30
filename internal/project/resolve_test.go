@@ -26,13 +26,12 @@ func fixture(t *testing.T) string {
 	t.Helper()
 	base := t.TempDir()
 
-	mkdir := func(parts ...string) string {
+	mkdir := func(parts ...string) {
 		t.Helper()
 		p := filepath.Join(append([]string{base}, parts...)...)
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			t.Fatalf("creating %s: %v", p, err)
 		}
-		return p
 	}
 	write := func(body string, parts ...string) {
 		t.Helper()

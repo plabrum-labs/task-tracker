@@ -55,20 +55,21 @@ both are cheaper to discover now than in Phase 2.
 The types and reads everything else is written against.
 
 - `internal/db/open.go`, `internal/db/tx.go` — connection, pragmas, migration apply, `WithTx`.
-- `internal/app/app.go` — the `Services` wiring struct and its constructor. Nothing else.
+- `internal/errs/` — the four sentinels every layer returns.
+- `internal/app/` — `api.go`, `capture.go`, `read.go`. One transaction per write method.
 - `internal/issue/model.go` — `Issue`, `Detail`, `AddParams`. The ent-free view types.
 - `internal/project/` — cwd → slug inference, upsert.
-- `internal/issue/` — `repository.go` + `service.go` for `Add` and `Get`.
+- `internal/issue/` — `repository.go`, `enum.go`, `service.go` for `Create` and `Get`.
 - `internal/query/` — `Row` plus `List`, resolving labels, milestone name, and subtask rollup
   in one pass.
 
-**Done when** `issue.Service.Add` + `query.List` are tested against in-memory SQLite,
-including project auto-create, and no exported struct in `issue` or `query` exposes an ent
-type.
+**Done when** `app.Add` + `app.List` are tested against in-memory SQLite, including project
+auto-create, and no exported struct in `issue` or `query` exposes an ent type — the enum
+conversions being the deliberate, documented exception.
 
-Phase 1 is deliberately small: its only job is to freeze the view types and the `Services`
-struct that every lane below compiles against. `query.Row` and `issue.Detail` in particular
-are the contract for lane 2C, which can't start until their fields are settled.
+Phase 1 is deliberately small: its only job is to freeze the view types and the `API` that
+every lane below compiles against. `query.Row` and `issue.Detail` in particular are the
+contract for lane 2C, which can't start until their fields are settled.
 
 ---
 
@@ -78,15 +79,15 @@ Feature packages are the ownership boundary, so the lanes touch disjoint directo
 
 | Lane | Scope | Owns |
 |---|---|---|
-| **2A · CLI capture** | dispatch, `add`, `ls`, `show`, output rules, `--json`, exit codes | `main.go`, `cli/` |
-| **2B · Work features** | lifecycle, refs, comments | `internal/issue/`, `internal/ref/`, `internal/comment/` |
-| **2C · Taxonomy features** | labels, milestones, and their `query/` aggregates | `internal/label/`, `internal/milestone/`, `internal/query/` |
+| **2A · CLI capture** | dispatch, `add`, `ls`, `show`, output rules, `--json`, exit codes | `main.go`, `cli/`, `cli/exit.go` |
+| **2B · Work features** | lifecycle, refs, comments | `internal/issue/`, `internal/ref/`, `internal/comment/`, `internal/app/lifecycle.go`, `internal/app/refs.go`, `internal/app/capture.go` |
+| **2C · Taxonomy features** | labels, milestones, and their `query/` aggregates | `internal/label/`, `internal/milestone/`, `internal/query/`, `internal/app/taxonomy.go` |
 | **2D · TUI pure funcs** | `columns()`, selection resolution, `fits()` | `ui/columns.go`, `ui/select.go`, `ui/layout.go` |
 
 2B and 2C split cleanly *because* of the acyclic rules in `IMPLEMENTATION.md`: taxonomy never
-imports `issue`, so 2C never waits on 2B. The one crossing is `issue.Service.Add` needing
-`label`/`milestone` resolve methods — so 2C lands those two signatures first, and 2B codes
-against them.
+imports `issue`, so 2C never waits on 2B. The one crossing is `app.Add` needing
+`label`/`milestone` resolve funcs — so 2C lands those two signatures first, and 2B, which
+owns `internal/app/capture.go`, codes against them.
 
 ### 2A — CLI capture surface
 
@@ -99,11 +100,13 @@ clean, and `tt ls --json | jq` parses.
 
 ### 2B — Work features
 
-- `issue.Service`: `Start` (compare-and-swap + bounded retry), `Done` (calling
-  `ref.Service.AssertClosable`, `--force` bypass), `Drop`.
-- `comment.Service`: `Note`.
-- `ref.Service`: `Link`/`Unlink` with upsert-not-duplicate, cycle DFS carrying the path in the
-  error, `AssertClosable`.
+- `internal/issue`: `Start` (compare-and-swap + bounded retry), `Done` (`--force` bypass),
+  `Drop`, surfaced as `app.Start`/`app.Done`/`app.Drop` in `internal/app/lifecycle.go`.
+  `app.Done` is where `ref.AssertClosable` is called — it is an issue rule needing ref data,
+  so it composes rather than importing across.
+- `internal/comment`: `Note`.
+- `internal/ref`: `Link`/`Unlink` with upsert-not-duplicate, cycle DFS carrying the path in
+  the error, `AssertClosable`.
 - `internal/frontmatter/` — parse/render the `$EDITOR` form. **Shared by 3A (`edit`) and 3B
   (`e`)**, so it gets built once, here, early.
 
@@ -113,8 +116,8 @@ on an open parent and succeeds with `--force`, two concurrent `Start` calls yiel
 
 ### 2C — Taxonomy features
 
-- `label.Service`, `milestone.Service`: upsert-on-first-use, resolve-by-name, set `due`/desc,
-  delete.
+- `internal/label`, `internal/milestone`: upsert-on-first-use, resolve-by-name, set
+  `due`/desc, delete — package-level funcs taking a client, like every other feature.
 - `query/`: `Eligible` and `Next` (the one-level blocker predicate), subtask rollup, milestone
   progress, label open-counts. These live here, not in the taxonomy services, because they
   join against issues.
@@ -187,11 +190,19 @@ Three places where lanes touch the same thing:
 3. **`ent/schema/`** — after Phase 0, nobody touches it. If a lane genuinely needs a schema
    change, it stops, the change lands on its own with its own migration, and lanes rebase.
    Concurrent `atlas migrate diff` runs corrupt `atlas.sum` ordering.
-4. **`internal/app/app.go`** — every lane that adds a service appends one field to the
-   `Services` struct. One-line additions, but they collide textually, so expect trivial
-   conflicts here and resolve by keeping both.
-5. **`label`/`milestone` resolve signatures** — 2B's `issue.Service.Add` calls them, 2C owns
-   them. 2C lands those two method signatures before anything else in the lane.
+4. **`internal/app/`** — one file per lane, so lanes do not collide:
+
+   | File | Owner |
+   |---|---|
+   | `api.go`, `read.go` | Phase 1; nobody after |
+   | `capture.go` | 2B |
+   | `lifecycle.go`, `refs.go` | 2B |
+   | `taxonomy.go` | 2C |
+   | `edit.go` | 3A |
+
+5. **`app.Add` in `capture.go`** — 2B owns the file and writes the issue and ref calls, but
+   2C's `label.Ensure`/`milestone.Ensure` calls land in the same method. 2C lands those two
+   function signatures before anything else in the lane; 2B codes against them.
 
 ## Solo path
 
@@ -202,5 +213,5 @@ as possible:
 
 2A first is deliberate: it makes capture work end to end at the earliest possible moment,
 which is the milestone that decides whether this tool survives. 2C before 2B because
-`issue.Service.Add` calls into label/milestone resolution, so building taxonomy first avoids
-writing against signatures that don't exist yet.
+`app.Add` calls into label/milestone resolution, so building taxonomy first avoids writing
+against signatures that don't exist yet.

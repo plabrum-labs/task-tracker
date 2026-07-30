@@ -15,8 +15,7 @@ import (
 )
 
 // insert writes a new issue. Status and the timestamps come from schema
-// defaults, so there is nothing here that a second write path could set
-// differently.
+// defaults, so a second write path cannot set them differently.
 func insert(ctx context.Context, cl *ent.Client, projectID int, p AddParams) (*ent.Issue, error) {
 	domainPriority := p.Priority
 	if domainPriority == "" {
@@ -38,11 +37,8 @@ func insert(ctx context.Context, cl *ent.Client, projectID int, p AddParams) (*e
 	return created, nil
 }
 
-// view loads one issue with everything Detail needs.
-//
-// All four collections hang off Issue itself, so this is a single eager-loaded
-// query rather than a call into the ref and comment services — which do not
-// exist yet, and which this package must not depend on when they do.
+// view loads one issue with everything Detail needs. All four collections hang
+// off Issue itself, so it stays one eager-loaded query.
 func view(ctx context.Context, cl *ent.Client, id int) (Detail, error) {
 	e, err := cl.Issue.Query().
 		Where(entissue.IDEQ(id)).
@@ -66,11 +62,8 @@ func view(ctx context.Context, cl *ent.Client, id int) (Detail, error) {
 	return toDetail(e)
 }
 
-// toIssue flattens an ent row and its eager-loaded edges.
-//
-// It can fail: a row written by a newer binary carries an enum value this one
-// has no constant for, which is a real situation for a tool installed on two
-// machines at different times.
+// toIssue flattens an ent row and its eager-loaded edges. It fails on a row
+// written by a newer binary, whose enum values this one has no constant for.
 func toIssue(e *ent.Issue) (Issue, error) {
 	status, err := StatusFromEnt(e.Status)
 	if err != nil {
@@ -108,8 +101,8 @@ func toIssue(e *ent.Issue) (Issue, error) {
 	return iss, nil
 }
 
-// toDetail assembles the full view. Every slice is initialised, because the
-// --json contract says an empty list prints as [] and never as null.
+// toDetail assembles the full view. Every slice is initialised, because an
+// empty list prints as [] and never as null.
 func toDetail(e *ent.Issue) (Detail, error) {
 	iss, err := toIssue(e)
 	if err != nil {
@@ -142,9 +135,8 @@ func toDetail(e *ent.Issue) (Detail, error) {
 			d.Blockers = append(d.Blockers, link)
 		}
 	}
-	// The reverse edge is not split: whatever waits on this issue waits on it,
-	// and a parent that would disappear from a child's view is worse than a
-	// list with two kinds in it.
+	// The reverse edge is not split by kind: a parent that disappeared from its
+	// child's view would be worse than one list holding both kinds.
 	for _, r := range e.Edges.BlockerRefs {
 		other := r.Edges.Blocked
 		if other == nil {
@@ -170,10 +162,8 @@ func toDetail(e *ent.Issue) (Detail, error) {
 		})
 	}
 
-	// Counted over the slice that was just built rather than by re-querying.
-	// query.List computes the same number with a GROUP BY because it has a
-	// page of issues and no loaded children; the two arithmetics differ, but
-	// the Rollup type is shared so the renderers cannot.
+	// Counted over the slice just built. query.List reaches the same number
+	// with a GROUP BY, having a page of issues and no loaded children.
 	d.Rollup = Rollup{Total: len(d.Subtasks)}
 	for _, s := range d.Subtasks {
 		if s.Status == StatusDone {

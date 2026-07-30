@@ -140,8 +140,9 @@ func TestListOrderIsStable(t *testing.T) {
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	same := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	var want []int
-	for _, title := range []string{"a", "b", "c", "d"} {
+	titles := []string{"a", "b", "c", "d"}
+	want := make([]int, 0, len(titles))
+	for _, title := range titles {
 		e := client.Issue.Create().
 			SetTitle(title).SetProject(proj).SetCreatedAt(same).SaveX(ctx)
 		want = append(want, e.ID)
@@ -426,8 +427,9 @@ func TestListLimit(t *testing.T) {
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	at := func(day int) time.Time { return time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC) }
-	var all []int
-	for i, title := range []string{"first", "second", "third"} {
+	titles := []string{"first", "second", "third"}
+	all := make([]int, 0, len(titles))
+	for i, title := range titles {
 		e := client.Issue.Create().
 			SetTitle(title).SetProject(proj).SetCreatedAt(at(i + 1)).SaveX(ctx)
 		all = append(all, e.ID)

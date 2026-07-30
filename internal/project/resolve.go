@@ -37,12 +37,9 @@ type Scope struct {
 	Source Source
 }
 
-// Resolver turns a working directory into a project slug.
-//
-// Both ambient inputs are fields rather than direct calls to os.Getwd and
-// os.Getenv. That is what makes resolution testable: a test builds a tree under
-// t.TempDir, points Dir at a leaf, and the real filesystem does the rest. No
-// test ever has to chdir, so they all stay parallel-safe.
+// Resolver turns a working directory into a project slug. Both ambient inputs
+// are fields so that a test can point Dir at a tree under t.TempDir instead of
+// calling chdir, which no parallel test can do.
 type Resolver struct {
 	Dir    string
 	Getenv func(string) string
@@ -61,9 +58,8 @@ func NewResolver() (Resolver, error) {
 // nearest .tt file, the nearest ancestor .git, then the working directory's
 // own name.
 //
-// Rules 3 and 4 share one upward walk rather than two, because they walk the
-// same chain: return on the first .tt, and remember the first .git in case no
-// marker ever turns up.
+// The marker and git rules share one upward walk: return on the first .tt, and
+// remember the first .git in case no marker turns up.
 func (r Resolver) Resolve(override string) (Scope, error) {
 	if s := strings.TrimSpace(override); s != "" {
 		return r.scope(s, SourceOverride, "--project")
@@ -100,10 +96,8 @@ func (r Resolver) Resolve(override string) (Scope, error) {
 }
 
 // scope slugifies and rejects an input that slugifies away to nothing.
-//
 // Everything funnels through here so `--project My-Repo`, TT_PROJECT="my repo"
-// and a directory called "My Repo" cannot produce three separate rows for one
-// project.
+// and a directory called "My Repo" cannot become three projects.
 func (r Resolver) scope(raw string, src Source, origin string) (Scope, error) {
 	slug := Slugify(raw)
 	if slug == "" {
