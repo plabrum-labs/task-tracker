@@ -1,14 +1,80 @@
 package app_test
 
 import (
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	entissue "github.com/Plabrum/tt/ent/issue"
 	entproject "github.com/Plabrum/tt/ent/project"
+	"github.com/Plabrum/tt/internal/app"
 	"github.com/Plabrum/tt/internal/dbtest"
+	"github.com/Plabrum/tt/internal/errs"
 	"github.com/Plabrum/tt/internal/issue"
+	"github.com/Plabrum/tt/internal/query"
 )
+
+// entPkg is the prefix no type in the API's surface may come from.
+const entPkg = "github.com/Plabrum/tt/ent"
+
+// TestAPIHidesEnt walks every parameter and return type of every API method,
+// through slices, maps, pointers and struct fields, asserting none is declared
+// in ent.
+//
+// The frontends are what this protects: an ent entity reaching cli/ or ui/ puts
+// query builders and lazily-loaded edges in render code, where a nil edge slice
+// means either "no rows" or "not loaded" and a renderer cannot tell which. The
+// import graph alone would not catch it, since a method could return a type
+// that merely embeds one.
+func TestAPIHidesEnt(t *testing.T) {
+	t.Parallel()
+
+	typ := reflect.TypeOf(&app.API{})
+	if typ.NumMethod() == 0 {
+		t.Fatal("API has no methods — this test would pass vacuously")
+	}
+	for i := range typ.NumMethod() {
+		m := typ.Method(i)
+		seen := map[reflect.Type]bool{}
+		for j := range m.Type.NumIn() {
+			walkForEnt(t, m.Name, m.Type.In(j), seen)
+		}
+		for j := range m.Type.NumOut() {
+			walkForEnt(t, m.Name, m.Type.Out(j), seen)
+		}
+	}
+}
+
+func walkForEnt(t *testing.T, method string, typ reflect.Type, seen map[reflect.Type]bool) {
+	t.Helper()
+	if seen[typ] {
+		return
+	}
+	seen[typ] = true
+
+	if pkg := typ.PkgPath(); pkg == entPkg || strings.HasPrefix(pkg, entPkg+"/") {
+		t.Errorf("API.%s exposes %s.%s", method, pkg, typ.Name())
+		return
+	}
+
+	switch typ.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Chan:
+		walkForEnt(t, method, typ.Elem(), seen)
+	case reflect.Map:
+		walkForEnt(t, method, typ.Key(), seen)
+		walkForEnt(t, method, typ.Elem(), seen)
+	case reflect.Struct:
+		for i := range typ.NumField() {
+			// Unexported fields are out of a frontend's reach whatever they
+			// hold, and skipping them is what lets API itself — the receiver of
+			// every method here — keep its ent client.
+			if f := typ.Field(i); f.IsExported() {
+				walkForEnt(t, method, f.Type, seen)
+			}
+		}
+	}
+}
 
 func ptr[T any](v T) *T { return &v }
 
@@ -167,5 +233,45 @@ func TestAddIsAtomic(t *testing.T) {
 
 	if n := client.Project.Query().Where(entproject.SlugEQ("ghost")).CountX(ctx); n != 0 {
 		t.Errorf("project rows = %d, want 0 — the upsert was not rolled back", n)
+	}
+}
+
+// TestAddIsVisibleToReads: an issue captured through one method must be
+// readable through the others, which only holds if all three run against the
+// same client.
+func TestAddIsVisibleToReads(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	_, api := dbtest.API(t)
+
+	added, err := api.Add(ctx, issue.AddParams{Project: "tt", Title: "wired"})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	rows, err := api.List(ctx, query.ListParams{Project: "tt"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != added.ID {
+		t.Errorf("rows = %+v, want just the issue %d that was added", rows, added.ID)
+	}
+
+	shown, err := api.Show(ctx, added.ID)
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if shown.ID != added.ID || shown.Title != "wired" {
+		t.Errorf("shown = %d/%q, want %d/%q", shown.ID, shown.Title, added.ID, "wired")
+	}
+}
+
+func TestShowNotFound(t *testing.T) {
+	t.Parallel()
+	_, api := dbtest.API(t)
+
+	_, err := api.Show(t.Context(), 404)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want it to wrap errs.ErrNotFound", err)
 	}
 }
