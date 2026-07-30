@@ -1,11 +1,11 @@
-package models_test
+package contract_test
 
 import (
 	"errors"
 	"testing"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // The parsers are shared by the CLI's flags and the TUI's filters, so the two
@@ -16,19 +16,19 @@ func TestParseIssueStatus(t *testing.T) {
 
 	tests := []struct {
 		in      string
-		want    models.IssueStatus
+		want    contract.IssueStatus
 		wantErr bool
 	}{
-		{in: "todo", want: models.IssueTodo},
-		{in: "DOING", want: models.IssueDoing},
-		{in: "  done  ", want: models.IssueDone},
+		{in: "todo", want: contract.IssueTodo},
+		{in: "DOING", want: contract.IssueDoing},
+		{in: "  done  ", want: contract.IssueDone},
 		{in: "closed", wantErr: true},
 		{in: "", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
-			got, err := models.ParseIssueStatus(tt.in)
+			got, err := contract.ParseIssueStatus(tt.in)
 			if tt.wantErr {
 				if !errors.Is(err, errs.ErrInvalid) {
 					t.Errorf("error = %v, want ErrInvalid", err)
@@ -50,17 +50,17 @@ func TestParsePriority(t *testing.T) {
 
 	tests := []struct {
 		in      string
-		want    models.Priority
+		want    contract.Priority
 		wantErr bool
 	}{
-		{in: "normal", want: models.PriorityNormal},
-		{in: "HI", want: models.PriorityHi},
+		{in: "normal", want: contract.PriorityNormal},
+		{in: "HI", want: contract.PriorityHi},
 		{in: "urgent", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
-			got, err := models.ParsePriority(tt.in)
+			got, err := contract.ParsePriority(tt.in)
 			if tt.wantErr {
 				if !errors.Is(err, errs.ErrInvalid) {
 					t.Errorf("error = %v, want ErrInvalid", err)
@@ -82,17 +82,17 @@ func TestParseProjectStatus(t *testing.T) {
 
 	tests := []struct {
 		in      string
-		want    models.ProjectStatus
+		want    contract.ProjectStatus
 		wantErr bool
 	}{
-		{in: "active", want: models.ProjectActive},
-		{in: "ARCHIVED", want: models.ProjectArchived},
+		{in: "active", want: contract.ProjectActive},
+		{in: "ARCHIVED", want: contract.ProjectArchived},
 		{in: "paused", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
-			got, err := models.ParseProjectStatus(tt.in)
+			got, err := contract.ParseProjectStatus(tt.in)
 			if tt.wantErr {
 				if !errors.Is(err, errs.ErrInvalid) {
 					t.Errorf("error = %v, want ErrInvalid", err)
@@ -114,30 +114,30 @@ func TestIssueAddParamsValidate(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		params  models.IssueAddParams
+		params  contract.IssueAddParams
 		wantErr bool
 	}{
 		{
 			name:   "the minimum",
-			params: models.IssueAddParams{Project: "tt", Title: "work"},
+			params: contract.IssueAddParams{Project: "tt", Title: "work"},
 		},
 		{
 			name:   "an empty priority normalises later",
-			params: models.IssueAddParams{Project: "tt", Title: "work", Priority: ""},
+			params: contract.IssueAddParams{Project: "tt", Title: "work", Priority: ""},
 		},
 		{
 			name:    "no project",
-			params:  models.IssueAddParams{Title: "work"},
+			params:  contract.IssueAddParams{Title: "work"},
 			wantErr: true,
 		},
 		{
 			name:    "a blank title",
-			params:  models.IssueAddParams{Project: "tt", Title: "   "},
+			params:  contract.IssueAddParams{Project: "tt", Title: "   "},
 			wantErr: true,
 		},
 		{
 			name:    "an unknown priority",
-			params:  models.IssueAddParams{Project: "tt", Title: "work", Priority: "urgent"},
+			params:  contract.IssueAddParams{Project: "tt", Title: "work", Priority: "urgent"},
 			wantErr: true,
 		},
 	}

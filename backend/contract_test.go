@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // The API is all a frontend can see, so this file walks the surface a frontend
@@ -16,7 +16,7 @@ func TestCaptureAndShow(t *testing.T) {
 	t.Parallel()
 	_, api := dbtest.API(t)
 
-	created, err := api.Add(t.Context(), models.IssueAddParams{Project: "tt", Title: "ship it"})
+	created, err := api.Add(t.Context(), contract.IssueAddParams{Project: "tt", Title: "ship it"})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestCaptureAndShow(t *testing.T) {
 		t.Error("a shown issue carries no menu")
 	}
 
-	listed, err := api.ListIssues(t.Context(), models.IssueListParams{})
+	listed, err := api.ListIssues(t.Context(), contract.IssueListParams{})
 	if err != nil {
 		t.Fatalf("ListIssues: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestWritesReturnTheReloadedObject(t *testing.T) {
 	t.Parallel()
 	_, api := dbtest.API(t)
 
-	created, err := api.Add(t.Context(), models.IssueAddParams{Project: "tt", Title: "work"})
+	created, err := api.Add(t.Context(), contract.IssueAddParams{Project: "tt", Title: "work"})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -61,12 +61,12 @@ func TestWritesReturnTheReloadedObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueStart: %v", err)
 	}
-	if started.Status != models.IssueDoing {
-		t.Errorf("Status = %q, want %q", started.Status, models.IssueDoing)
+	if started.Status != contract.IssueDoing {
+		t.Errorf("Status = %q, want %q", started.Status, contract.IssueDoing)
 	}
 	// The returned menu already reflects the write that just happened.
 	for _, a := range started.Actions {
-		if a.Key == models.KeyIssueStart {
+		if a.Key == contract.KeyIssueStart {
 			t.Error("a doing issue still offers start")
 		}
 	}
@@ -75,7 +75,7 @@ func TestWritesReturnTheReloadedObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClose: %v", err)
 	}
-	if closed.Status != models.IssueDone || closed.ClosedAt == nil {
+	if closed.Status != contract.IssueDone || closed.ClosedAt == nil {
 		t.Errorf("closed issue = %+v, want done with a ClosedAt", closed)
 	}
 }
@@ -84,7 +84,7 @@ func TestProjectLifecycle(t *testing.T) {
 	t.Parallel()
 	_, api := dbtest.API(t)
 
-	if _, err := api.Add(t.Context(), models.IssueAddParams{Project: "tt", Title: "work"}); err != nil {
+	if _, err := api.Add(t.Context(), contract.IssueAddParams{Project: "tt", Title: "work"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -92,19 +92,19 @@ func TestProjectLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProjectArchive: %v", err)
 	}
-	if archived.Status != models.ProjectArchived {
-		t.Errorf("Status = %q, want %q", archived.Status, models.ProjectArchived)
+	if archived.Status != contract.ProjectArchived {
+		t.Errorf("Status = %q, want %q", archived.Status, contract.ProjectArchived)
 	}
 
 	// Archiving takes the project's work out of the way, and keeps new work out.
-	listed, err := api.ListIssues(t.Context(), models.IssueListParams{})
+	listed, err := api.ListIssues(t.Context(), contract.IssueListParams{})
 	if err != nil {
 		t.Fatalf("ListIssues: %v", err)
 	}
 	if len(listed) != 0 {
 		t.Errorf("ListIssues = %+v, want none", listed)
 	}
-	_, err = api.Add(t.Context(), models.IssueAddParams{Project: "tt", Title: "more"})
+	_, err = api.Add(t.Context(), contract.IssueAddParams{Project: "tt", Title: "more"})
 	if !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("Add into an archived project = %v, want ErrConflict", err)
 	}
@@ -112,7 +112,7 @@ func TestProjectLifecycle(t *testing.T) {
 	if _, err := api.ProjectRestore(t.Context(), "tt"); err != nil {
 		t.Fatalf("ProjectRestore: %v", err)
 	}
-	if _, err := api.Add(t.Context(), models.IssueAddParams{Project: "tt", Title: "more"}); err != nil {
+	if _, err := api.Add(t.Context(), contract.IssueAddParams{Project: "tt", Title: "more"}); err != nil {
 		t.Errorf("Add after restoring: %v", err)
 	}
 }
@@ -121,7 +121,7 @@ func TestComments(t *testing.T) {
 	t.Parallel()
 	_, api := dbtest.API(t)
 
-	issue, err := api.Add(t.Context(), models.IssueAddParams{Project: "tt", Title: "work"})
+	issue, err := api.Add(t.Context(), contract.IssueAddParams{Project: "tt", Title: "work"})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestTaxonomyReads(t *testing.T) {
 	t.Parallel()
 	_, api := dbtest.API(t)
 
-	if _, err := api.Add(t.Context(), models.IssueAddParams{
+	if _, err := api.Add(t.Context(), contract.IssueAddParams{
 		Project:   "tt",
 		Title:     "work",
 		Labels:    []string{"bug"},
@@ -200,7 +200,7 @@ func TestSentinelsReachTheFrontend(t *testing.T) {
 	if _, err := api.ShowProject(t.Context(), "nope"); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("ShowProject = %v, want ErrNotFound", err)
 	}
-	if _, err := api.Add(t.Context(), models.IssueAddParams{Title: "no project"}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := api.Add(t.Context(), contract.IssueAddParams{Title: "no project"}); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Add = %v, want ErrInvalid", err)
 	}
 }

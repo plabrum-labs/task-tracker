@@ -1,9 +1,9 @@
 package issues
 
 import (
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entissue "github.com/Plabrum/tt/backend/internal/ent/issue"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // The refusals a menu can carry. Each is also what the matching write returns
@@ -24,40 +24,40 @@ const (
 // unloaded edge is an empty one as far as this file can tell, so a row that did
 // not come through that loader gets a menu that is wrong rather than a query
 // that fails.
-func Actions(e *ent.Issue) []models.Action[models.IssueKey] {
-	out := make([]models.Action[models.IssueKey], 0, 13)
-	add := func(key models.IssueKey, label, reason string) {
-		out = append(out, models.Action[models.IssueKey]{Key: key, Label: label, Reason: reason})
+func Actions(e *ent.Issue) []contract.Action[contract.IssueKey] {
+	out := make([]contract.Action[contract.IssueKey], 0, 13)
+	add := func(key contract.IssueKey, label, reason string) {
+		out = append(out, contract.Action[contract.IssueKey]{Key: key, Label: label, Reason: reason})
 	}
 
 	// The transition topology, as a switch on the current value rather than a
 	// map: every status says exactly which moves exist from it.
 	switch e.Status {
 	case entissue.StatusTodo:
-		add(models.KeyIssueStart, "start", blockedReason(e))
-		add(models.KeyIssueClose, "close", openSubtaskReason(e))
+		add(contract.KeyIssueStart, "start", blockedReason(e))
+		add(contract.KeyIssueClose, "close", openSubtaskReason(e))
 	case entissue.StatusDoing:
-		add(models.KeyIssueClose, "close", openSubtaskReason(e))
+		add(contract.KeyIssueClose, "close", openSubtaskReason(e))
 	case entissue.StatusDone:
-		add(models.KeyIssueReopen, "reopen", "")
+		add(contract.KeyIssueReopen, "reopen", "")
 	}
 
-	add(models.KeyIssueEdit, "edit", "")
-	add(models.KeyIssueSetPriority, "set priority", "")
-	add(models.KeyIssueSetMilestone, "set milestone", "")
-	add(models.KeyIssueAddLabel, "add label", "")
+	add(contract.KeyIssueEdit, "edit", "")
+	add(contract.KeyIssueSetPriority, "set priority", "")
+	add(contract.KeyIssueSetMilestone, "set milestone", "")
+	add(contract.KeyIssueAddLabel, "add label", "")
 	// Absent rather than refused: with no labels on the issue there is nothing
 	// the action could even prompt for.
 	if len(e.Edges.Labels) > 0 {
-		add(models.KeyIssueRemoveLabel, "remove label", "")
+		add(contract.KeyIssueRemoveLabel, "remove label", "")
 	}
-	add(models.KeyIssueAddSubIssue, "add sub-issue", "")
-	add(models.KeyIssueAddDep, "add dependency", "")
+	add(contract.KeyIssueAddSubIssue, "add sub-issue", "")
+	add(contract.KeyIssueAddDep, "add dependency", "")
 	if len(e.Edges.BlockedBy) > 0 {
-		add(models.KeyIssueRemoveDep, "remove dependency", "")
+		add(contract.KeyIssueRemoveDep, "remove dependency", "")
 	}
-	add(models.KeyIssueComment, "comment", "")
-	add(models.KeyIssueDelete, "delete", "")
+	add(contract.KeyIssueComment, "comment", "")
+	add(contract.KeyIssueDelete, "delete", "")
 
 	return out
 }

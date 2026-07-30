@@ -5,18 +5,18 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
 	"github.com/Plabrum/tt/backend/internal/projects"
-	"github.com/Plabrum/tt/backend/models"
 )
 
-func find(menu []models.Action[models.ProjectKey], key models.ProjectKey) (models.Action[models.ProjectKey], bool) {
-	i := slices.IndexFunc(menu, func(a models.Action[models.ProjectKey]) bool { return a.Key == key })
+func find(menu []contract.Action[contract.ProjectKey], key contract.ProjectKey) (contract.Action[contract.ProjectKey], bool) {
+	i := slices.IndexFunc(menu, func(a contract.Action[contract.ProjectKey]) bool { return a.Key == key })
 	if i < 0 {
-		return models.Action[models.ProjectKey]{}, false
+		return contract.Action[contract.ProjectKey]{}, false
 	}
 	return menu[i], true
 }
@@ -28,20 +28,20 @@ func TestActions(t *testing.T) {
 	tests := []struct {
 		name    string
 		status  entproject.Status
-		present []models.ProjectKey
-		absent  []models.ProjectKey
+		present []contract.ProjectKey
+		absent  []contract.ProjectKey
 	}{
 		{
 			name:    "an active project can be archived",
 			status:  entproject.StatusActive,
-			present: []models.ProjectKey{models.KeyProjectEdit, models.KeyProjectArchive},
-			absent:  []models.ProjectKey{models.KeyProjectRestore},
+			present: []contract.ProjectKey{contract.KeyProjectEdit, contract.KeyProjectArchive},
+			absent:  []contract.ProjectKey{contract.KeyProjectRestore},
 		},
 		{
 			name:    "an archived project can be restored",
 			status:  entproject.StatusArchived,
-			present: []models.ProjectKey{models.KeyProjectEdit, models.KeyProjectRestore},
-			absent:  []models.ProjectKey{models.KeyProjectArchive},
+			present: []contract.ProjectKey{contract.KeyProjectEdit, contract.KeyProjectRestore},
+			absent:  []contract.ProjectKey{contract.KeyProjectArchive},
 		},
 	}
 
@@ -104,7 +104,7 @@ func TestEnsurePreservesExistingFields(t *testing.T) {
 
 	ensure(t, cl, "tt")
 	title := "Task tracker"
-	if _, err := projects.Edit(t.Context(), cl, "tt", models.ProjectEditParams{Title: &title}); err != nil {
+	if _, err := projects.Edit(t.Context(), cl, "tt", contract.ProjectEditParams{Title: &title}); err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
 	if _, err := projects.Archive(t.Context(), cl, "tt"); err != nil {
@@ -120,8 +120,8 @@ func TestEnsurePreservesExistingFields(t *testing.T) {
 	if loaded.Title != title {
 		t.Errorf("Title = %q, want %q", loaded.Title, title)
 	}
-	if loaded.Status != models.ProjectArchived {
-		t.Errorf("Status = %q, want %q", loaded.Status, models.ProjectArchived)
+	if loaded.Status != contract.ProjectArchived {
+		t.Errorf("Status = %q, want %q", loaded.Status, contract.ProjectArchived)
 	}
 }
 
@@ -135,11 +135,11 @@ func TestArchiveAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
-	if archived.Status != models.ProjectArchived {
-		t.Errorf("Status = %q, want %q", archived.Status, models.ProjectArchived)
+	if archived.Status != contract.ProjectArchived {
+		t.Errorf("Status = %q, want %q", archived.Status, contract.ProjectArchived)
 	}
 	// The menu the write returns already reflects the write.
-	if _, ok := find(archived.Actions, models.KeyProjectRestore); !ok {
+	if _, ok := find(archived.Actions, contract.KeyProjectRestore); !ok {
 		t.Error("an archived project does not offer restore")
 	}
 
@@ -152,8 +152,8 @@ func TestArchiveAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if restored.Status != models.ProjectActive {
-		t.Errorf("Status = %q, want %q", restored.Status, models.ProjectActive)
+	if restored.Status != contract.ProjectActive {
+		t.Errorf("Status = %q, want %q", restored.Status, contract.ProjectActive)
 	}
 	if _, err := projects.Restore(t.Context(), cl, "tt"); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("Restore twice = %v, want ErrConflict", err)
@@ -170,7 +170,7 @@ func TestListDefaultsToActive(t *testing.T) {
 		t.Fatalf("Archive: %v", err)
 	}
 
-	active, err := projects.List(t.Context(), cl, models.ProjectListParams{})
+	active, err := projects.List(t.Context(), cl, contract.ProjectListParams{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -178,8 +178,8 @@ func TestListDefaultsToActive(t *testing.T) {
 		t.Errorf("default list = %+v, want just kept", active)
 	}
 
-	both, err := projects.List(t.Context(), cl, models.ProjectListParams{
-		Statuses: []models.ProjectStatus{models.ProjectActive, models.ProjectArchived},
+	both, err := projects.List(t.Context(), cl, contract.ProjectListParams{
+		Statuses: []contract.ProjectStatus{contract.ProjectActive, contract.ProjectArchived},
 	})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -196,7 +196,7 @@ func TestEdit(t *testing.T) {
 	ensure(t, cl, "tt")
 	title := "  Task tracker  "
 	description := "the tracker"
-	edited, err := projects.Edit(t.Context(), cl, "tt", models.ProjectEditParams{
+	edited, err := projects.Edit(t.Context(), cl, "tt", contract.ProjectEditParams{
 		Title:       &title,
 		Description: &description,
 	})
@@ -210,7 +210,7 @@ func TestEdit(t *testing.T) {
 		t.Errorf("Description = %q, want %q", edited.Description, description)
 	}
 
-	if _, err := projects.Edit(t.Context(), cl, "tt", models.ProjectEditParams{}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := projects.Edit(t.Context(), cl, "tt", contract.ProjectEditParams{}); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Edit with nothing set = %v, want ErrInvalid", err)
 	}
 }
@@ -225,7 +225,7 @@ func TestMissingSlugsAreNotFound(t *testing.T) {
 	if _, err := projects.Archive(t.Context(), cl, "nope"); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Archive = %v, want ErrNotFound", err)
 	}
-	if _, err := projects.Edit(t.Context(), cl, "nope", models.ProjectEditParams{}); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := projects.Edit(t.Context(), cl, "nope", contract.ProjectEditParams{}); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Edit = %v, want ErrNotFound", err)
 	}
 }

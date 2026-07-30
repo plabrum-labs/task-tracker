@@ -1,6 +1,6 @@
 # tt — contract
 
-`backend` is what `cli/` and `tui/` call. `backend/models` is what it returns.
+`backend` is what `cli/` and `tui/` call. `backend/contract` is what it returns.
 
 ## Layout
 
@@ -8,7 +8,7 @@
 backend/                   the backend
   contract.go              package backend — API, Open, every method a frontend calls
   atlas.hcl                the `local` env: ent:// source, dev database, dir
-  models/                  public: the contract types. Imports no ent.
+  contract/                public: the contract types. Imports no ent.
     action.go              Action[K]
     issues.go              Issue, IssueStatus, Priority, IssueKey, params, parsers
     projects.go            Project, ProjectStatus, ProjectKey, params, parser
@@ -34,21 +34,21 @@ main.go
 Import direction:
 
 ```
-models          imports nothing but errs
+contract        imports nothing but errs
   ↑        ↑
 domains    contract.go
 ```
 
-`models` is one package rather than one per domain because `Issue` holds a `Project` and
-`[]Comment`. Distributed models stay acyclic only while the nesting happens to point one
-way; one package makes a cycle structurally impossible however the graph grows.
+`contract` is one package rather than one per domain because `Issue` holds a `Project` and
+`[]Comment`. Split per domain, the types stay acyclic only while the nesting happens to
+point one way; one package makes a cycle structurally impossible however the graph grows.
 
-Frontends import `backend`, `backend/models` and `backend/errs` — three ent-free
+Frontends import `backend`, `backend/contract` and `backend/errs` — three ent-free
 packages. Everything else lives under `backend/internal/`, so `cli` and `tui` **cannot**
 import a domain package, `db`, or `ent`. The compiler rejects it, and `API.client` is
 unexported so there is no client to be had.
 
-`models` and `errs` are public members of the backend rather than peers of it. They are
+`contract` and `errs` are public members of the backend rather than peers of it. They are
 pure data with no path to a database, so leaving them importable costs nothing and saves
 a file of aliases whose only job would be to tunnel types through `internal/`.
 
@@ -68,7 +68,7 @@ directory, and from the repository root that package cannot import
 Ent types are not the contract: a contract object carries its own `Actions`, and an Ent
 entity cannot.
 
-## `backend/models`
+## `backend/contract`
 
 ### action.go
 
@@ -303,35 +303,35 @@ func ResolveProject(override string) (string, error)
 func (a *API) Close() error
 
 // Reads
-func (a *API) ListIssues(ctx context.Context, p models.IssueListParams) ([]models.Issue, error)
-func (a *API) ShowIssue(ctx context.Context, id int) (models.Issue, error)
-func (a *API) ListProjects(ctx context.Context, p models.ProjectListParams) ([]models.Project, error)
-func (a *API) ShowProject(ctx context.Context, slug string) (models.Project, error)
-func (a *API) ListLabels(ctx context.Context) ([]models.Label, error)
-func (a *API) ListMilestones(ctx context.Context, slug string) ([]models.Milestone, error)
+func (a *API) ListIssues(ctx context.Context, p contract.IssueListParams) ([]contract.Issue, error)
+func (a *API) ShowIssue(ctx context.Context, id int) (contract.Issue, error)
+func (a *API) ListProjects(ctx context.Context, p contract.ProjectListParams) ([]contract.Project, error)
+func (a *API) ShowProject(ctx context.Context, slug string) (contract.Project, error)
+func (a *API) ListLabels(ctx context.Context) ([]contract.Label, error)
+func (a *API) ListMilestones(ctx context.Context, slug string) ([]contract.Milestone, error)
 
 // Writes — one per Key, plus Add, which has no subject and so no Key.
-func (a *API) Add(ctx context.Context, p models.IssueAddParams) (models.Issue, error)
+func (a *API) Add(ctx context.Context, p contract.IssueAddParams) (contract.Issue, error)
 
-func (a *API) IssueStart(ctx context.Context, id int) (models.Issue, error)
-func (a *API) IssueClose(ctx context.Context, id int) (models.Issue, error)
-func (a *API) IssueReopen(ctx context.Context, id int) (models.Issue, error)
-func (a *API) IssueEdit(ctx context.Context, id int, p models.IssueEditParams) (models.Issue, error)
+func (a *API) IssueStart(ctx context.Context, id int) (contract.Issue, error)
+func (a *API) IssueClose(ctx context.Context, id int) (contract.Issue, error)
+func (a *API) IssueReopen(ctx context.Context, id int) (contract.Issue, error)
+func (a *API) IssueEdit(ctx context.Context, id int, p contract.IssueEditParams) (contract.Issue, error)
 func (a *API) IssueDelete(ctx context.Context, id int) error
-func (a *API) IssueSetPriority(ctx context.Context, id int, p models.Priority) (models.Issue, error)
-func (a *API) IssueSetMilestone(ctx context.Context, id int, name string) (models.Issue, error)
-func (a *API) IssueAddLabel(ctx context.Context, id int, name string) (models.Issue, error)
-func (a *API) IssueRemoveLabel(ctx context.Context, id int, name string) (models.Issue, error)
-func (a *API) IssueAddSubIssue(ctx context.Context, id int, p models.IssueAddParams) (models.Issue, error)
-func (a *API) IssueAddDep(ctx context.Context, id, blockerID int) (models.Issue, error)
-func (a *API) IssueRemoveDep(ctx context.Context, id, blockerID int) (models.Issue, error)
-func (a *API) IssueComment(ctx context.Context, id int, body string) (models.Issue, error)
+func (a *API) IssueSetPriority(ctx context.Context, id int, p contract.Priority) (contract.Issue, error)
+func (a *API) IssueSetMilestone(ctx context.Context, id int, name string) (contract.Issue, error)
+func (a *API) IssueAddLabel(ctx context.Context, id int, name string) (contract.Issue, error)
+func (a *API) IssueRemoveLabel(ctx context.Context, id int, name string) (contract.Issue, error)
+func (a *API) IssueAddSubIssue(ctx context.Context, id int, p contract.IssueAddParams) (contract.Issue, error)
+func (a *API) IssueAddDep(ctx context.Context, id, blockerID int) (contract.Issue, error)
+func (a *API) IssueRemoveDep(ctx context.Context, id, blockerID int) (contract.Issue, error)
+func (a *API) IssueComment(ctx context.Context, id int, body string) (contract.Issue, error)
 
-func (a *API) ProjectEdit(ctx context.Context, slug string, p models.ProjectEditParams) (models.Project, error)
-func (a *API) ProjectArchive(ctx context.Context, slug string) (models.Project, error)
-func (a *API) ProjectRestore(ctx context.Context, slug string) (models.Project, error)
+func (a *API) ProjectEdit(ctx context.Context, slug string, p contract.ProjectEditParams) (contract.Project, error)
+func (a *API) ProjectArchive(ctx context.Context, slug string) (contract.Project, error)
+func (a *API) ProjectRestore(ctx context.Context, slug string) (contract.Project, error)
 
-func (a *API) CommentEdit(ctx context.Context, id int, body string) (models.Comment, error)
+func (a *API) CommentEdit(ctx context.Context, id int, body string) (contract.Comment, error)
 func (a *API) CommentDelete(ctx context.Context, id int) error
 ```
 
@@ -351,16 +351,16 @@ Three files, same shape in each.
 ```go
 // queries.go — the only place that reads. One loader per object; every caller
 // gets the same graph.
-func Load(ctx context.Context, cl *ent.Client, id int) (models.Issue, error)
-func List(ctx context.Context, cl *ent.Client, p models.IssueListParams) ([]models.Issue, error)
+func Load(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error)
+func List(ctx context.Context, cl *ent.Client, p contract.IssueListParams) ([]contract.Issue, error)
 
 // actions.go — pure. No context, no client, no error, no queries.
-func Actions(e *ent.Issue) []models.Action[models.IssueKey]
+func Actions(e *ent.Issue) []contract.Action[contract.IssueKey]
 
 // service.go — writes. Paired: the plain one owns the transaction via db.WithTx,
 // the …In one composes into a caller's.
-func Close(ctx context.Context, cl *ent.Client, id int) (models.Issue, error)
-func CloseIn(ctx context.Context, tx *ent.Client, id int) (models.Issue, error)
+func Close(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error)
+func CloseIn(ctx context.Context, tx *ent.Client, id int) (contract.Issue, error)
 ```
 
 Domains may import sibling domains — `issues.CreateIn` calls `projects.EnsureIn` inside its

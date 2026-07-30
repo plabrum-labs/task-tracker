@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/db"
@@ -17,12 +18,11 @@ import (
 	"github.com/Plabrum/tt/backend/internal/labels"
 	"github.com/Plabrum/tt/backend/internal/milestones"
 	"github.com/Plabrum/tt/backend/internal/projects"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // Create captures a new issue, creating its project on first use.
-func Create(ctx context.Context, cl *ent.Client, p models.IssueAddParams) (models.Issue, error) {
-	var out models.Issue
+func Create(ctx context.Context, cl *ent.Client, p contract.IssueAddParams) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = CreateIn(ctx, tx, p)
@@ -36,23 +36,23 @@ func Create(ctx context.Context, cl *ent.Client, p models.IssueAddParams) (model
 // The project auto-create runs in the same transaction as the insert, so a
 // rejected issue takes its container with it. Capture should never leave behind
 // an empty project for work that was never written.
-func CreateIn(ctx context.Context, tx *ent.Client, p models.IssueAddParams) (models.Issue, error) {
+func CreateIn(ctx context.Context, tx *ent.Client, p contract.IssueAddParams) (contract.Issue, error) {
 	if err := p.Validate(); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	projectID, err := projects.EnsureIn(ctx, tx, p.Project)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	if err := refuseArchived(ctx, tx, projectID); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	return insert(ctx, tx, projectID, nil, p)
 }
 
 // AddSubIssue captures a new issue as a child of an existing one.
-func AddSubIssue(ctx context.Context, cl *ent.Client, id int, p models.IssueAddParams) (models.Issue, error) {
-	var out models.Issue
+func AddSubIssue(ctx context.Context, cl *ent.Client, id int, p contract.IssueAddParams) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = AddSubIssueIn(ctx, tx, id, p)
@@ -66,25 +66,25 @@ func AddSubIssue(ctx context.Context, cl *ent.Client, id int, p models.IssueAddP
 // The child lands in its parent's project whatever the params say: a sub-issue
 // filed somewhere else would leave the parent's project showing a rollup over
 // work it does not contain.
-func AddSubIssueIn(ctx context.Context, tx *ent.Client, id int, p models.IssueAddParams) (models.Issue, error) {
+func AddSubIssueIn(ctx context.Context, tx *ent.Client, id int, p contract.IssueAddParams) (contract.Issue, error) {
 	parent, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if !offers(parent, models.KeyIssueAddSubIssue) {
-		return models.Issue{}, errs.Conflictf("issue %d cannot take a sub-issue", id)
+	if !offers(parent, contract.KeyIssueAddSubIssue) {
+		return contract.Issue{}, errs.Conflictf("issue %d cannot take a sub-issue", id)
 	}
 	projectID, err := parent.QueryProject().OnlyID(ctx)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("resolving project of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", id, err)
 	}
 	if err := refuseArchived(ctx, tx, projectID); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 
 	p.Project = "" // resolved from the parent, not from the caller
 	if err := validateChild(p); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	return insert(ctx, tx, projectID, &parent.ID, p)
 }
@@ -96,15 +96,15 @@ func insert(
 	tx *ent.Client,
 	projectID int,
 	parentID *int,
-	p models.IssueAddParams,
-) (models.Issue, error) {
+	p contract.IssueAddParams,
+) (contract.Issue, error) {
 	priority := p.Priority
 	if priority == "" {
-		priority = models.PriorityNormal
+		priority = contract.PriorityNormal
 	}
 	stored, err := priorityToEnt(priority)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 
 	create := tx.Issue.Create().
@@ -118,21 +118,21 @@ func insert(
 	if p.Milestone != "" {
 		milestoneID, err := milestones.EnsureIn(ctx, tx, projectID, p.Milestone)
 		if err != nil {
-			return models.Issue{}, err
+			return contract.Issue{}, err
 		}
 		create = create.SetMilestoneID(milestoneID)
 	}
 	for _, name := range p.Labels {
 		labelID, err := labels.EnsureIn(ctx, tx, name)
 		if err != nil {
-			return models.Issue{}, err
+			return contract.Issue{}, err
 		}
 		create = create.AddLabelIDs(labelID)
 	}
 
 	created, err := create.Save(ctx)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("creating issue: %w", err)
+		return contract.Issue{}, fmt.Errorf("creating issue: %w", err)
 	}
 	// Re-read through the same loader the reads use, rather than assembling an
 	// issue from what was just written. It costs one query and buys the
@@ -141,37 +141,37 @@ func insert(
 }
 
 // Start moves an issue into doing.
-func Start(ctx context.Context, cl *ent.Client, id int) (models.Issue, error) {
+func Start(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
 	return write(ctx, cl, id, StartIn)
 }
 
 // StartIn is Start inside a caller's transaction.
-func StartIn(ctx context.Context, tx *ent.Client, id int) (models.Issue, error) {
-	return transition(ctx, tx, id, models.KeyIssueStart, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
+func StartIn(ctx context.Context, tx *ent.Client, id int) (contract.Issue, error) {
+	return transition(ctx, tx, id, contract.KeyIssueStart, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
 		return u.SetStatus(entissue.StatusDoing).ClearClosedAt()
 	})
 }
 
 // Close marks an issue done.
-func Close(ctx context.Context, cl *ent.Client, id int) (models.Issue, error) {
+func Close(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
 	return write(ctx, cl, id, CloseIn)
 }
 
 // CloseIn is Close inside a caller's transaction.
-func CloseIn(ctx context.Context, tx *ent.Client, id int) (models.Issue, error) {
-	return transition(ctx, tx, id, models.KeyIssueClose, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
+func CloseIn(ctx context.Context, tx *ent.Client, id int) (contract.Issue, error) {
+	return transition(ctx, tx, id, contract.KeyIssueClose, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
 		return u.SetStatus(entissue.StatusDone).SetClosedAt(time.Now())
 	})
 }
 
 // Reopen brings a closed issue back to todo.
-func Reopen(ctx context.Context, cl *ent.Client, id int) (models.Issue, error) {
+func Reopen(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
 	return write(ctx, cl, id, ReopenIn)
 }
 
 // ReopenIn is Reopen inside a caller's transaction.
-func ReopenIn(ctx context.Context, tx *ent.Client, id int) (models.Issue, error) {
-	return transition(ctx, tx, id, models.KeyIssueReopen, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
+func ReopenIn(ctx context.Context, tx *ent.Client, id int) (contract.Issue, error) {
+	return transition(ctx, tx, id, contract.KeyIssueReopen, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
 		return u.SetStatus(entissue.StatusTodo).ClearClosedAt()
 	})
 }
@@ -182,25 +182,25 @@ func transition(
 	ctx context.Context,
 	tx *ent.Client,
 	id int,
-	key models.IssueKey,
+	key contract.IssueKey,
 	apply func(*ent.IssueUpdateOne) *ent.IssueUpdateOne,
-) (models.Issue, error) {
+) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	if err := refuse(e, key); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	if _, err := apply(e.Update()).Save(ctx); err != nil {
-		return models.Issue{}, fmt.Errorf("updating issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("updating issue %d: %w", id, err)
 	}
 	return Load(ctx, tx, id)
 }
 
 // Edit changes an issue's title or body.
-func Edit(ctx context.Context, cl *ent.Client, id int, p models.IssueEditParams) (models.Issue, error) {
-	var out models.Issue
+func Edit(ctx context.Context, cl *ent.Client, id int, p contract.IssueEditParams) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = EditIn(ctx, tx, id, p)
@@ -210,23 +210,23 @@ func Edit(ctx context.Context, cl *ent.Client, id int, p models.IssueEditParams)
 }
 
 // EditIn is Edit inside a caller's transaction.
-func EditIn(ctx context.Context, tx *ent.Client, id int, p models.IssueEditParams) (models.Issue, error) {
+func EditIn(ctx context.Context, tx *ent.Client, id int, p contract.IssueEditParams) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueEdit); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueEdit); err != nil {
+		return contract.Issue{}, err
 	}
 	if p.Title == nil && p.Body == nil {
-		return models.Issue{}, errs.Invalidf("nothing to change")
+		return contract.Issue{}, errs.Invalidf("nothing to change")
 	}
 
 	u := e.Update()
 	if p.Title != nil {
 		title := strings.TrimSpace(*p.Title)
 		if title == "" {
-			return models.Issue{}, errs.Invalidf("title is required")
+			return contract.Issue{}, errs.Invalidf("title is required")
 		}
 		u = u.SetTitle(title)
 	}
@@ -234,7 +234,7 @@ func EditIn(ctx context.Context, tx *ent.Client, id int, p models.IssueEditParam
 		u = u.SetBody(*p.Body)
 	}
 	if _, err := u.Save(ctx); err != nil {
-		return models.Issue{}, fmt.Errorf("editing issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("editing issue %d: %w", id, err)
 	}
 	return Load(ctx, tx, id)
 }
@@ -256,7 +256,7 @@ func DeleteIn(ctx context.Context, tx *ent.Client, id int) error {
 	if err != nil {
 		return err
 	}
-	if err := refuse(e, models.KeyIssueDelete); err != nil {
+	if err := refuse(e, contract.KeyIssueDelete); err != nil {
 		return err
 	}
 	if err := tx.Issue.DeleteOneID(id).Exec(ctx); err != nil {
@@ -266,8 +266,8 @@ func DeleteIn(ctx context.Context, tx *ent.Client, id int) error {
 }
 
 // SetPriority changes an issue's pick-order bump.
-func SetPriority(ctx context.Context, cl *ent.Client, id int, p models.Priority) (models.Issue, error) {
-	var out models.Issue
+func SetPriority(ctx context.Context, cl *ent.Client, id int, p contract.Priority) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = SetPriorityIn(ctx, tx, id, p)
@@ -277,28 +277,28 @@ func SetPriority(ctx context.Context, cl *ent.Client, id int, p models.Priority)
 }
 
 // SetPriorityIn is SetPriority inside a caller's transaction.
-func SetPriorityIn(ctx context.Context, tx *ent.Client, id int, p models.Priority) (models.Issue, error) {
+func SetPriorityIn(ctx context.Context, tx *ent.Client, id int, p contract.Priority) (contract.Issue, error) {
 	stored, err := priorityToEnt(p)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueSetPriority); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueSetPriority); err != nil {
+		return contract.Issue{}, err
 	}
 	if _, err := e.Update().SetPriority(stored).Save(ctx); err != nil {
-		return models.Issue{}, fmt.Errorf("setting priority of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("setting priority of issue %d: %w", id, err)
 	}
 	return Load(ctx, tx, id)
 }
 
 // SetMilestone files an issue under a milestone, creating it on first use. An
 // empty name clears it.
-func SetMilestone(ctx context.Context, cl *ent.Client, id int, name string) (models.Issue, error) {
-	var out models.Issue
+func SetMilestone(ctx context.Context, cl *ent.Client, id int, name string) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = SetMilestoneIn(ctx, tx, id, name)
@@ -308,13 +308,13 @@ func SetMilestone(ctx context.Context, cl *ent.Client, id int, name string) (mod
 }
 
 // SetMilestoneIn is SetMilestone inside a caller's transaction.
-func SetMilestoneIn(ctx context.Context, tx *ent.Client, id int, name string) (models.Issue, error) {
+func SetMilestoneIn(ctx context.Context, tx *ent.Client, id int, name string) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueSetMilestone); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueSetMilestone); err != nil {
+		return contract.Issue{}, err
 	}
 
 	u := e.Update()
@@ -323,23 +323,23 @@ func SetMilestoneIn(ctx context.Context, tx *ent.Client, id int, name string) (m
 	} else {
 		projectID, err := e.QueryProject().OnlyID(ctx)
 		if err != nil {
-			return models.Issue{}, fmt.Errorf("resolving project of issue %d: %w", id, err)
+			return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", id, err)
 		}
 		milestoneID, err := milestones.EnsureIn(ctx, tx, projectID, name)
 		if err != nil {
-			return models.Issue{}, err
+			return contract.Issue{}, err
 		}
 		u = u.SetMilestoneID(milestoneID)
 	}
 	if _, err := u.Save(ctx); err != nil {
-		return models.Issue{}, fmt.Errorf("setting milestone of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("setting milestone of issue %d: %w", id, err)
 	}
 	return Load(ctx, tx, id)
 }
 
 // AddLabel puts a label on an issue, creating it on first use.
-func AddLabel(ctx context.Context, cl *ent.Client, id int, name string) (models.Issue, error) {
-	var out models.Issue
+func AddLabel(ctx context.Context, cl *ent.Client, id int, name string) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = AddLabelIn(ctx, tx, id, name)
@@ -349,35 +349,35 @@ func AddLabel(ctx context.Context, cl *ent.Client, id int, name string) (models.
 }
 
 // AddLabelIn is AddLabel inside a caller's transaction.
-func AddLabelIn(ctx context.Context, tx *ent.Client, id int, name string) (models.Issue, error) {
+func AddLabelIn(ctx context.Context, tx *ent.Client, id int, name string) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueAddLabel); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueAddLabel); err != nil {
+		return contract.Issue{}, err
 	}
 	labelID, err := labels.EnsureIn(ctx, tx, name)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	// Already-present is not an error: the label is on the issue either way,
 	// and AddLabelIDs on an existing edge violates the join table's key.
 	has, err := e.QueryLabels().Where(entlabel.IDEQ(labelID)).Exist(ctx)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("checking labels of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", id, err)
 	}
 	if !has {
 		if _, err := e.Update().AddLabelIDs(labelID).Save(ctx); err != nil {
-			return models.Issue{}, fmt.Errorf("labelling issue %d: %w", id, err)
+			return contract.Issue{}, fmt.Errorf("labelling issue %d: %w", id, err)
 		}
 	}
 	return Load(ctx, tx, id)
 }
 
 // RemoveLabel takes a label off an issue.
-func RemoveLabel(ctx context.Context, cl *ent.Client, id int, name string) (models.Issue, error) {
-	var out models.Issue
+func RemoveLabel(ctx context.Context, cl *ent.Client, id int, name string) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = RemoveLabelIn(ctx, tx, id, name)
@@ -387,34 +387,34 @@ func RemoveLabel(ctx context.Context, cl *ent.Client, id int, name string) (mode
 }
 
 // RemoveLabelIn is RemoveLabel inside a caller's transaction.
-func RemoveLabelIn(ctx context.Context, tx *ent.Client, id int, name string) (models.Issue, error) {
+func RemoveLabelIn(ctx context.Context, tx *ent.Client, id int, name string) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueRemoveLabel); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueRemoveLabel); err != nil {
+		return contract.Issue{}, err
 	}
 	labelID, err := labels.Lookup(ctx, tx, name)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	has, err := e.QueryLabels().Where(entlabel.IDEQ(labelID)).Exist(ctx)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("checking labels of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", id, err)
 	}
 	if !has {
-		return models.Issue{}, errs.Conflictf("issue %d is not labelled %q", id, labels.Normalise(name))
+		return contract.Issue{}, errs.Conflictf("issue %d is not labelled %q", id, labels.Normalise(name))
 	}
 	if _, err := e.Update().RemoveLabelIDs(labelID).Save(ctx); err != nil {
-		return models.Issue{}, fmt.Errorf("unlabelling issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("unlabelling issue %d: %w", id, err)
 	}
 	return Load(ctx, tx, id)
 }
 
 // AddDep records that an issue waits on another.
-func AddDep(ctx context.Context, cl *ent.Client, id, blockerID int) (models.Issue, error) {
-	var out models.Issue
+func AddDep(ctx context.Context, cl *ent.Client, id, blockerID int) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = AddDepIn(ctx, tx, id, blockerID)
@@ -427,36 +427,36 @@ func AddDep(ctx context.Context, cl *ent.Client, id, blockerID int) (models.Issu
 //
 // The cycle check walks the dependency graph, so it is not a menu rule: a menu
 // reads one level down and this needs however many the chain is deep.
-func AddDepIn(ctx context.Context, tx *ent.Client, id, blockerID int) (models.Issue, error) {
+func AddDepIn(ctx context.Context, tx *ent.Client, id, blockerID int) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueAddDep); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueAddDep); err != nil {
+		return contract.Issue{}, err
 	}
 	if id == blockerID {
-		return models.Issue{}, errs.Conflictf("issue %d cannot block itself", id)
+		return contract.Issue{}, errs.Conflictf("issue %d cannot block itself", id)
 	}
 	if _, err := row(ctx, tx, blockerID); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 
 	exists, err := tx.Ref.Query().
 		Where(entref.BlockedIDEQ(id), entref.BlockerIDEQ(blockerID)).
 		Exist(ctx)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("checking dependencies of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("checking dependencies of issue %d: %w", id, err)
 	}
 	if exists {
-		return models.Issue{}, errs.Conflictf("issue %d already waits on issue %d", id, blockerID)
+		return contract.Issue{}, errs.Conflictf("issue %d already waits on issue %d", id, blockerID)
 	}
 	if err := refuseCycle(ctx, tx, id, blockerID); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 
 	if _, err := tx.Ref.Create().SetBlockedID(id).SetBlockerID(blockerID).Save(ctx); err != nil {
-		return models.Issue{}, fmt.Errorf("adding dependency %d -> %d: %w", id, blockerID, err)
+		return contract.Issue{}, fmt.Errorf("adding dependency %d -> %d: %w", id, blockerID, err)
 	}
 	return Load(ctx, tx, id)
 }
@@ -489,8 +489,8 @@ func refuseCycle(ctx context.Context, tx *ent.Client, id, blockerID int) error {
 }
 
 // RemoveDep drops a dependency.
-func RemoveDep(ctx context.Context, cl *ent.Client, id, blockerID int) (models.Issue, error) {
-	var out models.Issue
+func RemoveDep(ctx context.Context, cl *ent.Client, id, blockerID int) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = RemoveDepIn(ctx, tx, id, blockerID)
@@ -500,29 +500,29 @@ func RemoveDep(ctx context.Context, cl *ent.Client, id, blockerID int) (models.I
 }
 
 // RemoveDepIn is RemoveDep inside a caller's transaction.
-func RemoveDepIn(ctx context.Context, tx *ent.Client, id, blockerID int) (models.Issue, error) {
+func RemoveDepIn(ctx context.Context, tx *ent.Client, id, blockerID int) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueRemoveDep); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueRemoveDep); err != nil {
+		return contract.Issue{}, err
 	}
 	deleted, err := tx.Ref.Delete().
 		Where(entref.BlockedIDEQ(id), entref.BlockerIDEQ(blockerID)).
 		Exec(ctx)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("removing dependency %d -> %d: %w", id, blockerID, err)
+		return contract.Issue{}, fmt.Errorf("removing dependency %d -> %d: %w", id, blockerID, err)
 	}
 	if deleted == 0 {
-		return models.Issue{}, errs.Conflictf("issue %d does not wait on issue %d", id, blockerID)
+		return contract.Issue{}, errs.Conflictf("issue %d does not wait on issue %d", id, blockerID)
 	}
 	return Load(ctx, tx, id)
 }
 
 // Comment appends a comment and returns the issue it landed on.
-func Comment(ctx context.Context, cl *ent.Client, id int, body string) (models.Issue, error) {
-	var out models.Issue
+func Comment(ctx context.Context, cl *ent.Client, id int, body string) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = CommentIn(ctx, tx, id, body)
@@ -532,16 +532,16 @@ func Comment(ctx context.Context, cl *ent.Client, id int, body string) (models.I
 }
 
 // CommentIn is Comment inside a caller's transaction.
-func CommentIn(ctx context.Context, tx *ent.Client, id int, body string) (models.Issue, error) {
+func CommentIn(ctx context.Context, tx *ent.Client, id int, body string) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
-	if err := refuse(e, models.KeyIssueComment); err != nil {
-		return models.Issue{}, err
+	if err := refuse(e, contract.KeyIssueComment); err != nil {
+		return contract.Issue{}, err
 	}
 	if _, err := comments.AddIn(ctx, tx, id, body); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	return Load(ctx, tx, id)
 }
@@ -551,9 +551,9 @@ func write(
 	ctx context.Context,
 	cl *ent.Client,
 	id int,
-	in func(context.Context, *ent.Client, int) (models.Issue, error),
-) (models.Issue, error) {
-	var out models.Issue
+	in func(context.Context, *ent.Client, int) (contract.Issue, error),
+) (contract.Issue, error) {
+	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = in(ctx, tx, id)
@@ -564,7 +564,7 @@ func write(
 
 // refuse turns the menu's verdict on key into the error a write returns. The
 // same rule decides both, and Action.Reason is the message either way.
-func refuse(e *ent.Issue, key models.IssueKey) error {
+func refuse(e *ent.Issue, key contract.IssueKey) error {
 	for _, a := range Actions(e) {
 		if a.Key != key {
 			continue
@@ -578,7 +578,7 @@ func refuse(e *ent.Issue, key models.IssueKey) error {
 }
 
 // offers reports whether the menu for this row carries key without a refusal.
-func offers(e *ent.Issue, key models.IssueKey) bool {
+func offers(e *ent.Issue, key contract.IssueKey) bool {
 	return refuse(e, key) == nil
 }
 
@@ -599,12 +599,12 @@ func refuseArchived(ctx context.Context, tx *ent.Client, projectID int) error {
 
 // validateChild checks the params of a sub-issue, whose project comes from its
 // parent rather than from the caller.
-func validateChild(p models.IssueAddParams) error {
+func validateChild(p contract.IssueAddParams) error {
 	if strings.TrimSpace(p.Title) == "" {
 		return errs.Invalidf("title is required")
 	}
 	switch p.Priority {
-	case "", models.PriorityNormal, models.PriorityHi:
+	case "", contract.PriorityNormal, contract.PriorityHi:
 		return nil
 	default:
 		return errs.Invalidf("unknown priority %q: want normal or hi", p.Priority)

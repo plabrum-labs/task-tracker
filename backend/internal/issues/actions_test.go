@@ -4,10 +4,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entissue "github.com/Plabrum/tt/backend/internal/ent/issue"
 	"github.com/Plabrum/tt/backend/internal/issues"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // Actions needs no database: a table of literal ent rows is the whole test.
@@ -15,10 +15,10 @@ import (
 // is the same thing the loader does.
 
 // find returns the menu entry for key, and whether it is there at all.
-func find(menu []models.Action[models.IssueKey], key models.IssueKey) (models.Action[models.IssueKey], bool) {
-	i := slices.IndexFunc(menu, func(a models.Action[models.IssueKey]) bool { return a.Key == key })
+func find(menu []contract.Action[contract.IssueKey], key contract.IssueKey) (contract.Action[contract.IssueKey], bool) {
+	i := slices.IndexFunc(menu, func(a contract.Action[contract.IssueKey]) bool { return a.Key == key })
 	if i < 0 {
-		return models.Action[models.IssueKey]{}, false
+		return contract.Action[contract.IssueKey]{}, false
 	}
 	return menu[i], true
 }
@@ -29,26 +29,26 @@ func TestActionsByStatus(t *testing.T) {
 	tests := []struct {
 		name    string
 		status  entissue.Status
-		present []models.IssueKey
-		absent  []models.IssueKey
+		present []contract.IssueKey
+		absent  []contract.IssueKey
 	}{
 		{
 			name:    "todo can start or close",
 			status:  entissue.StatusTodo,
-			present: []models.IssueKey{models.KeyIssueStart, models.KeyIssueClose},
-			absent:  []models.IssueKey{models.KeyIssueReopen},
+			present: []contract.IssueKey{contract.KeyIssueStart, contract.KeyIssueClose},
+			absent:  []contract.IssueKey{contract.KeyIssueReopen},
 		},
 		{
 			name:    "doing can close but not start again",
 			status:  entissue.StatusDoing,
-			present: []models.IssueKey{models.KeyIssueClose},
-			absent:  []models.IssueKey{models.KeyIssueStart, models.KeyIssueReopen},
+			present: []contract.IssueKey{contract.KeyIssueClose},
+			absent:  []contract.IssueKey{contract.KeyIssueStart, contract.KeyIssueReopen},
 		},
 		{
 			name:    "done can only reopen",
 			status:  entissue.StatusDone,
-			present: []models.IssueKey{models.KeyIssueReopen},
-			absent:  []models.IssueKey{models.KeyIssueStart, models.KeyIssueClose},
+			present: []contract.IssueKey{contract.KeyIssueReopen},
+			absent:  []contract.IssueKey{contract.KeyIssueStart, contract.KeyIssueClose},
 		},
 	}
 
@@ -84,31 +84,31 @@ func TestActionsRefusals(t *testing.T) {
 	tests := []struct {
 		name       string
 		issue      *ent.Issue
-		key        models.IssueKey
+		key        contract.IssueKey
 		wantReason string
 	}{
 		{
 			name:       "an open blocker refuses start",
 			issue:      &ent.Issue{ID: 1, Status: entissue.StatusTodo, Edges: ent.IssueEdges{BlockedBy: []*ent.Issue{open}}},
-			key:        models.KeyIssueStart,
+			key:        contract.KeyIssueStart,
 			wantReason: "blocked by open issues",
 		},
 		{
 			name:       "a finished blocker does not",
 			issue:      &ent.Issue{ID: 1, Status: entissue.StatusTodo, Edges: ent.IssueEdges{BlockedBy: []*ent.Issue{done}}},
-			key:        models.KeyIssueStart,
+			key:        contract.KeyIssueStart,
 			wantReason: "",
 		},
 		{
 			name:       "an open sub-issue refuses close",
 			issue:      &ent.Issue{ID: 1, Status: entissue.StatusDoing, Edges: ent.IssueEdges{Subtasks: []*ent.Issue{open}}},
-			key:        models.KeyIssueClose,
+			key:        contract.KeyIssueClose,
 			wantReason: "open sub-issues",
 		},
 		{
 			name:       "a finished sub-issue does not",
 			issue:      &ent.Issue{ID: 1, Status: entissue.StatusDoing, Edges: ent.IssueEdges{Subtasks: []*ent.Issue{done}}},
-			key:        models.KeyIssueClose,
+			key:        contract.KeyIssueClose,
 			wantReason: "",
 		},
 	}
@@ -136,13 +136,13 @@ func TestActionsWithheldWhenThereIsNothingToActOn(t *testing.T) {
 	tests := []struct {
 		name  string
 		issue *ent.Issue
-		key   models.IssueKey
+		key   contract.IssueKey
 		want  bool
 	}{
 		{
 			name:  "no labels withholds remove-label",
 			issue: &ent.Issue{ID: 1, Status: entissue.StatusTodo},
-			key:   models.KeyIssueRemoveLabel,
+			key:   contract.KeyIssueRemoveLabel,
 			want:  false,
 		},
 		{
@@ -150,13 +150,13 @@ func TestActionsWithheldWhenThereIsNothingToActOn(t *testing.T) {
 			issue: &ent.Issue{ID: 1, Status: entissue.StatusTodo, Edges: ent.IssueEdges{
 				Labels: []*ent.Label{{Name: "bug"}},
 			}},
-			key:  models.KeyIssueRemoveLabel,
+			key:  contract.KeyIssueRemoveLabel,
 			want: true,
 		},
 		{
 			name:  "no dependencies withholds remove-dep",
 			issue: &ent.Issue{ID: 1, Status: entissue.StatusTodo},
-			key:   models.KeyIssueRemoveDep,
+			key:   contract.KeyIssueRemoveDep,
 			want:  false,
 		},
 		{
@@ -164,7 +164,7 @@ func TestActionsWithheldWhenThereIsNothingToActOn(t *testing.T) {
 			issue: &ent.Issue{ID: 1, Status: entissue.StatusTodo, Edges: ent.IssueEdges{
 				BlockedBy: []*ent.Issue{{ID: 2, Status: entissue.StatusTodo}},
 			}},
-			key:  models.KeyIssueRemoveDep,
+			key:  contract.KeyIssueRemoveDep,
 			want: true,
 		},
 	}
@@ -183,15 +183,15 @@ func TestActionsWithheldWhenThereIsNothingToActOn(t *testing.T) {
 func TestActionsAlwaysOffered(t *testing.T) {
 	t.Parallel()
 
-	always := []models.IssueKey{
-		models.KeyIssueEdit,
-		models.KeyIssueDelete,
-		models.KeyIssueSetPriority,
-		models.KeyIssueSetMilestone,
-		models.KeyIssueAddLabel,
-		models.KeyIssueAddSubIssue,
-		models.KeyIssueAddDep,
-		models.KeyIssueComment,
+	always := []contract.IssueKey{
+		contract.KeyIssueEdit,
+		contract.KeyIssueDelete,
+		contract.KeyIssueSetPriority,
+		contract.KeyIssueSetMilestone,
+		contract.KeyIssueAddLabel,
+		contract.KeyIssueAddSubIssue,
+		contract.KeyIssueAddDep,
+		contract.KeyIssueComment,
 	}
 	statuses := []entissue.Status{entissue.StatusTodo, entissue.StatusDoing, entissue.StatusDone}
 
@@ -215,12 +215,12 @@ func TestActionsAlwaysOffered(t *testing.T) {
 func TestEveryKeyIsReachable(t *testing.T) {
 	t.Parallel()
 
-	all := []models.IssueKey{
-		models.KeyIssueStart, models.KeyIssueClose, models.KeyIssueReopen,
-		models.KeyIssueEdit, models.KeyIssueDelete, models.KeyIssueSetPriority,
-		models.KeyIssueSetMilestone, models.KeyIssueAddLabel, models.KeyIssueRemoveLabel,
-		models.KeyIssueAddSubIssue, models.KeyIssueAddDep, models.KeyIssueRemoveDep,
-		models.KeyIssueComment,
+	all := []contract.IssueKey{
+		contract.KeyIssueStart, contract.KeyIssueClose, contract.KeyIssueReopen,
+		contract.KeyIssueEdit, contract.KeyIssueDelete, contract.KeyIssueSetPriority,
+		contract.KeyIssueSetMilestone, contract.KeyIssueAddLabel, contract.KeyIssueRemoveLabel,
+		contract.KeyIssueAddSubIssue, contract.KeyIssueAddDep, contract.KeyIssueRemoveDep,
+		contract.KeyIssueComment,
 	}
 
 	// One row per status, plus a row carrying the relations the conditional
@@ -235,7 +235,7 @@ func TestEveryKeyIsReachable(t *testing.T) {
 		}},
 	}
 
-	seen := map[models.IssueKey]bool{}
+	seen := map[contract.IssueKey]bool{}
 	for _, row := range rows {
 		for _, a := range issues.Actions(row) {
 			seen[a.Key] = true

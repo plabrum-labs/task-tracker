@@ -1,12 +1,14 @@
-// Package models holds the contract types: what backend returns and what a
-// frontend renders. It imports no ent, so a schema change cannot reshape
-// --json without going through a conversion somewhere below.
+// Package contract holds the types backend returns and a frontend renders.
+// These are not database rows: ent lives under backend/internal and never
+// crosses this line, so a schema change cannot reshape --json without going
+// through a conversion somewhere below. Each object carries its own Actions,
+// which a persisted row cannot.
 //
 // One package rather than one per domain because Issue holds a Project and a
-// []Comment. Distributed models stay acyclic only while the nesting happens to
-// point one way; one package makes a cycle structurally impossible however the
-// graph grows.
-package models
+// []Comment. Split per domain, the types stay acyclic only while the nesting
+// happens to point one way; one package makes a cycle structurally impossible
+// however the graph grows.
+package contract
 
 // Action is one entry in an object's menu.
 //

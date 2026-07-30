@@ -1,5 +1,5 @@
 // Package backend is the API cli/ and tui/ call. It returns the types in
-// backend/models and the sentinels in backend/errs, and nothing else.
+// backend/contract and the sentinels in backend/errs, and nothing else.
 //
 // Every method here is one line into the domain that owns the object. There is
 // no logic in this file: composition and transactions live in the domain,
@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/db"
 	"github.com/Plabrum/tt/backend/internal/ent"
@@ -18,7 +19,6 @@ import (
 	"github.com/Plabrum/tt/backend/internal/labels"
 	"github.com/Plabrum/tt/backend/internal/milestones"
 	"github.com/Plabrum/tt/backend/internal/projects"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // API is what cli/ and tui/ are handed.
@@ -69,32 +69,32 @@ func (a *API) Close() error {
 // cross-process writer leaving a derived flag one refresh stale.
 
 // ListIssues returns the issues matching p, in pick order.
-func (a *API) ListIssues(ctx context.Context, p models.IssueListParams) ([]models.Issue, error) {
+func (a *API) ListIssues(ctx context.Context, p contract.IssueListParams) ([]contract.Issue, error) {
 	return issues.List(ctx, a.client, p)
 }
 
 // ShowIssue returns one issue with everything hanging off it.
-func (a *API) ShowIssue(ctx context.Context, id int) (models.Issue, error) {
+func (a *API) ShowIssue(ctx context.Context, id int) (contract.Issue, error) {
 	return issues.Load(ctx, a.client, id)
 }
 
 // ListProjects returns the projects matching p.
-func (a *API) ListProjects(ctx context.Context, p models.ProjectListParams) ([]models.Project, error) {
+func (a *API) ListProjects(ctx context.Context, p contract.ProjectListParams) ([]contract.Project, error) {
 	return projects.List(ctx, a.client, p)
 }
 
 // ShowProject returns one project.
-func (a *API) ShowProject(ctx context.Context, slug string) (models.Project, error) {
+func (a *API) ShowProject(ctx context.Context, slug string) (contract.Project, error) {
 	return projects.Load(ctx, a.client, slug)
 }
 
 // ListLabels returns every label.
-func (a *API) ListLabels(ctx context.Context) ([]models.Label, error) {
+func (a *API) ListLabels(ctx context.Context) ([]contract.Label, error) {
 	return labels.List(ctx, a.client)
 }
 
 // ListMilestones returns one project's milestones.
-func (a *API) ListMilestones(ctx context.Context, slug string) ([]models.Milestone, error) {
+func (a *API) ListMilestones(ctx context.Context, slug string) ([]contract.Milestone, error) {
 	return milestones.ListForProject(ctx, a.client, slug)
 }
 
@@ -103,27 +103,27 @@ func (a *API) ListMilestones(ctx context.Context, slug string) ([]models.Milesto
 // use, so a frontend never assembles state from what it sent.
 
 // Add captures a new issue.
-func (a *API) Add(ctx context.Context, p models.IssueAddParams) (models.Issue, error) {
+func (a *API) Add(ctx context.Context, p contract.IssueAddParams) (contract.Issue, error) {
 	return issues.Create(ctx, a.client, p)
 }
 
 // IssueStart moves an issue into doing.
-func (a *API) IssueStart(ctx context.Context, id int) (models.Issue, error) {
+func (a *API) IssueStart(ctx context.Context, id int) (contract.Issue, error) {
 	return issues.Start(ctx, a.client, id)
 }
 
 // IssueClose marks an issue done.
-func (a *API) IssueClose(ctx context.Context, id int) (models.Issue, error) {
+func (a *API) IssueClose(ctx context.Context, id int) (contract.Issue, error) {
 	return issues.Close(ctx, a.client, id)
 }
 
 // IssueReopen brings a closed issue back to todo.
-func (a *API) IssueReopen(ctx context.Context, id int) (models.Issue, error) {
+func (a *API) IssueReopen(ctx context.Context, id int) (contract.Issue, error) {
 	return issues.Reopen(ctx, a.client, id)
 }
 
 // IssueEdit changes an issue's title or body.
-func (a *API) IssueEdit(ctx context.Context, id int, p models.IssueEditParams) (models.Issue, error) {
+func (a *API) IssueEdit(ctx context.Context, id int, p contract.IssueEditParams) (contract.Issue, error) {
 	return issues.Edit(ctx, a.client, id, p)
 }
 
@@ -133,62 +133,62 @@ func (a *API) IssueDelete(ctx context.Context, id int) error {
 }
 
 // IssueSetPriority changes an issue's pick-order bump.
-func (a *API) IssueSetPriority(ctx context.Context, id int, p models.Priority) (models.Issue, error) {
+func (a *API) IssueSetPriority(ctx context.Context, id int, p contract.Priority) (contract.Issue, error) {
 	return issues.SetPriority(ctx, a.client, id, p)
 }
 
 // IssueSetMilestone files an issue under a milestone. An empty name clears it.
-func (a *API) IssueSetMilestone(ctx context.Context, id int, name string) (models.Issue, error) {
+func (a *API) IssueSetMilestone(ctx context.Context, id int, name string) (contract.Issue, error) {
 	return issues.SetMilestone(ctx, a.client, id, name)
 }
 
 // IssueAddLabel puts a label on an issue.
-func (a *API) IssueAddLabel(ctx context.Context, id int, name string) (models.Issue, error) {
+func (a *API) IssueAddLabel(ctx context.Context, id int, name string) (contract.Issue, error) {
 	return issues.AddLabel(ctx, a.client, id, name)
 }
 
 // IssueRemoveLabel takes a label off an issue.
-func (a *API) IssueRemoveLabel(ctx context.Context, id int, name string) (models.Issue, error) {
+func (a *API) IssueRemoveLabel(ctx context.Context, id int, name string) (contract.Issue, error) {
 	return issues.RemoveLabel(ctx, a.client, id, name)
 }
 
 // IssueAddSubIssue captures a new issue as a child of this one.
-func (a *API) IssueAddSubIssue(ctx context.Context, id int, p models.IssueAddParams) (models.Issue, error) {
+func (a *API) IssueAddSubIssue(ctx context.Context, id int, p contract.IssueAddParams) (contract.Issue, error) {
 	return issues.AddSubIssue(ctx, a.client, id, p)
 }
 
 // IssueAddDep records that an issue waits on another.
-func (a *API) IssueAddDep(ctx context.Context, id, blockerID int) (models.Issue, error) {
+func (a *API) IssueAddDep(ctx context.Context, id, blockerID int) (contract.Issue, error) {
 	return issues.AddDep(ctx, a.client, id, blockerID)
 }
 
 // IssueRemoveDep drops a dependency.
-func (a *API) IssueRemoveDep(ctx context.Context, id, blockerID int) (models.Issue, error) {
+func (a *API) IssueRemoveDep(ctx context.Context, id, blockerID int) (contract.Issue, error) {
 	return issues.RemoveDep(ctx, a.client, id, blockerID)
 }
 
 // IssueComment appends a comment to an issue.
-func (a *API) IssueComment(ctx context.Context, id int, body string) (models.Issue, error) {
+func (a *API) IssueComment(ctx context.Context, id int, body string) (contract.Issue, error) {
 	return issues.Comment(ctx, a.client, id, body)
 }
 
 // ProjectEdit changes a project's title or description.
-func (a *API) ProjectEdit(ctx context.Context, slug string, p models.ProjectEditParams) (models.Project, error) {
+func (a *API) ProjectEdit(ctx context.Context, slug string, p contract.ProjectEditParams) (contract.Project, error) {
 	return projects.Edit(ctx, a.client, slug, p)
 }
 
 // ProjectArchive takes a project's work out of the way.
-func (a *API) ProjectArchive(ctx context.Context, slug string) (models.Project, error) {
+func (a *API) ProjectArchive(ctx context.Context, slug string) (contract.Project, error) {
 	return projects.Archive(ctx, a.client, slug)
 }
 
 // ProjectRestore brings an archived project back.
-func (a *API) ProjectRestore(ctx context.Context, slug string) (models.Project, error) {
+func (a *API) ProjectRestore(ctx context.Context, slug string) (contract.Project, error) {
 	return projects.Restore(ctx, a.client, slug)
 }
 
 // CommentEdit replaces a comment's body.
-func (a *API) CommentEdit(ctx context.Context, id int, body string) (models.Comment, error) {
+func (a *API) CommentEdit(ctx context.Context, id int, body string) (contract.Comment, error) {
 	return comments.Edit(ctx, a.client, id, body)
 }
 

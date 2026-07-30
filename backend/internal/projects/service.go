@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/db"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // Ensure returns the id of the project with this slug, creating it if needed.
@@ -60,8 +60,8 @@ func EnsureIn(ctx context.Context, tx *ent.Client, slug string) (int, error) {
 }
 
 // Edit changes a project's title or description.
-func Edit(ctx context.Context, cl *ent.Client, slug string, p models.ProjectEditParams) (models.Project, error) {
-	var out models.Project
+func Edit(ctx context.Context, cl *ent.Client, slug string, p contract.ProjectEditParams) (contract.Project, error) {
+	var out contract.Project
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = EditIn(ctx, tx, slug, p)
@@ -71,13 +71,13 @@ func Edit(ctx context.Context, cl *ent.Client, slug string, p models.ProjectEdit
 }
 
 // EditIn is Edit inside a caller's transaction.
-func EditIn(ctx context.Context, tx *ent.Client, slug string, p models.ProjectEditParams) (models.Project, error) {
+func EditIn(ctx context.Context, tx *ent.Client, slug string, p contract.ProjectEditParams) (contract.Project, error) {
 	e, err := row(ctx, tx, slug)
 	if err != nil {
-		return models.Project{}, err
+		return contract.Project{}, err
 	}
 	if p.Title == nil && p.Description == nil {
-		return models.Project{}, errs.Invalidf("nothing to change")
+		return contract.Project{}, errs.Invalidf("nothing to change")
 	}
 
 	u := e.Update()
@@ -88,14 +88,14 @@ func EditIn(ctx context.Context, tx *ent.Client, slug string, p models.ProjectEd
 		u = u.SetDescription(*p.Description)
 	}
 	if _, err := u.Save(ctx); err != nil {
-		return models.Project{}, fmt.Errorf("editing project %q: %w", slug, err)
+		return contract.Project{}, fmt.Errorf("editing project %q: %w", slug, err)
 	}
 	return reload(ctx, tx, e.ID)
 }
 
 // Archive takes a project's work out of the way.
-func Archive(ctx context.Context, cl *ent.Client, slug string) (models.Project, error) {
-	var out models.Project
+func Archive(ctx context.Context, cl *ent.Client, slug string) (contract.Project, error) {
+	var out contract.Project
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = ArchiveIn(ctx, tx, slug)
@@ -105,13 +105,13 @@ func Archive(ctx context.Context, cl *ent.Client, slug string) (models.Project, 
 }
 
 // ArchiveIn is Archive inside a caller's transaction.
-func ArchiveIn(ctx context.Context, tx *ent.Client, slug string) (models.Project, error) {
-	return setStatus(ctx, tx, slug, entproject.StatusArchived, models.KeyProjectArchive)
+func ArchiveIn(ctx context.Context, tx *ent.Client, slug string) (contract.Project, error) {
+	return setStatus(ctx, tx, slug, entproject.StatusArchived, contract.KeyProjectArchive)
 }
 
 // Restore brings an archived project back.
-func Restore(ctx context.Context, cl *ent.Client, slug string) (models.Project, error) {
-	var out models.Project
+func Restore(ctx context.Context, cl *ent.Client, slug string) (contract.Project, error) {
+	var out contract.Project
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
 		var err error
 		out, err = RestoreIn(ctx, tx, slug)
@@ -121,8 +121,8 @@ func Restore(ctx context.Context, cl *ent.Client, slug string) (models.Project, 
 }
 
 // RestoreIn is Restore inside a caller's transaction.
-func RestoreIn(ctx context.Context, tx *ent.Client, slug string) (models.Project, error) {
-	return setStatus(ctx, tx, slug, entproject.StatusActive, models.KeyProjectRestore)
+func RestoreIn(ctx context.Context, tx *ent.Client, slug string) (contract.Project, error) {
+	return setStatus(ctx, tx, slug, entproject.StatusActive, contract.KeyProjectRestore)
 }
 
 // setStatus enforces the same transition the menu offers, against the live row.
@@ -132,24 +132,24 @@ func setStatus(
 	tx *ent.Client,
 	slug string,
 	want entproject.Status,
-	key models.ProjectKey,
-) (models.Project, error) {
+	key contract.ProjectKey,
+) (contract.Project, error) {
 	e, err := row(ctx, tx, slug)
 	if err != nil {
-		return models.Project{}, err
+		return contract.Project{}, err
 	}
 	if !offers(e, key) {
-		return models.Project{}, errs.Conflictf("project %q is already %s", e.Slug, want)
+		return contract.Project{}, errs.Conflictf("project %q is already %s", e.Slug, want)
 	}
 	if _, err := e.Update().SetStatus(want).Save(ctx); err != nil {
-		return models.Project{}, fmt.Errorf("setting project %q to %s: %w", slug, want, err)
+		return contract.Project{}, fmt.Errorf("setting project %q to %s: %w", slug, want, err)
 	}
 	return reload(ctx, tx, e.ID)
 }
 
 // offers reports whether the menu for this row carries key without a refusal.
 // Going through Actions is what keeps the write and the menu from drifting.
-func offers(e *ent.Project, key models.ProjectKey) bool {
+func offers(e *ent.Project, key contract.ProjectKey) bool {
 	for _, a := range Actions(e) {
 		if a.Key == key {
 			return a.Runnable()
@@ -172,6 +172,6 @@ func row(ctx context.Context, tx *ent.Client, slug string) (*ent.Project, error)
 
 // reload re-reads through the same loader the reads use, so a write and a read
 // can never disagree about what a project is.
-func reload(ctx context.Context, tx *ent.Client, id int) (models.Project, error) {
+func reload(ctx context.Context, tx *ent.Client, id int) (contract.Project, error) {
 	return LoadByID(ctx, tx, id)
 }

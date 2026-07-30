@@ -12,6 +12,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/ent"
@@ -23,7 +24,6 @@ import (
 	"github.com/Plabrum/tt/backend/internal/labels"
 	"github.com/Plabrum/tt/backend/internal/milestones"
 	"github.com/Plabrum/tt/backend/internal/projects"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // Load returns one issue with everything hanging off it. A missing id wraps
@@ -32,18 +32,18 @@ import (
 // The graph is recursive, so it stops one level down: the issues in Parent,
 // Subtasks, Blockers and Blocks come back at the depth List returns, with their
 // own relations empty.
-func Load(ctx context.Context, cl *ent.Client, id int) (models.Issue, error) {
+func Load(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
 	e, err := withMenuEdges(cl.Issue.Query().Where(entissue.IDEQ(id))).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return models.Issue{}, errs.NotFoundf("issue %d", id)
+			return contract.Issue{}, errs.NotFoundf("issue %d", id)
 		}
-		return models.Issue{}, fmt.Errorf("loading issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("loading issue %d: %w", id, err)
 	}
 
 	out, err := convert(e)
 	if err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 
 	// One query per relation rather than a deeper eager-load: each returns
@@ -51,29 +51,29 @@ func Load(ctx context.Context, cl *ent.Client, id int) (models.Issue, error) {
 	if e.ParentID != nil {
 		parent, err := one(ctx, cl, entissue.IDEQ(*e.ParentID))
 		if err != nil {
-			return models.Issue{}, err
+			return contract.Issue{}, err
 		}
 		out.Parent = parent
 	}
 	if out.Subtasks, err = many(ctx, cl, entissue.ParentIDEQ(id)); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	// A ref reads "blocked is blocked by blocker". This issue's blockers are
 	// therefore the issues whose `blocks` edge names it.
 	if out.Blockers, err = many(ctx, cl, entissue.HasBlocksWith(entissue.IDEQ(id))); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	if out.Blocks, err = many(ctx, cl, entissue.HasBlockedByWith(entissue.IDEQ(id))); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	if out.Comments, err = comments.ListForIssue(ctx, cl, id); err != nil {
-		return models.Issue{}, err
+		return contract.Issue{}, err
 	}
 	return out, nil
 }
 
 // List returns the issues matching p, in pick order.
-func List(ctx context.Context, cl *ent.Client, p models.IssueListParams) ([]models.Issue, error) {
+func List(ctx context.Context, cl *ent.Client, p contract.IssueListParams) ([]contract.Issue, error) {
 	preds, err := predicates(ctx, cl, p)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func withMenuEdges(q *ent.IssueQuery) *ent.IssueQuery {
 
 // one loads a single issue at list depth, or nil when the predicate matches
 // nothing.
-func one(ctx context.Context, cl *ent.Client, pred predicate.Issue) (*models.Issue, error) {
+func one(ctx context.Context, cl *ent.Client, pred predicate.Issue) (*contract.Issue, error) {
 	found, err := many(ctx, cl, pred)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func one(ctx context.Context, cl *ent.Client, pred predicate.Issue) (*models.Iss
 }
 
 // many loads issues at list depth, by id.
-func many(ctx context.Context, cl *ent.Client, pred predicate.Issue) ([]models.Issue, error) {
+func many(ctx context.Context, cl *ent.Client, pred predicate.Issue) ([]contract.Issue, error) {
 	found, err := withMenuEdges(cl.Issue.Query().Where(pred)).
 		Order(entissue.ByID()).
 		All(ctx)
@@ -132,8 +132,8 @@ func many(ctx context.Context, cl *ent.Client, pred predicate.Issue) ([]models.I
 
 // convertAll flattens ent rows into contract types. The result is never nil, so
 // --json prints [] rather than null.
-func convertAll(rows []*ent.Issue) ([]models.Issue, error) {
-	out := make([]models.Issue, 0, len(rows))
+func convertAll(rows []*ent.Issue) ([]contract.Issue, error) {
+	out := make([]contract.Issue, 0, len(rows))
 	for _, e := range rows {
 		converted, err := convert(e)
 		if err != nil {
@@ -148,17 +148,17 @@ func convertAll(rows []*ent.Issue) ([]models.Issue, error) {
 //
 // Every slice is initialised, because an empty list prints as [] and never as
 // null. The relation slices stay empty here: Load is what fills them.
-func convert(e *ent.Issue) (models.Issue, error) {
+func convert(e *ent.Issue) (contract.Issue, error) {
 	status, err := statusFromEnt(e.Status)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("issue %d: %w", e.ID, err)
+		return contract.Issue{}, fmt.Errorf("issue %d: %w", e.ID, err)
 	}
 	priority, err := priorityFromEnt(e.Priority)
 	if err != nil {
-		return models.Issue{}, fmt.Errorf("issue %d: %w", e.ID, err)
+		return contract.Issue{}, fmt.Errorf("issue %d: %w", e.ID, err)
 	}
 
-	out := models.Issue{
+	out := contract.Issue{
 		ID:        e.ID,
 		Title:     e.Title,
 		Body:      e.Body,
@@ -166,11 +166,11 @@ func convert(e *ent.Issue) (models.Issue, error) {
 		Priority:  priority,
 		CreatedAt: e.CreatedAt,
 		UpdatedAt: e.UpdatedAt,
-		Labels:    []models.Label{},
-		Subtasks:  []models.Issue{},
-		Blockers:  []models.Issue{},
-		Blocks:    []models.Issue{},
-		Comments:  []models.Comment{},
+		Labels:    []contract.Label{},
+		Subtasks:  []contract.Issue{},
+		Blockers:  []contract.Issue{},
+		Blocks:    []contract.Issue{},
+		Comments:  []contract.Comment{},
 		Blocked:   blocked(e),
 		Actions:   Actions(e),
 	}
@@ -183,7 +183,7 @@ func convert(e *ent.Issue) (models.Issue, error) {
 	if p := e.Edges.Project; p != nil {
 		project, err := projects.Convert(p)
 		if err != nil {
-			return models.Issue{}, err
+			return contract.Issue{}, err
 		}
 		out.Project = project
 	}
@@ -198,7 +198,7 @@ func convert(e *ent.Issue) (models.Issue, error) {
 }
 
 // predicates turns the filters into a WHERE clause.
-func predicates(ctx context.Context, cl *ent.Client, p models.IssueListParams) ([]predicate.Issue, error) {
+func predicates(ctx context.Context, cl *ent.Client, p contract.IssueListParams) ([]predicate.Issue, error) {
 	var preds []predicate.Issue
 
 	if p.Project != "" {
@@ -218,7 +218,7 @@ func predicates(ctx context.Context, cl *ent.Client, p models.IssueListParams) (
 	// The default hides done work; asking for it explicitly is what shows it.
 	statuses := p.Statuses
 	if len(statuses) == 0 {
-		statuses = []models.IssueStatus{models.IssueTodo, models.IssueDoing}
+		statuses = []contract.IssueStatus{contract.IssueTodo, contract.IssueDoing}
 	}
 	want := make([]entissue.Status, 0, len(statuses))
 	for _, st := range statuses {
@@ -275,48 +275,48 @@ func pickOrder() []entissue.OrderOption {
 // than casts, so a value added to one side and not the other fails at the
 // default arm instead of travelling as a constant nothing matches.
 
-func statusFromEnt(s entissue.Status) (models.IssueStatus, error) {
+func statusFromEnt(s entissue.Status) (contract.IssueStatus, error) {
 	switch s {
 	case entissue.StatusTodo:
-		return models.IssueTodo, nil
+		return contract.IssueTodo, nil
 	case entissue.StatusDoing:
-		return models.IssueDoing, nil
+		return contract.IssueDoing, nil
 	case entissue.StatusDone:
-		return models.IssueDone, nil
+		return contract.IssueDone, nil
 	default:
 		return "", errs.Conflictf("stored status %q is not one this binary knows", s)
 	}
 }
 
-func statusToEnt(s models.IssueStatus) (entissue.Status, error) {
+func statusToEnt(s contract.IssueStatus) (entissue.Status, error) {
 	switch s {
-	case models.IssueTodo:
+	case contract.IssueTodo:
 		return entissue.StatusTodo, nil
-	case models.IssueDoing:
+	case contract.IssueDoing:
 		return entissue.StatusDoing, nil
-	case models.IssueDone:
+	case contract.IssueDone:
 		return entissue.StatusDone, nil
 	default:
 		return "", errs.Invalidf("unknown status %q", s)
 	}
 }
 
-func priorityFromEnt(p entissue.Priority) (models.Priority, error) {
+func priorityFromEnt(p entissue.Priority) (contract.Priority, error) {
 	switch p {
 	case entissue.PriorityNormal:
-		return models.PriorityNormal, nil
+		return contract.PriorityNormal, nil
 	case entissue.PriorityHi:
-		return models.PriorityHi, nil
+		return contract.PriorityHi, nil
 	default:
 		return "", errs.Conflictf("stored priority %q is not one this binary knows", p)
 	}
 }
 
-func priorityToEnt(p models.Priority) (entissue.Priority, error) {
+func priorityToEnt(p contract.Priority) (entissue.Priority, error) {
 	switch p {
-	case models.PriorityNormal:
+	case contract.PriorityNormal:
 		return entissue.PriorityNormal, nil
-	case models.PriorityHi:
+	case contract.PriorityHi:
 		return entissue.PriorityHi, nil
 	default:
 		return "", errs.Invalidf("unknown priority %q", p)

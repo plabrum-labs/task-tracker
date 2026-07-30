@@ -8,18 +8,18 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entlabel "github.com/Plabrum/tt/backend/internal/ent/label"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // List returns every label, by name.
-func List(ctx context.Context, cl *ent.Client) ([]models.Label, error) {
+func List(ctx context.Context, cl *ent.Client) ([]contract.Label, error) {
 	found, err := cl.Label.Query().Order(entlabel.ByName()).All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing labels: %w", err)
 	}
-	out := make([]models.Label, 0, len(found))
+	out := make([]contract.Label, 0, len(found))
 	for _, e := range found {
 		out = append(out, Convert(e))
 	}
@@ -27,6 +27,6 @@ func List(ctx context.Context, cl *ent.Client) ([]models.Label, error) {
 }
 
 // Convert flattens an ent row into the contract type.
-func Convert(e *ent.Label) models.Label {
-	return models.Label{Name: e.Name, Description: e.Description}
+func Convert(e *ent.Label) contract.Label {
+	return contract.Label{Name: e.Name, Description: e.Description}
 }

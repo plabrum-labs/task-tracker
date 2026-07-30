@@ -117,7 +117,7 @@ Dependency flow: `cli`/`tui` → `backend` → domain package → Ent → SQLite
 These are load-bearing. Breaking one is a design change, not a refactor.
 
 1. **`cli` and `tui` never import `ent`.** They import `backend`,
-   `backend/models` and `backend/errs`; everything else is under
+   `backend/contract` and `backend/errs`; everything else is under
    `backend/internal/` and the compiler rejects it. This also keeps
    lazily-loaded edges out of render code, where `Edges.Labels == nil` can't be
    distinguished from "has no labels" — contract types have fields, not edges.

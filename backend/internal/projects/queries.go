@@ -9,42 +9,42 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // Load returns one project by slug. A missing slug wraps errs.ErrNotFound.
-func Load(ctx context.Context, cl *ent.Client, slug string) (models.Project, error) {
+func Load(ctx context.Context, cl *ent.Client, slug string) (contract.Project, error) {
 	e, err := cl.Project.Query().Where(entproject.SlugEQ(Slugify(slug))).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return models.Project{}, errs.NotFoundf("project %q", slug)
+			return contract.Project{}, errs.NotFoundf("project %q", slug)
 		}
-		return models.Project{}, fmt.Errorf("loading project %q: %w", slug, err)
+		return contract.Project{}, fmt.Errorf("loading project %q: %w", slug, err)
 	}
 	return Convert(e)
 }
 
 // LoadByID returns one project by id.
-func LoadByID(ctx context.Context, cl *ent.Client, id int) (models.Project, error) {
+func LoadByID(ctx context.Context, cl *ent.Client, id int) (contract.Project, error) {
 	e, err := cl.Project.Get(ctx, id)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return models.Project{}, errs.NotFoundf("project %d", id)
+			return contract.Project{}, errs.NotFoundf("project %d", id)
 		}
-		return models.Project{}, fmt.Errorf("loading project %d: %w", id, err)
+		return contract.Project{}, fmt.Errorf("loading project %d: %w", id, err)
 	}
 	return Convert(e)
 }
 
 // List returns the projects matching p, by slug.
-func List(ctx context.Context, cl *ent.Client, p models.ProjectListParams) ([]models.Project, error) {
+func List(ctx context.Context, cl *ent.Client, p contract.ProjectListParams) ([]contract.Project, error) {
 	// The default hides archived work; asking for it explicitly is what shows it.
 	statuses := p.Statuses
 	if len(statuses) == 0 {
-		statuses = []models.ProjectStatus{models.ProjectActive}
+		statuses = []contract.ProjectStatus{contract.ProjectActive}
 	}
 	want := make([]entproject.Status, 0, len(statuses))
 	for _, st := range statuses {
@@ -67,7 +67,7 @@ func List(ctx context.Context, cl *ent.Client, p models.ProjectListParams) ([]mo
 		return nil, fmt.Errorf("listing projects: %w", err)
 	}
 	// Non-nil, so --json prints [] rather than null.
-	out := make([]models.Project, 0, len(found))
+	out := make([]contract.Project, 0, len(found))
 	for _, e := range found {
 		converted, err := Convert(e)
 		if err != nil {
@@ -90,12 +90,12 @@ func ActiveIDs(ctx context.Context, cl *ent.Client) ([]int, error) {
 }
 
 // Convert flattens an ent row into the contract type, menu included.
-func Convert(e *ent.Project) (models.Project, error) {
+func Convert(e *ent.Project) (contract.Project, error) {
 	status, err := statusFromEnt(e.Status)
 	if err != nil {
-		return models.Project{}, fmt.Errorf("project %d: %w", e.ID, err)
+		return contract.Project{}, fmt.Errorf("project %d: %w", e.ID, err)
 	}
-	return models.Project{
+	return contract.Project{
 		ID:          e.ID,
 		Slug:        e.Slug,
 		Title:       e.Title,
@@ -111,22 +111,22 @@ func Convert(e *ent.Project) (models.Project, error) {
 // than casts, so a value added to one side and not the other fails at the
 // default arm instead of travelling as a constant nothing matches.
 
-func statusFromEnt(s entproject.Status) (models.ProjectStatus, error) {
+func statusFromEnt(s entproject.Status) (contract.ProjectStatus, error) {
 	switch s {
 	case entproject.StatusActive:
-		return models.ProjectActive, nil
+		return contract.ProjectActive, nil
 	case entproject.StatusArchived:
-		return models.ProjectArchived, nil
+		return contract.ProjectArchived, nil
 	default:
 		return "", errs.Conflictf("stored project status %q is not one this binary knows", s)
 	}
 }
 
-func statusToEnt(s models.ProjectStatus) (entproject.Status, error) {
+func statusToEnt(s contract.ProjectStatus) (entproject.Status, error) {
 	switch s {
-	case models.ProjectActive:
+	case contract.ProjectActive:
 		return entproject.StatusActive, nil
-	case models.ProjectArchived:
+	case contract.ProjectArchived:
 		return entproject.StatusArchived, nil
 	default:
 		return "", errs.Invalidf("unknown project status %q", s)

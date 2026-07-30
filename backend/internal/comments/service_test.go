@@ -4,18 +4,18 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	"github.com/Plabrum/tt/backend/internal/issues"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // issueID seeds one issue for a comment to hang off.
 func issueID(t *testing.T, cl *ent.Client) int {
 	t.Helper()
-	created, err := issues.Create(t.Context(), cl, models.IssueAddParams{Project: "tt", Title: "work"})
+	created, err := issues.Create(t.Context(), cl, contract.IssueAddParams{Project: "tt", Title: "work"})
 	if err != nil {
 		t.Fatalf("creating issue: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestActions(t *testing.T) {
 	t.Parallel()
 
 	menu := comments.Actions(&ent.Comment{ID: 1})
-	want := []models.CommentKey{models.KeyCommentEdit, models.KeyCommentDelete}
+	want := []contract.CommentKey{contract.KeyCommentEdit, contract.KeyCommentDelete}
 	if len(menu) != len(want) {
 		t.Fatalf("menu = %+v, want %d entries", menu, len(want))
 	}

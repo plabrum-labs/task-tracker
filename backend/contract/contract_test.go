@@ -1,11 +1,11 @@
-package models_test
+package contract_test
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/Plabrum/tt/backend/models"
+	"github.com/Plabrum/tt/backend/contract"
 )
 
 // The --json keys are the agent-facing API, not an implementation detail. Each
@@ -24,16 +24,16 @@ func TestContractJSON(t *testing.T) {
 	due := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	closed := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 
-	project := models.Project{
+	project := contract.Project{
 		ID:          7,
 		Slug:        "tt",
 		Title:       "Task tracker",
 		Description: "the tracker",
-		Status:      models.ProjectActive,
+		Status:      contract.ProjectActive,
 		CreatedAt:   stamp,
 		UpdatedAt:   stamp,
-		Actions: []models.Action[models.ProjectKey]{
-			{Key: models.KeyProjectArchive, Label: "archive"},
+		Actions: []contract.Action[contract.ProjectKey]{
+			{Key: contract.KeyProjectArchive, Label: "archive"},
 		},
 	}
 
@@ -44,29 +44,29 @@ func TestContractJSON(t *testing.T) {
 	}{
 		{
 			name:  "label",
-			value: models.Label{Name: "bug", Description: "a defect"},
+			value: contract.Label{Name: "bug", Description: "a defect"},
 			want:  `{"name":"bug","description":"a defect"}`,
 		},
 		{
 			name:  "milestone",
-			value: models.Milestone{ID: 3, Name: "v1", Description: "first cut", Due: &due},
+			value: contract.Milestone{ID: 3, Name: "v1", Description: "first cut", Due: &due},
 			want:  `{"id":3,"name":"v1","description":"first cut","due":"2026-03-01T00:00:00Z"}`,
 		},
 		{
 			name:  "milestone without a due date",
-			value: models.Milestone{ID: 3, Name: "v1"},
+			value: contract.Milestone{ID: 3, Name: "v1"},
 			want:  `{"id":3,"name":"v1","description":"","due":null}`,
 		},
 		{
 			name: "comment",
-			value: models.Comment{
+			value: contract.Comment{
 				ID:        11,
 				CreatedAt: stamp,
 				UpdatedAt: stamp,
 				Author:    "me",
 				Body:      "a note",
-				Actions: []models.Action[models.CommentKey]{
-					{Key: models.KeyCommentEdit, Label: "edit"},
+				Actions: []contract.Action[contract.CommentKey]{
+					{Key: contract.KeyCommentEdit, Label: "edit"},
 				},
 			},
 			want: `{"id":11,"created_at":"2026-01-02T03:04:05Z",` +
@@ -81,26 +81,26 @@ func TestContractJSON(t *testing.T) {
 		},
 		{
 			name: "issue",
-			value: models.Issue{
+			value: contract.Issue{
 				ID:        12,
 				Title:     "ship it",
 				Body:      "the body",
-				Status:    models.IssueDoing,
-				Priority:  models.PriorityHi,
+				Status:    contract.IssueDoing,
+				Priority:  contract.PriorityHi,
 				CreatedAt: stamp,
 				UpdatedAt: stamp,
 				ClosedAt:  &closed,
 				Project:   project,
-				Milestone: &models.Milestone{ID: 3, Name: "v1"},
-				Labels:    []models.Label{{Name: "bug"}},
+				Milestone: &contract.Milestone{ID: 3, Name: "v1"},
+				Labels:    []contract.Label{{Name: "bug"}},
 				Parent:    nil,
-				Subtasks:  []models.Issue{},
-				Blockers:  []models.Issue{},
-				Blocks:    []models.Issue{},
-				Comments:  []models.Comment{},
+				Subtasks:  []contract.Issue{},
+				Blockers:  []contract.Issue{},
+				Blocks:    []contract.Issue{},
+				Comments:  []contract.Comment{},
 				Blocked:   true,
-				Actions: []models.Action[models.IssueKey]{
-					{Key: models.KeyIssueClose, Label: "close"},
+				Actions: []contract.Action[contract.IssueKey]{
+					{Key: contract.KeyIssueClose, Label: "close"},
 				},
 			},
 			want: `{"id":12,"title":"ship it","body":"the body","status":"doing","priority":"hi",` +
@@ -136,9 +136,9 @@ func TestContractJSON(t *testing.T) {
 func TestActionsAreNotSerialised(t *testing.T) {
 	t.Parallel()
 
-	got, err := json.Marshal(models.Comment{
+	got, err := json.Marshal(contract.Comment{
 		ID:      1,
-		Actions: []models.Action[models.CommentKey]{{Key: models.KeyCommentDelete, Label: "delete"}},
+		Actions: []contract.Action[contract.CommentKey]{{Key: contract.KeyCommentDelete, Label: "delete"}},
 	})
 	if err != nil {
 		t.Fatalf("marshalling: %v", err)
@@ -155,8 +155,8 @@ func TestActionsAreNotSerialised(t *testing.T) {
 func TestActionJSON(t *testing.T) {
 	t.Parallel()
 
-	got, err := json.Marshal(models.Action[models.IssueKey]{
-		Key:    models.KeyIssueClose,
+	got, err := json.Marshal(contract.Action[contract.IssueKey]{
+		Key:    contract.KeyIssueClose,
 		Label:  "close",
 		Reason: "open sub-issues",
 	})
@@ -174,11 +174,11 @@ func TestRunnable(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		action models.Action[models.IssueKey]
+		action contract.Action[contract.IssueKey]
 		want   bool
 	}{
-		{"no reason runs", models.Action[models.IssueKey]{Key: models.KeyIssueStart}, true},
-		{"a reason refuses", models.Action[models.IssueKey]{Key: models.KeyIssueStart, Reason: "blocked"}, false},
+		{"no reason runs", contract.Action[contract.IssueKey]{Key: contract.KeyIssueStart}, true},
+		{"a reason refuses", contract.Action[contract.IssueKey]{Key: contract.KeyIssueStart, Reason: "blocked"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -195,11 +195,11 @@ func TestEdited(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		comment models.Comment
+		comment contract.Comment
 		want    bool
 	}{
-		{"untouched", models.Comment{CreatedAt: stamp, UpdatedAt: stamp}, false},
-		{"edited", models.Comment{CreatedAt: stamp, UpdatedAt: stamp.Add(time.Minute)}, true},
+		{"untouched", contract.Comment{CreatedAt: stamp, UpdatedAt: stamp}, false},
+		{"edited", contract.Comment{CreatedAt: stamp, UpdatedAt: stamp.Add(time.Minute)}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

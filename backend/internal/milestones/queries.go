@@ -9,14 +9,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entmilestone "github.com/Plabrum/tt/backend/internal/ent/milestone"
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // ListForProject returns the milestones of one project, by name.
-func ListForProject(ctx context.Context, cl *ent.Client, slug string) ([]models.Milestone, error) {
+func ListForProject(ctx context.Context, cl *ent.Client, slug string) ([]contract.Milestone, error) {
 	found, err := cl.Milestone.Query().
 		Where(entmilestone.HasProjectWith(entproject.SlugEQ(slug))).
 		Order(entmilestone.ByName()).
@@ -24,7 +24,7 @@ func ListForProject(ctx context.Context, cl *ent.Client, slug string) ([]models.
 	if err != nil {
 		return nil, fmt.Errorf("listing milestones of project %q: %w", slug, err)
 	}
-	out := make([]models.Milestone, 0, len(found))
+	out := make([]contract.Milestone, 0, len(found))
 	for _, e := range found {
 		out = append(out, Convert(e))
 	}
@@ -32,8 +32,8 @@ func ListForProject(ctx context.Context, cl *ent.Client, slug string) ([]models.
 }
 
 // Convert flattens an ent row into the contract type.
-func Convert(e *ent.Milestone) models.Milestone {
-	m := models.Milestone{
+func Convert(e *ent.Milestone) contract.Milestone {
+	m := contract.Milestone{
 		ID:          e.ID,
 		Name:        e.Name,
 		Description: e.Description,

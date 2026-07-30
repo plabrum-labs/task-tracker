@@ -5,27 +5,27 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	"github.com/Plabrum/tt/backend/internal/issues"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // The same rule is checked twice: once to build the menu, once here against
 // live rows. actions_test.go covers the menu half; this file covers the write
 // refusing what the menu refused.
 
-func add(t *testing.T, cl *ent.Client, title string) models.Issue {
+func add(t *testing.T, cl *ent.Client, title string) contract.Issue {
 	t.Helper()
-	created, err := issues.Create(t.Context(), cl, models.IssueAddParams{Project: "tt", Title: title})
+	created, err := issues.Create(t.Context(), cl, contract.IssueAddParams{Project: "tt", Title: title})
 	if err != nil {
 		t.Fatalf("creating issue %q: %v", title, err)
 	}
 	return created
 }
 
-func closeIssue(t *testing.T, cl *ent.Client, id int) models.Issue {
+func closeIssue(t *testing.T, cl *ent.Client, id int) contract.Issue {
 	t.Helper()
 	closed, err := issues.Close(t.Context(), cl, id)
 	if err != nil {
@@ -38,11 +38,11 @@ func TestCreate(t *testing.T) {
 	t.Parallel()
 	cl := dbtest.Client(t)
 
-	created, err := issues.Create(t.Context(), cl, models.IssueAddParams{
+	created, err := issues.Create(t.Context(), cl, contract.IssueAddParams{
 		Project:   "My Repo",
 		Title:     "  ship it  ",
 		Body:      "the body",
-		Priority:  models.PriorityHi,
+		Priority:  contract.PriorityHi,
 		Labels:    []string{"Bug"},
 		Milestone: "V1",
 	})
@@ -53,8 +53,8 @@ func TestCreate(t *testing.T) {
 	if created.Title != "ship it" {
 		t.Errorf("Title = %q, want %q", created.Title, "ship it")
 	}
-	if created.Status != models.IssueTodo {
-		t.Errorf("Status = %q, want %q", created.Status, models.IssueTodo)
+	if created.Status != contract.IssueTodo {
+		t.Errorf("Status = %q, want %q", created.Status, contract.IssueTodo)
 	}
 	// The slug and the taxonomy names are normalised on the way in, so the same
 	// project cannot arrive twice under two spellings.
@@ -75,12 +75,12 @@ func TestCreateRejectsBadParams(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		params models.IssueAddParams
+		params contract.IssueAddParams
 	}{
-		{"no project", models.IssueAddParams{Title: "x"}},
-		{"no title", models.IssueAddParams{Project: "tt"}},
-		{"blank title", models.IssueAddParams{Project: "tt", Title: "   "}},
-		{"unknown priority", models.IssueAddParams{Project: "tt", Title: "x", Priority: "urgent"}},
+		{"no project", contract.IssueAddParams{Title: "x"}},
+		{"no title", contract.IssueAddParams{Project: "tt"}},
+		{"blank title", contract.IssueAddParams{Project: "tt", Title: "   "}},
+		{"unknown priority", contract.IssueAddParams{Project: "tt", Title: "x", Priority: "urgent"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestCreateRollsBackTheProject(t *testing.T) {
 	t.Parallel()
 	cl := dbtest.Client(t)
 
-	_, err := issues.Create(t.Context(), cl, models.IssueAddParams{
+	_, err := issues.Create(t.Context(), cl, contract.IssueAddParams{
 		Project:  "brand-new",
 		Title:    "x",
 		Priority: "urgent",
@@ -149,7 +149,7 @@ func TestCloseRefusedWithOpenSubIssues(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	parent := add(t, cl, "parent")
-	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, models.IssueAddParams{Title: "child"})
+	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{Title: "child"})
 	if err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestAddSubIssue(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	parent := add(t, cl, "parent")
-	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, models.IssueAddParams{
+	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{
 		Project: "somewhere-else",
 		Title:   "child",
 	})
@@ -202,7 +202,7 @@ func TestTransitionsRefusedOutOfOrder(t *testing.T) {
 		name string
 		// setup leaves the issue in the state the write should be refused from.
 		setup func(t *testing.T, cl *ent.Client, id int)
-		call  func(ctx context.Context, cl *ent.Client, id int) (models.Issue, error)
+		call  func(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error)
 	}{
 		{
 			name:  "start on a done issue",
@@ -252,8 +252,8 @@ func TestCloseAndReopenMoveClosedAt(t *testing.T) {
 	if reopened.ClosedAt != nil {
 		t.Errorf("ClosedAt = %v after reopening, want nil", reopened.ClosedAt)
 	}
-	if reopened.Status != models.IssueTodo {
-		t.Errorf("Status = %q, want %q", reopened.Status, models.IssueTodo)
+	if reopened.Status != contract.IssueTodo {
+		t.Errorf("Status = %q, want %q", reopened.Status, contract.IssueTodo)
 	}
 }
 
@@ -379,7 +379,7 @@ func TestEdit(t *testing.T) {
 
 	issue := add(t, cl, "before")
 	title := "after"
-	edited, err := issues.Edit(t.Context(), cl, issue.ID, models.IssueEditParams{Title: &title})
+	edited, err := issues.Edit(t.Context(), cl, issue.ID, contract.IssueEditParams{Title: &title})
 	if err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
@@ -388,10 +388,10 @@ func TestEdit(t *testing.T) {
 	}
 
 	blank := "   "
-	if _, err := issues.Edit(t.Context(), cl, issue.ID, models.IssueEditParams{Title: &blank}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := issues.Edit(t.Context(), cl, issue.ID, contract.IssueEditParams{Title: &blank}); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Edit to a blank title = %v, want ErrInvalid", err)
 	}
-	if _, err := issues.Edit(t.Context(), cl, issue.ID, models.IssueEditParams{}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := issues.Edit(t.Context(), cl, issue.ID, contract.IssueEditParams{}); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Edit with nothing set = %v, want ErrInvalid", err)
 	}
 }
@@ -402,7 +402,7 @@ func TestDeleteKeepsSubIssues(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	parent := add(t, cl, "parent")
-	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, models.IssueAddParams{Title: "child"})
+	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{Title: "child"})
 	if err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
@@ -444,12 +444,12 @@ func TestSetPriorityAndMilestone(t *testing.T) {
 
 	issue := add(t, cl, "work")
 
-	bumped, err := issues.SetPriority(t.Context(), cl, issue.ID, models.PriorityHi)
+	bumped, err := issues.SetPriority(t.Context(), cl, issue.ID, contract.PriorityHi)
 	if err != nil {
 		t.Fatalf("SetPriority: %v", err)
 	}
-	if bumped.Priority != models.PriorityHi {
-		t.Errorf("Priority = %q, want %q", bumped.Priority, models.PriorityHi)
+	if bumped.Priority != contract.PriorityHi {
+		t.Errorf("Priority = %q, want %q", bumped.Priority, contract.PriorityHi)
 	}
 	if _, err := issues.SetPriority(t.Context(), cl, issue.ID, "urgent"); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("SetPriority to an unknown value = %v, want ErrInvalid", err)

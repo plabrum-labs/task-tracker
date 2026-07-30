@@ -3,16 +3,16 @@ package issues_test
 import (
 	"testing"
 
+	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	"github.com/Plabrum/tt/backend/internal/issues"
 	"github.com/Plabrum/tt/backend/internal/projects"
-	"github.com/Plabrum/tt/backend/models"
 )
 
 // ids is what a list assertion compares, so a failure names the rows rather
 // than dumping two graphs.
-func ids(list []models.Issue) []int {
+func ids(list []contract.Issue) []int {
 	out := make([]int, 0, len(list))
 	for _, i := range list {
 		out = append(out, i.ID)
@@ -32,16 +32,16 @@ func equal(a, b []int) bool {
 	return true
 }
 
-func addTo(t *testing.T, cl *ent.Client, project, title string) models.Issue {
+func addTo(t *testing.T, cl *ent.Client, project, title string) contract.Issue {
 	t.Helper()
-	created, err := issues.Create(t.Context(), cl, models.IssueAddParams{Project: project, Title: title})
+	created, err := issues.Create(t.Context(), cl, contract.IssueAddParams{Project: project, Title: title})
 	if err != nil {
 		t.Fatalf("creating issue %q: %v", title, err)
 	}
 	return created
 }
 
-func list(t *testing.T, cl *ent.Client, p models.IssueListParams) []models.Issue {
+func list(t *testing.T, cl *ent.Client, p contract.IssueListParams) []contract.Issue {
 	t.Helper()
 	found, err := issues.List(t.Context(), cl, p)
 	if err != nil {
@@ -61,12 +61,12 @@ func TestListDefaultsToOpenWork(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if got := ids(list(t, cl, models.IssueListParams{})); !equal(got, []int{open.ID}) {
+	if got := ids(list(t, cl, contract.IssueListParams{})); !equal(got, []int{open.ID}) {
 		t.Errorf("default list = %v, want %v", got, []int{open.ID})
 	}
 
-	all := models.IssueListParams{Statuses: []models.IssueStatus{
-		models.IssueTodo, models.IssueDoing, models.IssueDone,
+	all := contract.IssueListParams{Statuses: []contract.IssueStatus{
+		contract.IssueTodo, contract.IssueDoing, contract.IssueDone,
 	}}
 	if got := ids(list(t, cl, all)); len(got) != 2 {
 		t.Errorf("list of every status = %v, want both issues", got)
@@ -85,11 +85,11 @@ func TestListExcludesArchivedProjects(t *testing.T) {
 		t.Fatalf("Archive: %v", err)
 	}
 
-	if got := ids(list(t, cl, models.IssueListParams{})); !equal(got, []int{kept.ID}) {
+	if got := ids(list(t, cl, contract.IssueListParams{})); !equal(got, []int{kept.ID}) {
 		t.Errorf("unscoped list = %v, want %v", got, []int{kept.ID})
 	}
 
-	scoped := ids(list(t, cl, models.IssueListParams{Project: "old"}))
+	scoped := ids(list(t, cl, contract.IssueListParams{Project: "old"}))
 	if !equal(scoped, []int{hidden.ID}) {
 		t.Errorf("list of the archived project = %v, want %v", scoped, []int{hidden.ID})
 	}
@@ -98,7 +98,7 @@ func TestListExcludesArchivedProjects(t *testing.T) {
 	if _, err := projects.Restore(t.Context(), cl, "old"); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if got := ids(list(t, cl, models.IssueListParams{})); len(got) != 2 {
+	if got := ids(list(t, cl, contract.IssueListParams{})); len(got) != 2 {
 		t.Errorf("list after restoring = %v, want both issues", got)
 	}
 }
@@ -125,15 +125,15 @@ func TestListFilters(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		params models.IssueListParams
+		params contract.IssueListParams
 		want   []int
 	}{
-		{"by project", models.IssueListParams{Project: "other"}, []int{elsewhere.ID}},
-		{"by label", models.IssueListParams{Labels: []string{"bug"}}, []int{tagged.ID}},
-		{"by milestone", models.IssueListParams{Milestone: "v1"}, []int{tagged.ID}},
-		{"by title, case-insensitively", models.IssueListParams{Search: "TAGGED"}, []int{tagged.ID}},
-		{"blocked only", models.IssueListParams{BlockedOnly: true}, []int{blocked.ID}},
-		{"a label nothing carries", models.IssueListParams{Labels: []string{"nope"}}, []int{}},
+		{"by project", contract.IssueListParams{Project: "other"}, []int{elsewhere.ID}},
+		{"by label", contract.IssueListParams{Labels: []string{"bug"}}, []int{tagged.ID}},
+		{"by milestone", contract.IssueListParams{Milestone: "v1"}, []int{tagged.ID}},
+		{"by title, case-insensitively", contract.IssueListParams{Search: "TAGGED"}, []int{tagged.ID}},
+		{"blocked only", contract.IssueListParams{BlockedOnly: true}, []int{blocked.ID}},
+		{"a label nothing carries", contract.IssueListParams{Labels: []string{"nope"}}, []int{}},
 	}
 
 	for _, tt := range tests {
@@ -162,7 +162,7 @@ func TestListLabelsAreAnded(t *testing.T) {
 		t.Fatalf("AddLabel: %v", err)
 	}
 
-	got := ids(list(t, cl, models.IssueListParams{Labels: []string{"bug", "backend"}}))
+	got := ids(list(t, cl, contract.IssueListParams{Labels: []string{"bug", "backend"}}))
 	if !equal(got, []int{both.ID}) {
 		t.Errorf("list = %v, want %v", got, []int{both.ID})
 	}
@@ -176,12 +176,12 @@ func TestListPickOrder(t *testing.T) {
 	first := addTo(t, cl, "tt", "first")
 	second := addTo(t, cl, "tt", "second")
 	third := addTo(t, cl, "tt", "third")
-	if _, err := issues.SetPriority(t.Context(), cl, third.ID, models.PriorityHi); err != nil {
+	if _, err := issues.SetPriority(t.Context(), cl, third.ID, contract.PriorityHi); err != nil {
 		t.Fatalf("SetPriority: %v", err)
 	}
 
 	want := []int{third.ID, first.ID, second.ID}
-	if got := ids(list(t, cl, models.IssueListParams{})); !equal(got, want) {
+	if got := ids(list(t, cl, contract.IssueListParams{})); !equal(got, want) {
 		t.Errorf("pick order = %v, want %v", got, want)
 	}
 }
@@ -193,7 +193,7 @@ func TestListLimit(t *testing.T) {
 	for _, title := range []string{"a", "b", "c"} {
 		addTo(t, cl, "tt", title)
 	}
-	if got := list(t, cl, models.IssueListParams{Limit: 2}); len(got) != 2 {
+	if got := list(t, cl, contract.IssueListParams{Limit: 2}); len(got) != 2 {
 		t.Errorf("limited list has %d rows, want 2", len(got))
 	}
 }
@@ -210,21 +210,21 @@ func TestListRowsCarryTheirMenu(t *testing.T) {
 		t.Fatalf("AddDep: %v", err)
 	}
 
-	for _, row := range list(t, cl, models.IssueListParams{}) {
+	for _, row := range list(t, cl, contract.IssueListParams{}) {
 		if row.ID != work.ID {
 			continue
 		}
 		if !row.Blocked {
 			t.Error("Blocked = false on a list row with an open blocker")
 		}
-		action, ok := find(row.Actions, models.KeyIssueStart)
+		action, ok := find(row.Actions, contract.KeyIssueStart)
 		if !ok {
 			t.Fatal("a list row withholds start entirely")
 		}
 		if action.Runnable() {
 			t.Error("start is runnable on a blocked list row")
 		}
-		if _, ok := find(row.Actions, models.KeyIssueRemoveDep); !ok {
+		if _, ok := find(row.Actions, contract.KeyIssueRemoveDep); !ok {
 			t.Error("a list row withholds remove-dep despite having a blocker")
 		}
 	}
@@ -236,11 +236,11 @@ func TestLoadStopsOneLevelDown(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	grandparent := addTo(t, cl, "tt", "grandparent")
-	parent, err := issues.AddSubIssue(t.Context(), cl, grandparent.ID, models.IssueAddParams{Title: "parent"})
+	parent, err := issues.AddSubIssue(t.Context(), cl, grandparent.ID, contract.IssueAddParams{Title: "parent"})
 	if err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
-	if _, err := issues.AddSubIssue(t.Context(), cl, parent.ID, models.IssueAddParams{Title: "child"}); err != nil {
+	if _, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{Title: "child"}); err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
 
@@ -291,7 +291,7 @@ func TestSlicesAreNeverNil(t *testing.T) {
 		t.Errorf("Milestone = %+v, want nil", loaded.Milestone)
 	}
 
-	empty, err := issues.List(t.Context(), cl, models.IssueListParams{Search: "nothing matches"})
+	empty, err := issues.List(t.Context(), cl, contract.IssueListParams{Search: "nothing matches"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
