@@ -10,8 +10,8 @@ underlying commands.
 - `just format` — apply formatting. Run before every commit.
 - `just lint` — formatting, `go vet` and the enabled linters.
 - `just test` / `just test-race` — unit tests, in-memory SQLite.
-- `just generate` — regenerate ent. Run after editing `ent/schema/`, and commit
-  the result.
+- `just generate` — regenerate ent. Run after editing
+  `backend/internal/ent/schema/`, and commit the result.
 - `just db-migrate <name>` — generate a new versioned migration from the ent
   schema. `just db-upgrade` applies pending ones to the store, `just db-status`
   says what is pending, `just db-check` fails if the two have drifted apart.
@@ -109,35 +109,46 @@ breaks the build — is exactly what this section is for. Say what breaks.
 
 ## Architecture
 
-Dependency flow: `cli`/`ui` → feature service → repository → Ent → SQLite.
+`CONTRACT.md` owns what the backend returns and where each package lives. Read
+it before moving code between packages.
+
+Dependency flow: `cli`/`tui` → `backend` → domain package → Ent → SQLite.
 
 These are load-bearing. Breaking one is a design change, not a refactor.
 
-1. **`cli` and `ui` never import `ent`.** Ent entities and query builders stop
-   at the repository layer; frontends see only feature view types. This also
-   keeps lazily-loaded edges out of render code, where `Edges.Labels == nil`
-   can't be distinguished from "has no labels".
-2. **Taxonomy never depends on work.** `project`, `milestone`, and `label` must
-   not import `issue`.
-3. **`issue` may depend on `ref`; `ref` must not depend on `issue`.**
-4. **Cross-feature reads of substance live in `query/`.** A repository may
-   reach outside its own tables, but only for narrow existence and status
-   checks.
-5. **Write methods come in pairs.** The plain one is frontend-facing, has an
-   ent-free signature, and owns the transaction via `db.WithTx`; the `…In` one
-   takes an `*ent.Client` and composes into a caller's transaction. The plain
-   one wraps the `…In` one so the two cannot drift.
+1. **`cli` and `tui` never import `ent`.** They import `backend`,
+   `backend/models` and `backend/errs`; everything else is under
+   `backend/internal/` and the compiler rejects it. This also keeps
+   lazily-loaded edges out of render code, where `Edges.Labels == nil` can't be
+   distinguished from "has no labels" — contract types have fields, not edges.
+2. **Taxonomy never depends on work.** `projects`, `milestones` and `labels`
+   must not import `issues`.
+3. **A domain owns every read of its own object**, however many tables it
+   joins. The issue list joins labels, milestones and refs and still lives in
+   `issues/queries.go`.
+4. **`actions.go` is pure.** No context, no client, no error, no queries — it
+   takes a loaded object and returns its menu. A rule needing a query is not a
+   menu rule.
+5. **Write methods come in pairs.** The plain one owns the transaction via
+   `db.WithTx`; the `…In` one takes an `*ent.Client` and composes into a
+   caller's transaction. The plain one wraps the `…In` one so the two cannot
+   drift. `backend/contract.go` calls the plain one and does nothing else.
 
 Any rule a user can hit must be reachable identically from the CLI and the TUI.
-Logic in `cli/` or `ui/` is in the wrong place.
+Logic in `cli/` or `tui/` is in the wrong place. Legality is decided in
+`actions.go` and enforced in `service.go`; a frontend only decides how to
+render the result.
 
 ## Contracts
 
 `--json` keys and exit codes are the agent-facing API, not implementation
 details. Changing one is a stop-and-ask.
 
-- `--json` output is covered by golden files, so a key change shows up as a
-  diff rather than a surprise.
+- Each contract type has a unit test that marshals a literal and compares
+  against an expected JSON string written inline, so a key change shows up as
+  a failing test rather than a surprise. No fixture files, and no regeneration
+  step — changing the contract means editing the literal by hand.
+- `Actions` is `json:"-"`. A menu change can never move a `--json` key.
 - Exit codes: 0 success, 1 error, 2 usage, 3 not found, 4 nothing eligible.
 - **A flag either works or returns an error.** Never parse a flag and silently
   ignore it.
@@ -163,22 +174,25 @@ extracting a method or splitting a function, that refactor is part of the task.
 
 ## Testing
 
-Feature services are the layer worth testing, against a real migrated
-in-memory SQLite client from `internal/dbtest`. No mocks, and no interfaces
+Domain services are the layer worth testing, against a real migrated in-memory
+SQLite client from `backend/internal/dbtest`. No mocks, and no interfaces
 invented for test seams — add an interface when a second implementation
 appears, not before.
 
 - Table-driven, one case per invariant. Deterministic and order-independent.
 - No sleeps for synchronization.
-- Pure functions (`columns()`, `fits()`, selection resolution) are tested
-  directly.
+- Pure functions (`Actions()`, `columns()`, `fits()`, selection resolution) are
+  tested directly. `Actions()` needs no database — a table of literal contract
+  values is the whole test.
+- Every action key gets two cases: the menu withholds it, and the write refuses
+  it against live rows.
 - **Never delete, `t.Skip`, or loosen an assertion to get a change passing.**
   If a test looks wrong, that's a stop-and-ask.
 
 ## Stop and ask
 
 - Adding a dependency.
-- Touching `ent/schema/`, or generating a migration.
+- Touching `backend/internal/ent/schema/`, or generating a migration.
 - Changing a `--json` key, an exit code, or a flag name.
 - Altering a committed migration — never do this; schema changes are a new
   forward migration.
