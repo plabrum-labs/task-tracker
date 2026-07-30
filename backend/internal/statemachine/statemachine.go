@@ -6,7 +6,7 @@
 // through.
 //
 // One machine per object with a status. The topology lives here rather than in
-// a switch inside a menu and a second switch inside a write, which is the shape
+// a switch inside a rule and a second switch inside a write, which is the shape
 // that lets the two disagree.
 package statemachine
 
@@ -53,7 +53,7 @@ func New[S comparable, O any](
 
 // Can reports whether o can move to the given state as things stand.
 //
-// This is the whole of a transition's topology check, so a menu asks it and the
+// This is the whole of a transition's topology check, so a rule asks it and the
 // write asks it again rather than each restating the edges.
 func (m *Machine[S, O]) Can(o O, to S) bool {
 	current, ok := m.states[m.read(o)]

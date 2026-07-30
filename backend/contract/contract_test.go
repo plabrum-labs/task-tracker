@@ -130,7 +130,7 @@ func TestContractJSON(t *testing.T) {
 	}
 }
 
-// Actions is json:"-" on every object, so a menu change can never move a --json
+// Actions is json:"-" on every object, so an action change can never move a --json
 // key. The cases above already assert the absence; this one says why, against
 // the type parameter each object uses.
 func TestActionsAreNotSerialised(t *testing.T) {

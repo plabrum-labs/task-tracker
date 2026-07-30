@@ -11,16 +11,16 @@ import (
 )
 
 // Actions needs no database: a table of literal ent rows is the whole test.
-// Every edge a rule reads is one withMenuEdges eager-loads, so setting it here
+// Every edge a rule reads is one withActionEdges eager-loads, so setting it here
 // is the same thing the loader does.
 
-// find returns the menu entry for key, and whether it is there at all.
-func find(menu []contract.Action[contract.IssueKey], key contract.IssueKey) (contract.Action[contract.IssueKey], bool) {
-	i := slices.IndexFunc(menu, func(a contract.Action[contract.IssueKey]) bool { return a.Key == key })
+// find returns the offered entry for key, and whether it is there at all.
+func find(offered []contract.Action[contract.IssueKey], key contract.IssueKey) (contract.Action[contract.IssueKey], bool) {
+	i := slices.IndexFunc(offered, func(a contract.Action[contract.IssueKey]) bool { return a.Key == key })
 	if i < 0 {
 		return contract.Action[contract.IssueKey]{}, false
 	}
-	return menu[i], true
+	return offered[i], true
 }
 
 func TestActionsByStatus(t *testing.T) {
@@ -55,11 +55,11 @@ func TestActionsByStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			menu := issues.Actions(&ent.Issue{ID: 1, Status: tt.status})
+			offered := issues.Actions(&ent.Issue{ID: 1, Status: tt.status})
 			for _, key := range tt.present {
-				action, ok := find(menu, key)
+				action, ok := find(offered, key)
 				if !ok {
-					t.Errorf("menu withholds %q from a %s issue", key, tt.status)
+					t.Errorf("a %s issue does not offer %q", tt.status, key)
 					continue
 				}
 				if !action.Runnable() {
@@ -67,8 +67,8 @@ func TestActionsByStatus(t *testing.T) {
 				}
 			}
 			for _, key := range tt.absent {
-				if _, ok := find(menu, key); ok {
-					t.Errorf("menu offers %q on a %s issue", key, tt.status)
+				if _, ok := find(offered, key); ok {
+					t.Errorf("a %s issue offers %q", tt.status, key)
 				}
 			}
 		})
@@ -118,7 +118,7 @@ func TestActionsRefusals(t *testing.T) {
 			t.Parallel()
 			action, ok := find(issues.Actions(tt.issue), tt.key)
 			if !ok {
-				t.Fatalf("menu withholds %q entirely", tt.key)
+				t.Fatalf("the issue does not offer %q at all", tt.key)
 			}
 			if action.Reason != tt.wantReason {
 				t.Errorf("Reason = %q, want %q", action.Reason, tt.wantReason)
@@ -173,7 +173,7 @@ func TestActionsWithheldWhenThereIsNothingToActOn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if _, ok := find(issues.Actions(tt.issue), tt.key); ok != tt.want {
-				t.Errorf("menu offers %q = %v, want %v", tt.key, ok, tt.want)
+				t.Errorf("offers %q = %v, want %v", tt.key, ok, tt.want)
 			}
 		})
 	}
@@ -196,11 +196,11 @@ func TestActionsAlwaysOffered(t *testing.T) {
 	statuses := []entissue.Status{entissue.StatusTodo, entissue.StatusDoing, entissue.StatusDone}
 
 	for _, status := range statuses {
-		menu := issues.Actions(&ent.Issue{ID: 1, Status: status})
+		offered := issues.Actions(&ent.Issue{ID: 1, Status: status})
 		for _, key := range always {
-			action, ok := find(menu, key)
+			action, ok := find(offered, key)
 			if !ok {
-				t.Errorf("menu withholds %q from a %s issue", key, status)
+				t.Errorf("a %s issue does not offer %q", status, key)
 				continue
 			}
 			if !action.Runnable() {
@@ -245,5 +245,41 @@ func TestEveryKeyIsReachable(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("no state offers %q", key)
 		}
+	}
+}
+
+// The order actions come back in is Priority's doing, not the order they happen
+// to be declared in. Registration is spread across a file and the compiler is
+// free to sequence declarations as it likes, so this is what pins it.
+func TestActionsComeBackInPriorityOrder(t *testing.T) {
+	t.Parallel()
+
+	want := []contract.IssueKey{
+		contract.KeyIssueStart,
+		contract.KeyIssueClose,
+		contract.KeyIssueEdit,
+		contract.KeyIssueSetPriority,
+		contract.KeyIssueSetMilestone,
+		contract.KeyIssueAddLabel,
+		contract.KeyIssueRemoveLabel,
+		contract.KeyIssueAddSubIssue,
+		contract.KeyIssueAddDep,
+		contract.KeyIssueRemoveDep,
+		contract.KeyIssueComment,
+		contract.KeyIssueDelete,
+	}
+
+	// A todo issue carrying a label and a blocker offers everything but reopen.
+	offered := issues.Actions(&ent.Issue{ID: 1, Status: entissue.StatusTodo, Edges: ent.IssueEdges{
+		Labels:    []*ent.Label{{Name: "bug"}},
+		BlockedBy: []*ent.Issue{{ID: 2, Status: entissue.StatusDone}},
+	}})
+
+	got := make([]contract.IssueKey, 0, len(offered))
+	for _, a := range offered {
+		got = append(got, a.Key)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
 	}
 }

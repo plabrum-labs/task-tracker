@@ -26,7 +26,7 @@ const (
 	PriorityHi     Priority = "hi"
 )
 
-// IssueKey names one entry in an issue's menu.
+// IssueKey names one of the actions an issue offers.
 type IssueKey string
 
 // The actions an issue can offer.

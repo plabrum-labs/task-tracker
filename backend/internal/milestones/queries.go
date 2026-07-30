@@ -1,5 +1,5 @@
 // Package milestones owns the project-scoped groupings work can be filed
-// under. A milestone is not an object: it has no menu, so this package has no
+// under. A milestone is not an object: it offers no actions, so this package has no
 // actions.go.
 //
 // Taxonomy never depends on work, so nothing here imports the issues domain.

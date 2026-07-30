@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
 	"github.com/Plabrum/tt/backend/internal/statemachine"
@@ -26,13 +25,3 @@ var ProjectStateMachine = statemachine.New(
 		entproject.StatusArchived: {To: []entproject.Status{entproject.StatusActive}},
 	},
 )
-
-// transition is the write behind every transition action: move, then reload.
-func transition(
-	ctx context.Context, tx *ent.Client, e *ent.Project, to entproject.Status,
-) (contract.Project, error) {
-	if err := ProjectStateMachine.Transition(ctx, tx, e, to); err != nil {
-		return contract.Project{}, err
-	}
-	return LoadByID(ctx, tx, e.ID)
-}

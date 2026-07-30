@@ -14,12 +14,12 @@ import (
 	"github.com/Plabrum/tt/backend/internal/projects"
 )
 
-func find(menu []contract.Action[contract.ProjectKey], key contract.ProjectKey) (contract.Action[contract.ProjectKey], bool) {
-	i := slices.IndexFunc(menu, func(a contract.Action[contract.ProjectKey]) bool { return a.Key == key })
+func find(offered []contract.Action[contract.ProjectKey], key contract.ProjectKey) (contract.Action[contract.ProjectKey], bool) {
+	i := slices.IndexFunc(offered, func(a contract.Action[contract.ProjectKey]) bool { return a.Key == key })
 	if i < 0 {
 		return contract.Action[contract.ProjectKey]{}, false
 	}
-	return menu[i], true
+	return offered[i], true
 }
 
 // Actions needs no database.
@@ -49,11 +49,11 @@ func TestActions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			menu := projects.Actions(&ent.Project{ID: 1, Slug: "tt", Status: tt.status})
+			offered := projects.Actions(&ent.Project{ID: 1, Slug: "tt", Status: tt.status})
 			for _, key := range tt.present {
-				action, ok := find(menu, key)
+				action, ok := find(offered, key)
 				if !ok {
-					t.Errorf("menu withholds %q from a %s project", key, tt.status)
+					t.Errorf("a %s project does not offer %q", tt.status, key)
 					continue
 				}
 				if !action.Runnable() {
@@ -61,8 +61,8 @@ func TestActions(t *testing.T) {
 				}
 			}
 			for _, key := range tt.absent {
-				if _, ok := find(menu, key); ok {
-					t.Errorf("menu offers %q on a %s project", key, tt.status)
+				if _, ok := find(offered, key); ok {
+					t.Errorf("a %s project offers %q", tt.status, key)
 				}
 			}
 		})
@@ -139,12 +139,12 @@ func TestArchiveAndRestore(t *testing.T) {
 	if archived.Status != contract.ProjectArchived {
 		t.Errorf("Status = %q, want %q", archived.Status, contract.ProjectArchived)
 	}
-	// The menu the write returns already reflects the write.
+	// The actions the write returns already reflect the write.
 	if _, ok := find(archived.Actions, contract.KeyProjectRestore); !ok {
 		t.Error("an archived project does not offer restore")
 	}
 
-	// Archiving twice is refused, by the same rule that withholds the menu entry.
+	// Archiving twice is refused, by the same rule that withholds the offered entry.
 	if _, err := projects.Run(t.Context(), cl, "tt", projects.Archive, actions.None{}); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("Archive twice = %v, want ErrConflict", err)
 	}

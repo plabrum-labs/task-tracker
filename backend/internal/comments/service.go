@@ -36,7 +36,7 @@ func RunIn[P any](ctx context.Context, tx *ent.Client, id int, a *Action[P], p P
 	if err != nil {
 		return contract.Comment{}, err
 	}
-	return actions.Invoke(ctx, menu, tx, e, a, p)
+	return actions.Invoke(ctx, commentActions, tx, e, a, p)
 }
 
 // Dispatch performs the action key names on the comment with this id.
@@ -53,7 +53,7 @@ func Dispatch(
 		if err != nil {
 			return err
 		}
-		out, err = menu.Dispatch(ctx, tx, e, key, payload)
+		out, err = commentActions.Dispatch(ctx, tx, e, key, payload)
 		return err
 	})
 	return out, err
@@ -61,8 +61,8 @@ func Dispatch(
 
 // Add appends a comment to an issue.
 //
-// It has no subject of its own — the subject is the issue — so it is not on the
-// comment menu and is not an Action.
+// It has no subject of its own — the subject is the issue — so it is in no
+// group and is not an action.
 func Add(ctx context.Context, cl *ent.Client, issueID int, body string) (contract.Comment, error) {
 	var out contract.Comment
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {

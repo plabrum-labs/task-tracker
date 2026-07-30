@@ -2,7 +2,7 @@ package contract
 
 import "time"
 
-// CommentKey names one entry in a comment's menu.
+// CommentKey names one of the actions a comment offers.
 type CommentKey string
 
 // The actions a comment can offer.

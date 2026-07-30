@@ -32,7 +32,7 @@ func RunIn[P any](ctx context.Context, tx *ent.Client, slug string, a *Action[P]
 	if err != nil {
 		return contract.Project{}, err
 	}
-	return actions.Invoke(ctx, menu, tx, e, a, p)
+	return actions.Invoke(ctx, projectActions, tx, e, a, p)
 }
 
 // Dispatch performs the action key names on the project with this slug.
@@ -49,7 +49,7 @@ func Dispatch(
 		if err != nil {
 			return err
 		}
-		out, err = menu.Dispatch(ctx, tx, e, key, payload)
+		out, err = projectActions.Dispatch(ctx, tx, e, key, payload)
 		return err
 	})
 	return out, err

@@ -12,14 +12,77 @@ import (
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
 )
 
-// edit ----------------------------------------------------------------------
+// action is an action on a project taking a payload of type P.
+type action[P any] = actions.Action[contract.ProjectKey, *ent.Project, P, contract.Project]
 
-type editProject struct{ actions.Default[*ent.Project] }
+// projectActions is every action a project has. It is the only place a rule is
+// checked: Actions reads it and every write goes through it.
+var projectActions = actions.NewGroup[contract.ProjectKey, *ent.Project, contract.Project](
+	func(e *ent.Project) string { return fmt.Sprintf("project %q", e.Slug) },
+)
 
-func (editProject) Key() contract.ProjectKey { return contract.KeyProjectEdit }
-func (editProject) Label() string            { return "edit" }
+// Actions is what one project offers: a loaded row in, its actions out.
+func Actions(e *ent.Project) []contract.Action[contract.ProjectKey] {
+	return projectActions.Available(e)
+}
 
-func (editProject) Execute(
+// Edit changes a project's title or description.
+var Edit = actions.Register(projectActions, action[contract.ProjectEditParams]{
+	Key:      contract.KeyProjectEdit,
+	Label:    "edit",
+	Priority: 10,
+	Execute:  edit,
+})
+
+// Archive takes a project's work out of the way.
+var Archive = actions.Register(projectActions, action[actions.None]{
+	Key:         contract.KeyProjectArchive,
+	Label:       "archive",
+	Priority:    20,
+	IsAvailable: canArchive,
+	Execute:     toArchived,
+})
+
+// Restore brings an archived project back.
+var Restore = actions.Register(projectActions, action[actions.None]{
+	Key:         contract.KeyProjectRestore,
+	Label:       "restore",
+	Priority:    30,
+	IsAvailable: canRestore,
+	Execute:     toActive,
+})
+
+// Archiving and restoring are the two directions of one transition, so exactly
+// one of them is offered at a time — which one is ProjectStateMachine's to say,
+// not this file's.
+
+func canArchive(e *ent.Project) bool {
+	return ProjectStateMachine.Can(e, entproject.StatusArchived)
+}
+
+func canRestore(e *ent.Project) bool {
+	return ProjectStateMachine.Can(e, entproject.StatusActive)
+}
+
+func toArchived(ctx context.Context, tx *ent.Client, e *ent.Project, _ actions.None) (contract.Project, error) {
+	return transition(ctx, tx, e, entproject.StatusArchived)
+}
+
+func toActive(ctx context.Context, tx *ent.Client, e *ent.Project, _ actions.None) (contract.Project, error) {
+	return transition(ctx, tx, e, entproject.StatusActive)
+}
+
+// transition moves a project and reloads it.
+func transition(
+	ctx context.Context, tx *ent.Client, e *ent.Project, to entproject.Status,
+) (contract.Project, error) {
+	if err := ProjectStateMachine.Transition(ctx, tx, e, to); err != nil {
+		return contract.Project{}, err
+	}
+	return LoadByID(ctx, tx, e.ID)
+}
+
+func edit(
 	ctx context.Context, tx *ent.Client, e *ent.Project, p contract.ProjectEditParams,
 ) (contract.Project, error) {
 	if p.Title == nil && p.Description == nil {
@@ -37,73 +100,4 @@ func (editProject) Execute(
 		return contract.Project{}, fmt.Errorf("editing project %q: %w", e.Slug, err)
 	}
 	return LoadByID(ctx, tx, e.ID)
-}
-
-// archive -------------------------------------------------------------------
-
-// Archiving and restoring are the two directions of one transition, so exactly
-// one of them is on the menu at a time — which one is ProjectStateMachine's to
-// say, not this file's.
-
-type archiveProject struct{ actions.Default[*ent.Project] }
-
-func (archiveProject) Key() contract.ProjectKey { return contract.KeyProjectArchive }
-func (archiveProject) Label() string            { return "archive" }
-
-func (archiveProject) IsAvailable(e *ent.Project) bool {
-	return ProjectStateMachine.Can(e, entproject.StatusArchived)
-}
-
-func (archiveProject) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Project, _ actions.None,
-) (contract.Project, error) {
-	return transition(ctx, tx, e, entproject.StatusArchived)
-}
-
-// restore -------------------------------------------------------------------
-
-type restoreProject struct{ actions.Default[*ent.Project] }
-
-func (restoreProject) Key() contract.ProjectKey { return contract.KeyProjectRestore }
-func (restoreProject) Label() string            { return "restore" }
-
-func (restoreProject) IsAvailable(e *ent.Project) bool {
-	return ProjectStateMachine.Can(e, entproject.StatusActive)
-}
-
-func (restoreProject) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Project, _ actions.None,
-) (contract.Project, error) {
-	return transition(ctx, tx, e, entproject.StatusActive)
-}
-
-// the menu ------------------------------------------------------------------
-
-// The actions a project offers, as handles that keep their payload type.
-var (
-	Edit    = actions.Bind(editProject{})
-	Archive = actions.Bind(archiveProject{})
-	Restore = actions.Bind(restoreProject{})
-)
-
-// menu is every action above, in the order a frontend shows them.
-//
-// Assigned in init rather than at its declaration: an action's Execute reloads
-// through LoadByID, which converts, which asks for the menu. Nothing reads menu
-// while the package is initialising, but the initializer analysis sees the loop
-// and rejects it, so the assignment has to sit where that analysis does not run.
-var menu *actions.Group[contract.ProjectKey, *ent.Project, contract.Project]
-
-func init() {
-	menu = actions.NewGroup(
-		func(e *ent.Project) string { return fmt.Sprintf("project %q", e.Slug) },
-		Edit.Entry(),
-		Archive.Entry(),
-		Restore.Entry(),
-	)
-}
-
-// Actions is the menu for one project: a loaded row in, a menu out.
-func Actions(e *ent.Project) []contract.Action[contract.ProjectKey] {
-	return menu.Menu(e)
 }

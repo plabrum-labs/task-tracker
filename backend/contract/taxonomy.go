@@ -5,7 +5,7 @@ import "time"
 // Milestone is a project-scoped grouping, optionally with a deadline.
 //
 // Milestones and labels are not objects: they carry no Key and no Actions, so
-// nothing renders a menu for them.
+// nothing offers actions on them.
 type Milestone struct {
 	ID          int        `json:"id"`
 	Name        string     `json:"name"`

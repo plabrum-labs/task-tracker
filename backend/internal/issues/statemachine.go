@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entissue "github.com/Plabrum/tt/backend/internal/ent/issue"
 	"github.com/Plabrum/tt/backend/internal/statemachine"
@@ -42,16 +41,6 @@ var IssueStateMachine = statemachine.New(
 		},
 	},
 )
-
-// transition is the write behind every transition action: move, then reload.
-func transition(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, to entissue.Status,
-) (contract.Issue, error) {
-	if err := IssueStateMachine.Transition(ctx, tx, e, to); err != nil {
-		return contract.Issue{}, err
-	}
-	return Load(ctx, tx, e.ID)
-}
 
 // stampClosedAt records when an issue reached done.
 func stampClosedAt(ctx context.Context, tx *ent.Client, e *ent.Issue, _ entissue.Status) error {

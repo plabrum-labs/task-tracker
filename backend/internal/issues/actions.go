@@ -17,7 +17,22 @@ import (
 	"github.com/Plabrum/tt/backend/internal/milestones"
 )
 
-// The refusals a menu can carry. Each is also what the matching write returns
+// action is an action on an issue taking a payload of type P. The alias is what
+// keeps the four type parameters off every declaration in this file.
+type action[P any] = actions.Action[contract.IssueKey, *ent.Issue, P, contract.Issue]
+
+// issueActions is every action an issue has. It is the only place a rule is
+// checked: Actions reads it and every write goes through it.
+var issueActions = actions.NewGroup[contract.IssueKey, *ent.Issue, contract.Issue](
+	func(e *ent.Issue) string { return fmt.Sprintf("issue %d", e.ID) },
+)
+
+// Actions is what one issue offers: a loaded row in, its actions out.
+func Actions(e *ent.Issue) []contract.Action[contract.IssueKey] {
+	return issueActions.Available(e)
+}
+
+// The refusals a rule can carry. Each is also what the matching write returns
 // wrapped in errs.ErrConflict, so a frontend never sees two wordings for one
 // rule.
 const (
@@ -25,49 +40,155 @@ const (
 	reasonOpenSubtasks = "open sub-issues"
 )
 
-// Every fact a rule below reads comes off an edge withMenuEdges eager-loads. An
+// Start picks work up.
+var Start = actions.Register(issueActions, action[actions.None]{
+	Key:         contract.KeyIssueStart,
+	Label:       "start",
+	Priority:    10,
+	IsAvailable: canStart,
+	IsDisabled:  blockedReason,
+	Execute:     toDoing,
+})
+
+// Close marks work done.
+var Close = actions.Register(issueActions, action[actions.None]{
+	Key:         contract.KeyIssueClose,
+	Label:       "close",
+	Priority:    20,
+	IsAvailable: canClose,
+	IsDisabled:  openSubtaskReason,
+	Execute:     toDone,
+})
+
+// Reopen brings finished work back.
+var Reopen = actions.Register(issueActions, action[actions.None]{
+	Key:         contract.KeyIssueReopen,
+	Label:       "reopen",
+	Priority:    30,
+	IsAvailable: canReopen,
+	Execute:     toTodo,
+})
+
+// Edit changes an issue's title or body.
+var Edit = actions.Register(issueActions, action[contract.IssueEditParams]{
+	Key:      contract.KeyIssueEdit,
+	Label:    "edit",
+	Priority: 40,
+	Execute:  edit,
+})
+
+// SetPriority changes an issue's pick-order bump.
+var SetPriority = actions.Register(issueActions, action[contract.Priority]{
+	Key:      contract.KeyIssueSetPriority,
+	Label:    "set priority",
+	Priority: 50,
+	Execute:  setPriority,
+})
+
+// SetMilestone files an issue under a milestone. An empty name clears it.
+var SetMilestone = actions.Register(issueActions, action[string]{
+	Key:      contract.KeyIssueSetMilestone,
+	Label:    "set milestone",
+	Priority: 60,
+	Execute:  setMilestone,
+})
+
+// AddLabel puts a label on an issue, creating it on first use.
+var AddLabel = actions.Register(issueActions, action[string]{
+	Key:      contract.KeyIssueAddLabel,
+	Label:    "add label",
+	Priority: 70,
+	Execute:  addLabel,
+})
+
+// RemoveLabel takes a label off an issue. Absent rather than refused when the
+// issue has no labels: there would be nothing for it to prompt for.
+var RemoveLabel = actions.Register(issueActions, action[string]{
+	Key:         contract.KeyIssueRemoveLabel,
+	Label:       "remove label",
+	Priority:    80,
+	IsAvailable: hasLabels,
+	Execute:     removeLabel,
+})
+
+// AddSubIssue captures a new issue as a child of this one.
+var AddSubIssue = actions.Register(issueActions, action[contract.IssueAddParams]{
+	Key:      contract.KeyIssueAddSubIssue,
+	Label:    "add sub-issue",
+	Priority: 90,
+	Execute:  addSubIssue,
+})
+
+// AddDep records that an issue waits on another.
+var AddDep = actions.Register(issueActions, action[int]{
+	Key:      contract.KeyIssueAddDep,
+	Label:    "add dependency",
+	Priority: 100,
+	Execute:  addDep,
+})
+
+// RemoveDep drops a dependency. Absent when there are none, for the same reason
+// RemoveLabel is.
+var RemoveDep = actions.Register(issueActions, action[int]{
+	Key:         contract.KeyIssueRemoveDep,
+	Label:       "remove dependency",
+	Priority:    110,
+	IsAvailable: hasBlockers,
+	Execute:     removeDep,
+})
+
+// Comment appends a comment to an issue.
+var Comment = actions.Register(issueActions, action[string]{
+	Key:      contract.KeyIssueComment,
+	Label:    "comment",
+	Priority: 120,
+	Execute:  comment,
+})
+
+// Delete removes an issue.
+var Delete = actions.Register(issueActions, action[actions.None]{
+	Key:      contract.KeyIssueDelete,
+	Label:    "delete",
+	Priority: 130,
+	Execute:  deleteIssue,
+})
+
+// The rules.
+//
+// Every fact one reads comes off an edge withActionEdges eager-loads: an
 // unloaded edge is an empty one as far as a rule can tell, so a row that did not
-// come through that loader gets a menu that is wrong rather than a query that
-// fails. A transition asks IssueStateMachine rather than restating its topology.
+// come through that loader gets rules that are wrong rather than a query that
+// fails. The three transitions ask IssueStateMachine rather than restating its
+// topology.
 
-// start ---------------------------------------------------------------------
+func canStart(e *ent.Issue) bool  { return IssueStateMachine.Can(e, entissue.StatusDoing) }
+func canClose(e *ent.Issue) bool  { return IssueStateMachine.Can(e, entissue.StatusDone) }
+func canReopen(e *ent.Issue) bool { return IssueStateMachine.Can(e, entissue.StatusTodo) }
 
-type startIssue struct{ actions.Default[*ent.Issue] }
+func hasLabels(e *ent.Issue) bool   { return len(e.Edges.Labels) > 0 }
+func hasBlockers(e *ent.Issue) bool { return len(e.Edges.BlockedBy) > 0 }
 
-func (startIssue) Key() contract.IssueKey { return contract.KeyIssueStart }
-func (startIssue) Label() string          { return "start" }
-
-func (startIssue) IsAvailable(e *ent.Issue) bool {
-	return IssueStateMachine.Can(e, entissue.StatusDoing)
+// blocked reports whether any of this issue's blockers is still open. It is
+// also the Blocked badge a contract issue carries.
+func blocked(e *ent.Issue) bool {
+	for _, b := range e.Edges.BlockedBy {
+		if b.Status != entissue.StatusDone {
+			return true
+		}
+	}
+	return false
 }
 
-// Work something else has to come before cannot be picked up.
-func (startIssue) IsDisabled(e *ent.Issue) string {
+// blockedReason refuses starting work that something else has to come first.
+func blockedReason(e *ent.Issue) string {
 	if blocked(e) {
 		return reasonBlocked
 	}
 	return ""
 }
 
-func (startIssue) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None,
-) (contract.Issue, error) {
-	return transition(ctx, tx, e, entissue.StatusDoing)
-}
-
-// close ---------------------------------------------------------------------
-
-type closeIssue struct{ actions.Default[*ent.Issue] }
-
-func (closeIssue) Key() contract.IssueKey { return contract.KeyIssueClose }
-func (closeIssue) Label() string          { return "close" }
-
-func (closeIssue) IsAvailable(e *ent.Issue) bool {
-	return IssueStateMachine.Can(e, entissue.StatusDone)
-}
-
-// A parent cannot be closed out from over its children.
-func (closeIssue) IsDisabled(e *ent.Issue) string {
+// openSubtaskReason refuses closing a parent out from over its children.
+func openSubtaskReason(e *ent.Issue) string {
 	for _, s := range e.Edges.Subtasks {
 		if s.Status != entissue.StatusDone {
 			return reasonOpenSubtasks
@@ -76,37 +197,34 @@ func (closeIssue) IsDisabled(e *ent.Issue) string {
 	return ""
 }
 
-func (closeIssue) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None,
-) (contract.Issue, error) {
+// The writes. Each is handed a loaded row its rules have already cleared, so
+// none of them restates one; what they do restate — an archived project, a
+// dependency cycle — is what a rule cannot decide, because it needs a query.
+
+func toDoing(ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None) (contract.Issue, error) {
+	return transition(ctx, tx, e, entissue.StatusDoing)
+}
+
+func toDone(ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None) (contract.Issue, error) {
 	return transition(ctx, tx, e, entissue.StatusDone)
 }
 
-// reopen --------------------------------------------------------------------
-
-type reopenIssue struct{ actions.Default[*ent.Issue] }
-
-func (reopenIssue) Key() contract.IssueKey { return contract.KeyIssueReopen }
-func (reopenIssue) Label() string          { return "reopen" }
-
-func (reopenIssue) IsAvailable(e *ent.Issue) bool {
-	return IssueStateMachine.Can(e, entissue.StatusTodo)
-}
-
-func (reopenIssue) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None,
-) (contract.Issue, error) {
+func toTodo(ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None) (contract.Issue, error) {
 	return transition(ctx, tx, e, entissue.StatusTodo)
 }
 
-// edit ----------------------------------------------------------------------
+// transition moves an issue and reloads it. The machine owns what a move
+// implies — the closed_at stamp is its states', not this function's.
+func transition(
+	ctx context.Context, tx *ent.Client, e *ent.Issue, to entissue.Status,
+) (contract.Issue, error) {
+	if err := IssueStateMachine.Transition(ctx, tx, e, to); err != nil {
+		return contract.Issue{}, err
+	}
+	return Load(ctx, tx, e.ID)
+}
 
-type editIssue struct{ actions.Default[*ent.Issue] }
-
-func (editIssue) Key() contract.IssueKey { return contract.KeyIssueEdit }
-func (editIssue) Label() string          { return "edit" }
-
-func (editIssue) Execute(
+func edit(
 	ctx context.Context, tx *ent.Client, e *ent.Issue, p contract.IssueEditParams,
 ) (contract.Issue, error) {
 	if p.Title == nil && p.Body == nil {
@@ -130,14 +248,7 @@ func (editIssue) Execute(
 	return Load(ctx, tx, e.ID)
 }
 
-// set priority --------------------------------------------------------------
-
-type setIssuePriority struct{ actions.Default[*ent.Issue] }
-
-func (setIssuePriority) Key() contract.IssueKey { return contract.KeyIssueSetPriority }
-func (setIssuePriority) Label() string          { return "set priority" }
-
-func (setIssuePriority) Execute(
+func setPriority(
 	ctx context.Context, tx *ent.Client, e *ent.Issue, p contract.Priority,
 ) (contract.Issue, error) {
 	stored, err := priorityToEnt(p)
@@ -150,17 +261,7 @@ func (setIssuePriority) Execute(
 	return Load(ctx, tx, e.ID)
 }
 
-// set milestone -------------------------------------------------------------
-
-type setIssueMilestone struct{ actions.Default[*ent.Issue] }
-
-func (setIssueMilestone) Key() contract.IssueKey { return contract.KeyIssueSetMilestone }
-func (setIssueMilestone) Label() string          { return "set milestone" }
-
-// An empty name clears the milestone; anything else creates it on first use.
-func (setIssueMilestone) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, name string,
-) (contract.Issue, error) {
+func setMilestone(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
 	u := e.Update()
 	if strings.TrimSpace(name) == "" {
 		u = u.ClearMilestone()
@@ -181,16 +282,7 @@ func (setIssueMilestone) Execute(
 	return Load(ctx, tx, e.ID)
 }
 
-// add label -----------------------------------------------------------------
-
-type addIssueLabel struct{ actions.Default[*ent.Issue] }
-
-func (addIssueLabel) Key() contract.IssueKey { return contract.KeyIssueAddLabel }
-func (addIssueLabel) Label() string          { return "add label" }
-
-func (addIssueLabel) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, name string,
-) (contract.Issue, error) {
+func addLabel(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
 	labelID, err := labels.EnsureIn(ctx, tx, name)
 	if err != nil {
 		return contract.Issue{}, err
@@ -209,22 +301,7 @@ func (addIssueLabel) Execute(
 	return Load(ctx, tx, e.ID)
 }
 
-// remove label --------------------------------------------------------------
-
-type removeIssueLabel struct{ actions.Default[*ent.Issue] }
-
-func (removeIssueLabel) Key() contract.IssueKey { return contract.KeyIssueRemoveLabel }
-func (removeIssueLabel) Label() string          { return "remove label" }
-
-// Absent rather than refused: with no labels on the issue there is nothing the
-// action could even prompt for.
-func (removeIssueLabel) IsAvailable(e *ent.Issue) bool {
-	return len(e.Edges.Labels) > 0
-}
-
-func (removeIssueLabel) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, name string,
-) (contract.Issue, error) {
+func removeLabel(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
 	labelID, err := labels.Lookup(ctx, tx, name)
 	if err != nil {
 		return contract.Issue{}, err
@@ -242,17 +319,12 @@ func (removeIssueLabel) Execute(
 	return Load(ctx, tx, e.ID)
 }
 
-// add sub-issue -------------------------------------------------------------
-
-type addSubIssue struct{ actions.Default[*ent.Issue] }
-
-func (addSubIssue) Key() contract.IssueKey { return contract.KeyIssueAddSubIssue }
-func (addSubIssue) Label() string          { return "add sub-issue" }
-
-// The child lands in its parent's project whatever the params say: a sub-issue
-// filed somewhere else would leave the parent's project showing a rollup over
-// work it does not contain.
-func (addSubIssue) Execute(
+// addSubIssue files a new issue under e. The child lands in its parent's
+// project whatever the params say: a sub-issue filed somewhere else would leave
+// the parent's project showing a rollup over work it does not contain.
+//
+// The issue it returns is the child, not the parent it was filed under.
+func addSubIssue(
 	ctx context.Context, tx *ent.Client, e *ent.Issue, p contract.IssueAddParams,
 ) (contract.Issue, error) {
 	projectID, err := e.QueryProject().OnlyID(ctx)
@@ -270,18 +342,11 @@ func (addSubIssue) Execute(
 	return insert(ctx, tx, projectID, &e.ID, p)
 }
 
-// add dependency ------------------------------------------------------------
-
-type addIssueDep struct{ actions.Default[*ent.Issue] }
-
-func (addIssueDep) Key() contract.IssueKey { return contract.KeyIssueAddDep }
-func (addIssueDep) Label() string          { return "add dependency" }
-
+// addDep records that an issue waits on another.
+//
 // The cycle check walks the dependency graph, so it is not a rule: a rule reads
 // one level down and this needs however many the chain is deep.
-func (addIssueDep) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int,
-) (contract.Issue, error) {
+func addDep(ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int) (contract.Issue, error) {
 	if e.ID == blockerID {
 		return contract.Issue{}, errs.Conflictf("issue %d cannot block itself", e.ID)
 	}
@@ -308,21 +373,7 @@ func (addIssueDep) Execute(
 	return Load(ctx, tx, e.ID)
 }
 
-// remove dependency ---------------------------------------------------------
-
-type removeIssueDep struct{ actions.Default[*ent.Issue] }
-
-func (removeIssueDep) Key() contract.IssueKey { return contract.KeyIssueRemoveDep }
-func (removeIssueDep) Label() string          { return "remove dependency" }
-
-// Absent when there are none, for the same reason remove label is.
-func (removeIssueDep) IsAvailable(e *ent.Issue) bool {
-	return len(e.Edges.BlockedBy) > 0
-}
-
-func (removeIssueDep) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int,
-) (contract.Issue, error) {
+func removeDep(ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int) (contract.Issue, error) {
 	deleted, err := tx.Ref.Delete().
 		Where(entref.BlockedIDEQ(e.ID), entref.BlockerIDEQ(blockerID)).
 		Exec(ctx)
@@ -335,102 +386,22 @@ func (removeIssueDep) Execute(
 	return Load(ctx, tx, e.ID)
 }
 
-// comment -------------------------------------------------------------------
-
-type commentOnIssue struct{ actions.Default[*ent.Issue] }
-
-func (commentOnIssue) Key() contract.IssueKey { return contract.KeyIssueComment }
-func (commentOnIssue) Label() string          { return "comment" }
-
-func (commentOnIssue) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, body string,
-) (contract.Issue, error) {
+func comment(ctx context.Context, tx *ent.Client, e *ent.Issue, body string) (contract.Issue, error) {
 	if _, err := comments.AddIn(ctx, tx, e.ID, body); err != nil {
 		return contract.Issue{}, err
 	}
 	return Load(ctx, tx, e.ID)
 }
 
-// delete --------------------------------------------------------------------
-
-type deleteIssue struct{ actions.Default[*ent.Issue] }
-
-func (deleteIssue) Key() contract.IssueKey { return contract.KeyIssueDelete }
-func (deleteIssue) Label() string          { return "delete" }
-
-// Comments and refs go by cascade, and sub-issues survive with their parent_id
-// cleared: deleting a parent should not delete work nobody asked to lose.
+// deleteIssue drops an issue. Its comments and refs go with it by cascade, and
+// its sub-issues survive with their parent_id cleared: deleting a parent should
+// not delete work nobody asked to lose.
 //
 // The zero issue comes back because there is none left, and every action in a
 // group returns the same type.
-func (deleteIssue) Execute(
-	ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None,
-) (contract.Issue, error) {
+func deleteIssue(ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None) (contract.Issue, error) {
 	if err := tx.Issue.DeleteOne(e).Exec(ctx); err != nil {
 		return contract.Issue{}, fmt.Errorf("deleting issue %d: %w", e.ID, err)
 	}
 	return contract.Issue{}, nil
-}
-
-// the menu ------------------------------------------------------------------
-
-// The actions an issue offers, as handles that keep their payload type.
-var (
-	Start        = actions.Bind(startIssue{})
-	Close        = actions.Bind(closeIssue{})
-	Reopen       = actions.Bind(reopenIssue{})
-	Edit         = actions.Bind(editIssue{})
-	SetPriority  = actions.Bind(setIssuePriority{})
-	SetMilestone = actions.Bind(setIssueMilestone{})
-	AddLabel     = actions.Bind(addIssueLabel{})
-	RemoveLabel  = actions.Bind(removeIssueLabel{})
-	AddSubIssue  = actions.Bind(addSubIssue{})
-	AddDep       = actions.Bind(addIssueDep{})
-	RemoveDep    = actions.Bind(removeIssueDep{})
-	Comment      = actions.Bind(commentOnIssue{})
-	Delete       = actions.Bind(deleteIssue{})
-)
-
-// menu is every action above, in the order a frontend shows them. It is the
-// only place a rule is checked: Actions renders it and every write goes through
-// it.
-//
-// Assigned in init rather than at its declaration: an action's Execute reloads
-// through Load, which converts, which asks for the menu. Nothing reads menu
-// while the package is initialising, but the initializer analysis sees the loop
-// and rejects it, so the assignment has to sit where that analysis does not run.
-var menu *actions.Group[contract.IssueKey, *ent.Issue, contract.Issue]
-
-func init() {
-	menu = actions.NewGroup(
-		func(e *ent.Issue) string { return fmt.Sprintf("issue %d", e.ID) },
-		Start.Entry(),
-		Close.Entry(),
-		Reopen.Entry(),
-		Edit.Entry(),
-		SetPriority.Entry(),
-		SetMilestone.Entry(),
-		AddLabel.Entry(),
-		RemoveLabel.Entry(),
-		AddSubIssue.Entry(),
-		AddDep.Entry(),
-		RemoveDep.Entry(),
-		Comment.Entry(),
-		Delete.Entry(),
-	)
-}
-
-// Actions is the menu for one issue: a loaded row in, a menu out.
-func Actions(e *ent.Issue) []contract.Action[contract.IssueKey] {
-	return menu.Menu(e)
-}
-
-// blocked reports whether any of this issue's blockers is still open.
-func blocked(e *ent.Issue) bool {
-	for _, b := range e.Edges.BlockedBy {
-		if b.Status != entissue.StatusDone {
-			return true
-		}
-	}
-	return false
 }

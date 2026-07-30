@@ -27,17 +27,17 @@ func issueID(t *testing.T, cl *ent.Client) int {
 func TestActions(t *testing.T) {
 	t.Parallel()
 
-	menu := comments.Actions(&ent.Comment{ID: 1})
+	offered := comments.Actions(&ent.Comment{ID: 1})
 	want := []contract.CommentKey{contract.KeyCommentEdit, contract.KeyCommentDelete}
-	if len(menu) != len(want) {
-		t.Fatalf("menu = %+v, want %d entries", menu, len(want))
+	if len(offered) != len(want) {
+		t.Fatalf("actions = %+v, want %d of them", offered, len(want))
 	}
 	for i, key := range want {
-		if menu[i].Key != key {
-			t.Errorf("menu[%d].Key = %q, want %q", i, menu[i].Key, key)
+		if offered[i].Key != key {
+			t.Errorf("actions[%d].Key = %q, want %q", i, offered[i].Key, key)
 		}
-		if !menu[i].Runnable() {
-			t.Errorf("%q refused: %s", key, menu[i].Reason)
+		if !offered[i].Runnable() {
+			t.Errorf("%q refused: %s", key, offered[i].Reason)
 		}
 	}
 }

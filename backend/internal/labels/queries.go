@@ -1,5 +1,5 @@
 // Package labels owns the global label vocabulary. A label is not an object:
-// it has no menu, so this package has no actions.go.
+// it offers no actions, so this package has no actions.go.
 //
 // Taxonomy never depends on work, so nothing here imports the issues domain.
 package labels

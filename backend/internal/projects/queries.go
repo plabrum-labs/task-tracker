@@ -89,7 +89,7 @@ func ActiveIDs(ctx context.Context, cl *ent.Client) ([]int, error) {
 	return ids, nil
 }
 
-// Convert flattens an ent row into the contract type, menu included.
+// Convert flattens an ent row into the contract type, actions included.
 func Convert(e *ent.Project) (contract.Project, error) {
 	status, err := statusFromEnt(e.Status)
 	if err != nil {

@@ -1,5 +1,5 @@
-// Package issues owns the unit of work: reading it, deciding its menu, and
-// every write that changes it.
+// Package issues owns the unit of work: reading it, deciding what it offers,
+// and every write that changes it.
 //
 // A domain owns every read of its own object however many tables it joins, so
 // the list read that pulls in labels, milestones and refs lives here rather
@@ -33,7 +33,7 @@ import (
 // Subtasks, Blockers and Blocks come back at the depth List returns, with their
 // own relations empty.
 func Load(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
-	e, err := withMenuEdges(cl.Issue.Query().Where(entissue.IDEQ(id))).Only(ctx)
+	e, err := withActionEdges(cl.Issue.Query().Where(entissue.IDEQ(id))).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return contract.Issue{}, errs.NotFoundf("issue %d", id)
@@ -47,7 +47,7 @@ func Load(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
 	}
 
 	// One query per relation rather than a deeper eager-load: each returns
-	// issues at list depth, which is its own load with its own menu edges.
+	// issues at list depth, which is its own load with its own action edges.
 	if e.ParentID != nil {
 		parent, err := one(ctx, cl, entissue.IDEQ(*e.ParentID))
 		if err != nil {
@@ -78,7 +78,7 @@ func List(ctx context.Context, cl *ent.Client, p contract.IssueListParams) ([]co
 	if err != nil {
 		return nil, err
 	}
-	q := withMenuEdges(cl.Issue.Query().Where(preds...)).Order(pickOrder()...)
+	q := withActionEdges(cl.Issue.Query().Where(preds...)).Order(pickOrder()...)
 	if p.Limit > 0 {
 		q = q.Limit(p.Limit)
 	}
@@ -90,14 +90,14 @@ func List(ctx context.Context, cl *ent.Client, p contract.IssueListParams) ([]co
 	return convertAll(found)
 }
 
-// withMenuEdges eager-loads exactly what a converted issue needs: its project
-// and milestone, its labels, and the two edges the menu rules read.
+// withActionEdges eager-loads exactly what a converted issue needs: its project
+// and milestone, its labels, and the two edges the action rules read.
 //
 // Every one is a batched load — one query per edge for the whole page, not one
-// per row — which is what lets a list row carry a menu as correct as a detail
+// per row — which is what lets a list row carry actions as correct as a detail
 // view's. Dropping an edge here does not fail a query; it silently changes what
-// Actions decides, so the set is chosen by actions.go and not by this file.
-func withMenuEdges(q *ent.IssueQuery) *ent.IssueQuery {
+// the rules decide, so the set is chosen by actions.go and not by this file.
+func withActionEdges(q *ent.IssueQuery) *ent.IssueQuery {
 	return q.
 		WithProject().
 		WithMilestone().
@@ -121,7 +121,7 @@ func one(ctx context.Context, cl *ent.Client, pred predicate.Issue) (*contract.I
 
 // many loads issues at list depth, by id.
 func many(ctx context.Context, cl *ent.Client, pred predicate.Issue) ([]contract.Issue, error) {
-	found, err := withMenuEdges(cl.Issue.Query().Where(pred)).
+	found, err := withActionEdges(cl.Issue.Query().Where(pred)).
 		Order(entissue.ByID()).
 		All(ctx)
 	if err != nil {
@@ -144,7 +144,7 @@ func convertAll(rows []*ent.Issue) ([]contract.Issue, error) {
 	return out, nil
 }
 
-// convert flattens an ent row and its eager-loaded edges, menu included.
+// convert flattens an ent row and its eager-loaded edges, actions included.
 //
 // Every slice is initialised, because an empty list prints as [] and never as
 // null. The relation slices stay empty here: Load is what fills them.

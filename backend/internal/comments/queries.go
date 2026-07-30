@@ -50,7 +50,7 @@ func ConvertAll(rows []*ent.Comment) []contract.Comment {
 	return out
 }
 
-// Convert flattens an ent row into the contract type, menu included.
+// Convert flattens an ent row into the contract type, actions included.
 func Convert(e *ent.Comment) contract.Comment {
 	return contract.Comment{
 		ID:        e.ID,

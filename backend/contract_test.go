@@ -34,7 +34,7 @@ func TestCaptureAndShow(t *testing.T) {
 		t.Errorf("Project.Slug = %q, want %q", shown.Project.Slug, "tt")
 	}
 	if len(shown.Actions) == 0 {
-		t.Error("a shown issue carries no menu")
+		t.Error("a shown issue carries no actions")
 	}
 
 	listed, err := api.ListIssues(t.Context(), contract.IssueListParams{})
@@ -64,7 +64,7 @@ func TestWritesReturnTheReloadedObject(t *testing.T) {
 	if started.Status != contract.IssueDoing {
 		t.Errorf("Status = %q, want %q", started.Status, contract.IssueDoing)
 	}
-	// The returned menu already reflects the write that just happened.
+	// The returned actions already reflect the write that just happened.
 	for _, a := range started.Actions {
 		if a.Key == contract.KeyIssueStart {
 			t.Error("a doing issue still offers start")
@@ -136,7 +136,7 @@ func TestComments(t *testing.T) {
 	}
 	comment := commented.Comments[0]
 	if len(comment.Actions) == 0 {
-		t.Error("a comment carries no menu")
+		t.Error("a comment carries no actions")
 	}
 
 	edited, err := api.CommentEdit(t.Context(), comment.ID, "a better note")

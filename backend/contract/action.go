@@ -10,7 +10,7 @@
 // however the graph grows.
 package contract
 
-// Action is one entry in an object's menu.
+// Action is one action an object offers.
 //
 // Absent from the slice means the action does not apply here at all. Present
 // with Reason == "" means it can run now. Present with a Reason means it

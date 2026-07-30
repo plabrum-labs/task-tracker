@@ -37,14 +37,14 @@ func Run[P any](ctx context.Context, cl *ent.Client, id int, a *Action[P], p P) 
 
 // RunIn is Run inside a caller's transaction.
 //
-// The row goes through the loader that carries the menu edges, so the check
-// Invoke makes is against the same facts a frontend's menu was rendered from.
+// The row goes through the loader that carries the action edges, so the check
+// Invoke makes is against the same facts a frontend's actions were built from.
 func RunIn[P any](ctx context.Context, tx *ent.Client, id int, a *Action[P], p P) (contract.Issue, error) {
 	e, err := row(ctx, tx, id)
 	if err != nil {
 		return contract.Issue{}, err
 	}
-	return actions.Invoke(ctx, menu, tx, e, a, p)
+	return actions.Invoke(ctx, issueActions, tx, e, a, p)
 }
 
 // Dispatch performs the action key names on the issue with this id.
@@ -61,7 +61,7 @@ func Dispatch(
 		if err != nil {
 			return err
 		}
-		out, err = menu.Dispatch(ctx, tx, e, key, payload)
+		out, err = issueActions.Dispatch(ctx, tx, e, key, payload)
 		return err
 	})
 	return out, err
@@ -69,7 +69,7 @@ func Dispatch(
 
 // Create captures a new issue, creating its project on first use.
 //
-// It has no subject, so it is not on any menu and is not an action: there is no
+// It has no subject, so it is in no group and is not an action: there is no
 // issue yet for a rule to read.
 func Create(ctx context.Context, cl *ent.Client, p contract.IssueAddParams) (contract.Issue, error) {
 	var out contract.Issue
@@ -208,10 +208,10 @@ func validateChild(p contract.IssueAddParams) error {
 }
 
 // row reads the ent row a write is about to change, with the edges the rules
-// need. Going through withMenuEdges is what lets the group's Check consult the
-// same menu a frontend rendered.
+// need. Going through withActionEdges is what lets the group's Check consult the
+// same facts a frontend's actions were built from.
 func row(ctx context.Context, tx *ent.Client, id int) (*ent.Issue, error) {
-	e, err := withMenuEdges(tx.Issue.Query().Where(entissue.IDEQ(id))).Only(ctx)
+	e, err := withActionEdges(tx.Issue.Query().Where(entissue.IDEQ(id))).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, errs.NotFoundf("issue %d", id)

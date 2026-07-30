@@ -199,9 +199,9 @@ func TestListLimit(t *testing.T) {
 	}
 }
 
-// A list row carries a menu as correct as a detail view's, because the loader
+// A list row carries a offered as correct as a detail view's, because the loader
 // eager-loads the edges the rules read.
-func TestListRowsCarryTheirMenu(t *testing.T) {
+func TestListRowsCarryTheirActions(t *testing.T) {
 	t.Parallel()
 	cl := dbtest.Client(t)
 
@@ -255,7 +255,7 @@ func TestLoadStopsOneLevelDown(t *testing.T) {
 	if len(loaded.Subtasks) != 1 {
 		t.Fatalf("Subtasks = %+v, want one", loaded.Subtasks)
 	}
-	// The nested issues carry their own scalars and menu, and nothing deeper.
+	// The nested issues carry their own scalars and offered, and nothing deeper.
 	if len(loaded.Parent.Subtasks) != 0 {
 		t.Errorf("Parent.Subtasks = %+v, want empty", loaded.Parent.Subtasks)
 	}
@@ -266,7 +266,7 @@ func TestLoadStopsOneLevelDown(t *testing.T) {
 		t.Error("a nested issue has no project")
 	}
 	if len(loaded.Subtasks[0].Actions) == 0 {
-		t.Error("a nested issue has no menu")
+		t.Error("a nested issue has no offered")
 	}
 }
 

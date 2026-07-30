@@ -12,10 +12,10 @@ import (
 	"github.com/Plabrum/tt/backend/internal/ent"
 )
 
-// The platform is generic over the object, so the tests use a struct of their
-// own rather than an ent row: what is under test is the Spec/Group machinery,
-// not any domain's rules. No write here touches the client, so a nil one is
-// what a transaction argument gets.
+// The platform is generic over the object, so these use a struct of their own
+// rather than an ent row: the Group machinery is what is under test, not any
+// domain's rules. No write here touches the client, so a nil one is what a
+// transaction argument gets.
 
 type widget struct {
 	id     int
@@ -31,59 +31,54 @@ const (
 	keyAbsent key = "absent"
 )
 
-func subject(w *widget) string { return fmt.Sprintf("widget %d", w.id) }
-
 const reasonLocked = "locked"
 
-// poke takes a payload and refuses a locked widget; drain takes none and
-// withholds itself from an empty one. Both record that they ran.
+func subject(w *widget) string { return fmt.Sprintf("widget %d", w.id) }
 
-type poke struct {
-	actions.Default[*widget]
-	ran *[]key
-}
-
-func (poke) Key() key      { return keyPoke }
-func (poke) Label() string { return "poke" }
-
-func (poke) IsDisabled(w *widget) string {
+func lockedReason(w *widget) string {
 	if w.locked {
 		return reasonLocked
 	}
 	return ""
 }
 
-func (p poke) Execute(_ context.Context, _ *ent.Client, _ *widget, s string) (string, error) {
-	*p.ran = append(*p.ran, keyPoke)
-	return s, nil
+func notEmpty(w *widget) bool { return !w.empty }
+
+// group builds the group under test, recording into ran which writes fired.
+//
+// poke takes a payload and refuses a locked widget; drain takes none and an
+// empty widget does not offer it. Drain registers first but sorts second, so a
+// group that kept arrival order rather than Priority would fail the assertions
+// below.
+func group(ran *[]key) (*actions.Group[key, *widget, string], *actions.Bound[key, *widget, string, string]) {
+	g := actions.NewGroup[key, *widget, string](subject)
+
+	actions.Register(g, actions.Action[key, *widget, actions.None, string]{
+		Key:         keyDrain,
+		Label:       "drain",
+		Priority:    20,
+		IsAvailable: notEmpty,
+		Execute: func(_ context.Context, _ *ent.Client, _ *widget, _ actions.None) (string, error) {
+			*ran = append(*ran, keyDrain)
+			return "drained", nil
+		},
+	})
+
+	poke := actions.Register(g, actions.Action[key, *widget, string, string]{
+		Key:        keyPoke,
+		Label:      "poke",
+		Priority:   10,
+		IsDisabled: lockedReason,
+		Execute: func(_ context.Context, _ *ent.Client, _ *widget, p string) (string, error) {
+			*ran = append(*ran, keyPoke)
+			return p, nil
+		},
+	})
+
+	return g, poke
 }
 
-type drain struct {
-	actions.Default[*widget]
-	ran *[]key
-}
-
-func (drain) Key() key      { return keyDrain }
-func (drain) Label() string { return "drain" }
-
-func (drain) IsAvailable(w *widget) bool { return !w.empty }
-
-func (d drain) Execute(_ context.Context, _ *ent.Client, _ *widget, _ actions.None) (string, error) {
-	*d.ran = append(*d.ran, keyDrain)
-	return "drained", nil
-}
-
-// group builds the menu under test, recording into ran which writes fired.
-func group(ran *[]key) *actions.Group[key, *widget, string] {
-	return actions.NewGroup(subject, pokeAction(ran).Entry(), actions.Bind(drain{ran: ran}).Entry())
-}
-
-// pokeAction is the poke action on its own, for the typed Invoke path.
-func pokeAction(ran *[]key) *actions.Bound[key, *widget, string, string] {
-	return actions.Bind(poke{ran: ran})
-}
-
-func TestMenu(t *testing.T) {
+func TestAvailable(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -92,7 +87,7 @@ func TestMenu(t *testing.T) {
 		want []contract.Action[key]
 	}{
 		{
-			name: "everything applies and nothing refuses",
+			name: "everything applies and nothing refuses, in Priority order",
 			w:    &widget{id: 1},
 			want: []contract.Action[key]{
 				{Key: keyPoke, Label: "poke"},
@@ -100,7 +95,7 @@ func TestMenu(t *testing.T) {
 			},
 		},
 		{
-			name: "a refused entry stays on the menu, carrying its reason",
+			name: "a refused action is still offered, carrying its reason",
 			w:    &widget{id: 2, locked: true},
 			want: []contract.Action[key]{
 				{Key: keyPoke, Label: "poke", Reason: reasonLocked},
@@ -108,7 +103,7 @@ func TestMenu(t *testing.T) {
 			},
 		},
 		{
-			name: "an entry that does not apply is absent, not refused",
+			name: "an action that does not apply is absent, not refused",
 			w:    &widget{id: 3, empty: true},
 			want: []contract.Action[key]{
 				{Key: keyPoke, Label: "poke"},
@@ -120,13 +115,14 @@ func TestMenu(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var ran []key
-			got := group(&ran).Menu(tt.w)
+			g, _ := group(&ran)
+			got := g.Available(tt.w)
 			if len(got) != len(tt.want) {
-				t.Fatalf("menu = %+v, want %+v", got, tt.want)
+				t.Fatalf("Available = %+v, want %+v", got, tt.want)
 			}
 			for i := range got {
 				if got[i] != tt.want[i] {
-					t.Errorf("menu[%d] = %+v, want %+v", i, got[i], tt.want[i])
+					t.Errorf("Available[%d] = %+v, want %+v", i, got[i], tt.want[i])
 				}
 			}
 		})
@@ -152,7 +148,8 @@ func TestCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var ran []key
-			err := group(&ran).Check(tt.w, tt.key)
+			g, _ := group(&ran)
+			err := g.Check(tt.w, tt.key)
 			if tt.wantErr == nil {
 				if err != nil {
 					t.Fatalf("Check = %v, want nil", err)
@@ -166,29 +163,35 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// A refusal carries the reason the menu carries, so a frontend never sees two
-// wordings for one rule.
-func TestCheckCarriesTheMenuReason(t *testing.T) {
+// A refusal carries the reason the object would have shown, so a frontend never
+// sees two wordings for one rule.
+func TestCheckCarriesTheSameReason(t *testing.T) {
 	t.Parallel()
 
 	var ran []key
-	err := group(&ran).Check(&widget{id: 4, locked: true}, keyPoke)
+	g, _ := group(&ran)
+	w := &widget{id: 4, locked: true}
+
+	offered := g.Available(w)
+	if len(offered) == 0 || offered[0].Reason != reasonLocked {
+		t.Fatalf("Available = %+v, want poke carrying %q", offered, reasonLocked)
+	}
+	err := g.Check(w, keyPoke)
 	if err == nil {
 		t.Fatal("Check on a locked widget = nil, want a refusal")
 	}
-	if want := "widget 4: " + reasonLocked; err.Error() != want+": conflict" {
-		t.Errorf("Check = %q, want it to start %q", err.Error(), want)
+	if want := "widget 4: " + reasonLocked + ": conflict"; err.Error() != want {
+		t.Errorf("Check = %q, want %q", err.Error(), want)
 	}
 }
 
 func TestInvoke(t *testing.T) {
 	t.Parallel()
 
-	t.Run("runs the write when the spec clears it", func(t *testing.T) {
+	t.Run("runs the write when the rules clear it", func(t *testing.T) {
 		t.Parallel()
 		var ran []key
-		g := group(&ran)
-		poke := pokeAction(&ran)
+		g, poke := group(&ran)
 		got, err := actions.Invoke(t.Context(), g, nil, &widget{id: 1}, poke, "hello")
 		if err != nil {
 			t.Fatalf("Invoke: %v", err)
@@ -204,9 +207,9 @@ func TestInvoke(t *testing.T) {
 	t.Run("a refusal keeps the write from running", func(t *testing.T) {
 		t.Parallel()
 		var ran []key
-		g := group(&ran)
-		poke := pokeAction(&ran)
-		if _, err := actions.Invoke(t.Context(), g, nil, &widget{id: 1, locked: true}, poke, "hello"); !errors.Is(err, errs.ErrConflict) {
+		g, poke := group(&ran)
+		_, err := actions.Invoke(t.Context(), g, nil, &widget{id: 1, locked: true}, poke, "hello")
+		if !errors.Is(err, errs.ErrConflict) {
 			t.Fatalf("Invoke on a locked widget = %v, want ErrConflict", err)
 		}
 		if len(ran) != 0 {
@@ -238,7 +241,8 @@ func TestDispatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var ran []key
-			got, err := group(&ran).Dispatch(t.Context(), nil, tt.w, tt.key, tt.payload)
+			g, _ := group(&ran)
+			got, err := g.Dispatch(t.Context(), nil, tt.w, tt.key, tt.payload)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("Dispatch = %v, want %v", err, tt.wantErr)

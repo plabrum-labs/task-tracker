@@ -12,9 +12,9 @@ import (
 	"github.com/Plabrum/tt/backend/internal/issues"
 )
 
-// The same rule is checked twice: once to build the menu, once here against
-// live rows. actions_test.go covers the menu half; this file covers the write
-// refusing what the menu refused.
+// The same rule is checked twice: once to build the offered, once here against
+// live rows. actions_test.go covers the offered half; this file covers the write
+// refusing what the offered refused.
 
 func add(t *testing.T, cl *ent.Client, title string) contract.Issue {
 	t.Helper()
@@ -130,7 +130,7 @@ func TestStartRefusedWhileBlocked(t *testing.T) {
 		t.Fatalf("Start error = %v, want ErrConflict", err)
 	}
 
-	// Finishing the blocker is what unblocks it, and the menu agrees.
+	// Finishing the blocker is what unblocks it, and the offered agrees.
 	closeIssue(t, cl, blocker.ID)
 	reloaded, err := issues.Load(t.Context(), cl, work.ID)
 	if err != nil {
@@ -263,7 +263,7 @@ func TestLabels(t *testing.T) {
 
 	issue := add(t, cl, "work")
 
-	// Nothing to remove yet, so the menu withholds it and the write refuses.
+	// Nothing to remove yet, so the no action it and the write refuses.
 	if _, err := issues.Run(t.Context(), cl, issue.ID, issues.RemoveLabel, "bug"); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("RemoveLabel with no labels = %v, want ErrConflict", err)
 	}
@@ -339,7 +339,7 @@ func TestDeps(t *testing.T) {
 	}
 }
 
-// The cycle check walks the chain, so it is not a menu rule.
+// The cycle check walks the chain, so it is not a offered rule.
 func TestAddDepRefusesCycles(t *testing.T) {
 	t.Parallel()
 	cl := dbtest.Client(t)

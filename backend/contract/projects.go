@@ -16,7 +16,7 @@ const (
 	ProjectArchived ProjectStatus = "archived"
 )
 
-// ProjectKey names one entry in a project's menu.
+// ProjectKey names one of the actions a project offers.
 type ProjectKey string
 
 // The actions a project can offer.
