@@ -1,6 +1,6 @@
-// Package db opens the SQLite store. It does not migrate it: bringing a
-// database up to date is `just db-upgrade`, a step of its own, run by the
-// Atlas CLI against the committed files in migrations/.
+// Package db opens the SQLite store and runs transactions against it. It does
+// not migrate it: bringing a database up to date is `just db-upgrade`, a step
+// of its own, run by the Atlas CLI against the committed files in migrations/.
 package db
 
 import (
@@ -31,8 +31,10 @@ import (
 //
 // The path is percent-escaped because the driver hands the whole string to
 // SQLite as a URI: an unescaped `?` or `#` in the path would terminate it and
-// the rest would be read as query or fragment. The default store sits under
-// $HOME, so the path is not ours to constrain.
+// the rest would be read as query or fragment. The driver splits on the first
+// `?` before SQLite ever sees it, so the database silently opens at the
+// truncated path and the first pragma is silently dropped. The default store
+// sits under $HOME, so the path is not ours to constrain.
 func DSN(path string) string {
 	pragmas := url.Values{"_pragma": {
 		"foreign_keys(1)",
@@ -70,4 +72,39 @@ func Open(ctx context.Context, dsn string) (*ent.Client, error) {
 		return nil, errors.Join(fmt.Errorf("connecting to %s: %w", dsn, err), sqldb.Close())
 	}
 	return ent.NewClient(ent.Driver(entsql.OpenDB(dialect.SQLite, sqldb))), nil
+}
+
+// WithTx runs fn inside a transaction, committing if it returns nil and rolling
+// back otherwise.
+//
+// The deferred recover is load-bearing. The pool is pinned to a single
+// connection, so a transaction that is neither committed nor rolled back holds
+// the only connection there is and the next query blocks forever. Rolling back
+// and re-panicking turns that hang back into the crash it was.
+//
+// Transactions do not nest: only an app method calls WithTx.
+func WithTx(ctx context.Context, client *ent.Client, fn func(tx *ent.Client) error) error {
+	tx, err := client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	if err := fn(tx.Client()); err != nil {
+		// Joined rather than wrapped: a rollback failure is a second, separate
+		// problem, and losing fn's error to it would hide the actual cause.
+		if rerr := tx.Rollback(); rerr != nil {
+			return errors.Join(err, fmt.Errorf("rolling back: %w", rerr))
+		}
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	return nil
 }
