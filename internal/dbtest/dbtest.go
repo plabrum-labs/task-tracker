@@ -5,8 +5,8 @@
 // migration history would make an unrelated schema change fail everywhere at
 // once. `just db-check` is what keeps migrations/ honest instead.
 //
-// It cannot be used from package db itself — dbtest imports db, so that would
-// be an import cycle. internal/db keeps its own newTestClient helper.
+// dbtest imports db, so db's own tests reach it from an external test package
+// rather than an in-package one.
 package dbtest
 
 import (

@@ -1,4 +1,8 @@
-package db
+// Tested from outside the package. Everything under test is exported, and an
+// external test package is what lets these tests use internal/dbtest like any
+// other package does — dbtest imports db, so an in-package test importing it
+// would be a cycle.
+package db_test
 
 import (
 	"context"
@@ -12,30 +16,9 @@ import (
 	"testing"
 
 	"github.com/Plabrum/tt/ent"
+	"github.com/Plabrum/tt/internal/db"
+	"github.com/Plabrum/tt/internal/dbtest"
 )
-
-// newTestClient returns a fresh in-memory client with the schema in place.
-// It duplicates internal/dbtest, which package db cannot import without a
-// cycle.
-//
-// SetMaxOpenConns(1) inside Open is what keeps `:memory:` coherent: one
-// connection means one database, with no cache=shared lifetime games.
-func newTestClient(t *testing.T) *ent.Client {
-	t.Helper()
-	client, err := Open(t.Context(), DSN(":memory:"))
-	if err != nil {
-		t.Fatalf("opening test client: %v", err)
-	}
-	if err := client.Schema.Create(t.Context()); err != nil {
-		t.Fatalf("creating test schema: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := client.Close(); err != nil {
-			t.Errorf("closing test client: %v", err)
-		}
-	})
-	return client
-}
 
 // TestOpenFileTwice pins the contract Open has now that it no longer migrates:
 // it attaches to an existing database without touching it. The reopen does not
@@ -45,7 +28,7 @@ func TestOpenFileTwice(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "tt.db")
 
-	first, err := Open(ctx, DSN(path))
+	first, err := db.Open(ctx, db.DSN(path))
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -62,7 +45,7 @@ func TestOpenFileTwice(t *testing.T) {
 		t.Fatalf("database file was not created: %v", err)
 	}
 
-	second, err := Open(ctx, DSN(path))
+	second, err := db.Open(ctx, db.DSN(path))
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
@@ -91,7 +74,7 @@ func TestDSNEscapesPath(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatalf("creating %s: %v", filepath.Dir(path), err)
 			}
-			dsn := DSN(path)
+			dsn := db.DSN(path)
 
 			u, err := url.Parse(dsn)
 			if err != nil {
@@ -108,7 +91,7 @@ func TestDSNEscapesPath(t *testing.T) {
 
 			// The parse above only proves the string is well formed. Opening
 			// proves SQLite reads the same path back out of it.
-			client, err := Open(t.Context(), dsn)
+			client, err := db.Open(t.Context(), dsn)
 			if err != nil {
 				t.Fatalf("opening %q: %v", dsn, err)
 			}
@@ -131,12 +114,12 @@ var wantPragmas = []string{"foreign_keys(1)", "journal_mode(WAL)", "busy_timeout
 func TestDSNInMemory(t *testing.T) {
 	t.Parallel()
 
-	dsn := DSN(":memory:")
+	dsn := db.DSN(":memory:")
 	if want := "file::memory:"; !strings.HasPrefix(dsn, want) {
 		t.Fatalf("DSN(%q) = %q, want it to start with %q", ":memory:", dsn, want)
 	}
 
-	client, err := Open(t.Context(), dsn)
+	client, err := db.Open(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("opening in-memory: %v", err)
 	}
@@ -164,9 +147,9 @@ func TestDSNInMemory(t *testing.T) {
 
 func TestWithTxCommits(t *testing.T) {
 	ctx := context.Background()
-	client := newTestClient(t)
+	client := dbtest.Client(t)
 
-	err := WithTx(ctx, client, func(tx *ent.Client) error {
+	err := db.WithTx(ctx, client, func(tx *ent.Client) error {
 		tx.Project.Create().SetSlug("committed").SaveX(ctx)
 		return nil
 	})
@@ -183,10 +166,10 @@ func TestWithTxCommits(t *testing.T) {
 // undone, and the caller still gets its own error rather than a rollback report.
 func TestWithTxRollsBackOnError(t *testing.T) {
 	ctx := context.Background()
-	client := newTestClient(t)
+	client := dbtest.Client(t)
 
 	boom := errors.New("boom")
-	err := WithTx(ctx, client, func(tx *ent.Client) error {
+	err := db.WithTx(ctx, client, func(tx *ent.Client) error {
 		tx.Project.Create().SetSlug("doomed").SaveX(ctx)
 		return boom
 	})
@@ -205,7 +188,7 @@ func TestWithTxRollsBackOnError(t *testing.T) {
 // if it returns at all, the connection was released.
 func TestWithTxRollsBackOnPanic(t *testing.T) {
 	ctx := context.Background()
-	client := newTestClient(t)
+	client := dbtest.Client(t)
 
 	func() {
 		defer func() {
@@ -217,7 +200,7 @@ func TestWithTxRollsBackOnPanic(t *testing.T) {
 				t.Errorf("recovered %v, want %q", p, "kaboom")
 			}
 		}()
-		_ = WithTx(ctx, client, func(tx *ent.Client) error {
+		_ = db.WithTx(ctx, client, func(tx *ent.Client) error {
 			tx.Project.Create().SetSlug("doomed").SaveX(ctx)
 			panic("kaboom")
 		})
