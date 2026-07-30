@@ -14,10 +14,8 @@ func main() {
 		Package: "github.com/Plabrum/tt/ent",
 		Target:  ".",
 	},
-		// versioned-migration gives us ent/migrate's Diff/NamedDiff, which is how
-		// migrations are generated here — no Atlas CLI in the loop.
 		// upsert is for the project/label auto-create paths that land next.
-		entc.FeatureNames("sql/versioned-migration", "sql/upsert"),
+		entc.FeatureNames("sql/upsert"),
 	)
 	if err != nil {
 		log.Fatalf("running ent codegen: %v", err)
