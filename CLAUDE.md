@@ -12,7 +12,9 @@ underlying commands.
 - `just test` / `just test-race` — unit tests, in-memory SQLite.
 - `just generate` — regenerate ent. Run after editing `ent/schema/`, and commit
   the result.
-- `just migrate <name>` — generate a new versioned migration.
+- `just db-migrate <name>` — generate a new versioned migration from the ent
+  schema. `just db-upgrade` applies pending ones to the store, `just db-status`
+  says what is pending, `just db-check` fails if the two have drifted apart.
 - `just verify` — the full gate. A change is not complete until it passes.
 - `just hooks` — install the git hooks. Run once per clone.
 
@@ -25,6 +27,17 @@ via `go tool` — there is nothing to install. `.golangci.yml` holds the enabled
 linters; `goimports` and `go vet` are part of it, so `just lint` subsumes both.
 Enabling or disabling a linter is a stop-and-ask, and every suppression in that
 file says why.
+
+The `db-*` recipes are the exception to that: they shell out to the Atlas CLI,
+which has to be installed separately.
+
+    brew install ariga/tap/atlas      # or: curl -sSf https://atlasgo.sh | sh
+
+It cannot be pinned as a `tool` directive — `ariga.io/atlas/cmd/atlas` stopped
+publishing to the module proxy at v0.13.1, years behind the library this repo
+builds against. `verify` therefore does not depend on it: migrations are
+generated and applied as their own step, and only the `db-*` recipes need the
+binary.
 
 ## Hooks
 
