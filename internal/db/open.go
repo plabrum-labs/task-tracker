@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 
 	"ariga.io/atlas/sql/migrate"
 	atsqlite "ariga.io/atlas/sql/sqlite"
@@ -26,11 +27,25 @@ import (
 // The pragmas live in the DSN rather than a post-open Exec because they are
 // per-connection and database/sql pools connections — setting them once after
 // Open would protect only the first one.
+//
+// The path is percent-escaped because the driver hands the whole string to
+// SQLite as a URI: an unescaped `?` or `#` in the path would terminate it and
+// the rest would be read as query or fragment. The default store sits under
+// $HOME, so the path is not ours to constrain.
 func DSN(path string) string {
-	return "file:" + path +
-		"?_pragma=foreign_keys(1)" +
-		"&_pragma=journal_mode(WAL)" +
-		"&_pragma=busy_timeout(5000)"
+	pragmas := url.Values{"_pragma": {
+		"foreign_keys(1)",
+		"journal_mode(WAL)",
+		"busy_timeout(5000)",
+	}}
+	u := url.URL{
+		Scheme: "file",
+		// Opaque rather than Path: it is written out verbatim, so ":memory:"
+		// survives as `file::memory:` instead of gaining a leading slash.
+		Opaque:   (&url.URL{Path: path}).EscapedPath(),
+		RawQuery: pragmas.Encode(),
+	}
+	return u.String()
 }
 
 // OpenAndMigrate connects to dsn, applies any pending migrations, and returns a
