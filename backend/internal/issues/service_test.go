@@ -1,12 +1,12 @@
 package issues_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
+	"github.com/Plabrum/tt/backend/internal/actions"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	"github.com/Plabrum/tt/backend/internal/issues"
@@ -27,7 +27,7 @@ func add(t *testing.T, cl *ent.Client, title string) contract.Issue {
 
 func closeIssue(t *testing.T, cl *ent.Client, id int) contract.Issue {
 	t.Helper()
-	closed, err := issues.Close(t.Context(), cl, id)
+	closed, err := issues.Run(t.Context(), cl, id, issues.Close, actions.None{})
 	if err != nil {
 		t.Fatalf("closing issue %d: %v", id, err)
 	}
@@ -121,11 +121,11 @@ func TestStartRefusedWhileBlocked(t *testing.T) {
 
 	work := add(t, cl, "work")
 	blocker := add(t, cl, "blocker")
-	if _, err := issues.AddDep(t.Context(), cl, work.ID, blocker.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, work.ID, issues.AddDep, blocker.ID); err != nil {
 		t.Fatalf("AddDep: %v", err)
 	}
 
-	_, err := issues.Start(t.Context(), cl, work.ID)
+	_, err := issues.Run(t.Context(), cl, work.ID, issues.Start, actions.None{})
 	if !errors.Is(err, errs.ErrConflict) {
 		t.Fatalf("Start error = %v, want ErrConflict", err)
 	}
@@ -139,7 +139,7 @@ func TestStartRefusedWhileBlocked(t *testing.T) {
 	if reloaded.Blocked {
 		t.Error("Blocked = true after the blocker closed")
 	}
-	if _, err := issues.Start(t.Context(), cl, work.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, work.ID, issues.Start, actions.None{}); err != nil {
 		t.Errorf("Start after unblocking: %v", err)
 	}
 }
@@ -149,18 +149,18 @@ func TestCloseRefusedWithOpenSubIssues(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	parent := add(t, cl, "parent")
-	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{Title: "child"})
+	child, err := issues.Run(t.Context(), cl, parent.ID, issues.AddSubIssue, contract.IssueAddParams{Title: "child"})
 	if err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
 
-	_, err = issues.Close(t.Context(), cl, parent.ID)
+	_, err = issues.Run(t.Context(), cl, parent.ID, issues.Close, actions.None{})
 	if !errors.Is(err, errs.ErrConflict) {
 		t.Fatalf("Close error = %v, want ErrConflict", err)
 	}
 
 	closeIssue(t, cl, child.ID)
-	if _, err := issues.Close(t.Context(), cl, parent.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, parent.ID, issues.Close, actions.None{}); err != nil {
 		t.Errorf("Close after the sub-issue closed: %v", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestAddSubIssue(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	parent := add(t, cl, "parent")
-	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{
+	child, err := issues.Run(t.Context(), cl, parent.ID, issues.AddSubIssue, contract.IssueAddParams{
 		Project: "somewhere-else",
 		Title:   "child",
 	})
@@ -201,23 +201,23 @@ func TestTransitionsRefusedOutOfOrder(t *testing.T) {
 	tests := []struct {
 		name string
 		// setup leaves the issue in the state the write should be refused from.
-		setup func(t *testing.T, cl *ent.Client, id int)
-		call  func(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error)
+		setup  func(t *testing.T, cl *ent.Client, id int)
+		action *issues.Action[actions.None]
 	}{
 		{
-			name:  "start on a done issue",
-			setup: func(t *testing.T, cl *ent.Client, id int) { t.Helper(); closeIssue(t, cl, id) },
-			call:  issues.Start,
+			name:   "start on a done issue",
+			setup:  func(t *testing.T, cl *ent.Client, id int) { t.Helper(); closeIssue(t, cl, id) },
+			action: issues.Start,
 		},
 		{
-			name:  "close on a done issue",
-			setup: func(t *testing.T, cl *ent.Client, id int) { t.Helper(); closeIssue(t, cl, id) },
-			call:  issues.Close,
+			name:   "close on a done issue",
+			setup:  func(t *testing.T, cl *ent.Client, id int) { t.Helper(); closeIssue(t, cl, id) },
+			action: issues.Close,
 		},
 		{
-			name:  "reopen on a todo issue",
-			setup: func(_ *testing.T, _ *ent.Client, _ int) {},
-			call:  issues.Reopen,
+			name:   "reopen on a todo issue",
+			setup:  func(_ *testing.T, _ *ent.Client, _ int) {},
+			action: issues.Reopen,
 		},
 	}
 
@@ -228,7 +228,7 @@ func TestTransitionsRefusedOutOfOrder(t *testing.T) {
 			issue := add(t, cl, "work")
 			tt.setup(t, cl, issue.ID)
 
-			if _, err := tt.call(t.Context(), cl, issue.ID); !errors.Is(err, errs.ErrConflict) {
+			if _, err := issues.Run(t.Context(), cl, issue.ID, tt.action, actions.None{}); !errors.Is(err, errs.ErrConflict) {
 				t.Errorf("error = %v, want ErrConflict", err)
 			}
 		})
@@ -245,7 +245,7 @@ func TestCloseAndReopenMoveClosedAt(t *testing.T) {
 		t.Fatal("ClosedAt is nil after closing")
 	}
 
-	reopened, err := issues.Reopen(t.Context(), cl, issue.ID)
+	reopened, err := issues.Run(t.Context(), cl, issue.ID, issues.Reopen, actions.None{})
 	if err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
@@ -264,11 +264,11 @@ func TestLabels(t *testing.T) {
 	issue := add(t, cl, "work")
 
 	// Nothing to remove yet, so the menu withholds it and the write refuses.
-	if _, err := issues.RemoveLabel(t.Context(), cl, issue.ID, "bug"); !errors.Is(err, errs.ErrConflict) {
+	if _, err := issues.Run(t.Context(), cl, issue.ID, issues.RemoveLabel, "bug"); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("RemoveLabel with no labels = %v, want ErrConflict", err)
 	}
 
-	labelled, err := issues.AddLabel(t.Context(), cl, issue.ID, "Bug")
+	labelled, err := issues.Run(t.Context(), cl, issue.ID, issues.AddLabel, "Bug")
 	if err != nil {
 		t.Fatalf("AddLabel: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestLabels(t *testing.T) {
 	}
 
 	// Adding it twice is not an error: the label is on the issue either way.
-	again, err := issues.AddLabel(t.Context(), cl, issue.ID, "bug")
+	again, err := issues.Run(t.Context(), cl, issue.ID, issues.AddLabel, "bug")
 	if err != nil {
 		t.Fatalf("AddLabel twice: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestLabels(t *testing.T) {
 		t.Errorf("Labels = %+v after adding twice, want one", again.Labels)
 	}
 
-	bare, err := issues.RemoveLabel(t.Context(), cl, issue.ID, "bug")
+	bare, err := issues.Run(t.Context(), cl, issue.ID, issues.RemoveLabel, "bug")
 	if err != nil {
 		t.Fatalf("RemoveLabel: %v", err)
 	}
@@ -302,11 +302,11 @@ func TestDeps(t *testing.T) {
 	blocker := add(t, cl, "blocker")
 
 	// Nothing to remove yet.
-	if _, err := issues.RemoveDep(t.Context(), cl, work.ID, blocker.ID); !errors.Is(err, errs.ErrConflict) {
+	if _, err := issues.Run(t.Context(), cl, work.ID, issues.RemoveDep, blocker.ID); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("RemoveDep with no dependencies = %v, want ErrConflict", err)
 	}
 
-	linked, err := issues.AddDep(t.Context(), cl, work.ID, blocker.ID)
+	linked, err := issues.Run(t.Context(), cl, work.ID, issues.AddDep, blocker.ID)
 	if err != nil {
 		t.Fatalf("AddDep: %v", err)
 	}
@@ -326,11 +326,11 @@ func TestDeps(t *testing.T) {
 		t.Errorf("Blocks = %+v, want issue %d", other.Blocks, work.ID)
 	}
 
-	if _, err := issues.AddDep(t.Context(), cl, work.ID, blocker.ID); !errors.Is(err, errs.ErrConflict) {
+	if _, err := issues.Run(t.Context(), cl, work.ID, issues.AddDep, blocker.ID); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("AddDep twice = %v, want ErrConflict", err)
 	}
 
-	dropped, err := issues.RemoveDep(t.Context(), cl, work.ID, blocker.ID)
+	dropped, err := issues.Run(t.Context(), cl, work.ID, issues.RemoveDep, blocker.ID)
 	if err != nil {
 		t.Fatalf("RemoveDep: %v", err)
 	}
@@ -348,10 +348,10 @@ func TestAddDepRefusesCycles(t *testing.T) {
 	b := add(t, cl, "b")
 	c := add(t, cl, "c")
 
-	if _, err := issues.AddDep(t.Context(), cl, a.ID, b.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, a.ID, issues.AddDep, b.ID); err != nil {
 		t.Fatalf("AddDep a->b: %v", err)
 	}
-	if _, err := issues.AddDep(t.Context(), cl, b.ID, c.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, b.ID, issues.AddDep, c.ID); err != nil {
 		t.Fatalf("AddDep b->c: %v", err)
 	}
 
@@ -366,7 +366,7 @@ func TestAddDepRefusesCycles(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := issues.AddDep(t.Context(), cl, tt.id, tt.blockerID); !errors.Is(err, errs.ErrConflict) {
+			if _, err := issues.Run(t.Context(), cl, tt.id, issues.AddDep, tt.blockerID); !errors.Is(err, errs.ErrConflict) {
 				t.Errorf("AddDep error = %v, want ErrConflict", err)
 			}
 		})
@@ -379,7 +379,7 @@ func TestEdit(t *testing.T) {
 
 	issue := add(t, cl, "before")
 	title := "after"
-	edited, err := issues.Edit(t.Context(), cl, issue.ID, contract.IssueEditParams{Title: &title})
+	edited, err := issues.Run(t.Context(), cl, issue.ID, issues.Edit, contract.IssueEditParams{Title: &title})
 	if err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
@@ -388,10 +388,10 @@ func TestEdit(t *testing.T) {
 	}
 
 	blank := "   "
-	if _, err := issues.Edit(t.Context(), cl, issue.ID, contract.IssueEditParams{Title: &blank}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := issues.Run(t.Context(), cl, issue.ID, issues.Edit, contract.IssueEditParams{Title: &blank}); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Edit to a blank title = %v, want ErrInvalid", err)
 	}
-	if _, err := issues.Edit(t.Context(), cl, issue.ID, contract.IssueEditParams{}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := issues.Run(t.Context(), cl, issue.ID, issues.Edit, contract.IssueEditParams{}); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Edit with nothing set = %v, want ErrInvalid", err)
 	}
 }
@@ -402,12 +402,12 @@ func TestDeleteKeepsSubIssues(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	parent := add(t, cl, "parent")
-	child, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{Title: "child"})
+	child, err := issues.Run(t.Context(), cl, parent.ID, issues.AddSubIssue, contract.IssueAddParams{Title: "child"})
 	if err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
 
-	if err := issues.Delete(t.Context(), cl, parent.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, parent.ID, issues.Delete, actions.None{}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := issues.Load(t.Context(), cl, parent.ID); !errors.Is(err, errs.ErrNotFound) {
@@ -430,10 +430,10 @@ func TestMissingIDsAreNotFound(t *testing.T) {
 	if _, err := issues.Load(t.Context(), cl, 999); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Load = %v, want ErrNotFound", err)
 	}
-	if _, err := issues.Start(t.Context(), cl, 999); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := issues.Run(t.Context(), cl, 999, issues.Start, actions.None{}); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Start = %v, want ErrNotFound", err)
 	}
-	if err := issues.Delete(t.Context(), cl, 999); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := issues.Run(t.Context(), cl, 999, issues.Delete, actions.None{}); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Delete = %v, want ErrNotFound", err)
 	}
 }
@@ -444,18 +444,18 @@ func TestSetPriorityAndMilestone(t *testing.T) {
 
 	issue := add(t, cl, "work")
 
-	bumped, err := issues.SetPriority(t.Context(), cl, issue.ID, contract.PriorityHi)
+	bumped, err := issues.Run(t.Context(), cl, issue.ID, issues.SetPriority, contract.PriorityHi)
 	if err != nil {
 		t.Fatalf("SetPriority: %v", err)
 	}
 	if bumped.Priority != contract.PriorityHi {
 		t.Errorf("Priority = %q, want %q", bumped.Priority, contract.PriorityHi)
 	}
-	if _, err := issues.SetPriority(t.Context(), cl, issue.ID, "urgent"); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := issues.Run(t.Context(), cl, issue.ID, issues.SetPriority, "urgent"); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("SetPriority to an unknown value = %v, want ErrInvalid", err)
 	}
 
-	filed, err := issues.SetMilestone(t.Context(), cl, issue.ID, "V1")
+	filed, err := issues.Run(t.Context(), cl, issue.ID, issues.SetMilestone, "V1")
 	if err != nil {
 		t.Fatalf("SetMilestone: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestSetPriorityAndMilestone(t *testing.T) {
 		t.Fatalf("Milestone = %+v, want v1", filed.Milestone)
 	}
 
-	cleared, err := issues.SetMilestone(t.Context(), cl, issue.ID, "")
+	cleared, err := issues.Run(t.Context(), cl, issue.ID, issues.SetMilestone, "")
 	if err != nil {
 		t.Fatalf("SetMilestone to empty: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestComment(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	issue := add(t, cl, "work")
-	commented, err := issues.Comment(t.Context(), cl, issue.ID, "  a note  ")
+	commented, err := issues.Run(t.Context(), cl, issue.ID, issues.Comment, "  a note  ")
 	if err != nil {
 		t.Fatalf("Comment: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestComment(t *testing.T) {
 		t.Error("a fresh comment reports itself edited")
 	}
 
-	if _, err := issues.Comment(t.Context(), cl, issue.ID, "   "); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := issues.Run(t.Context(), cl, issue.ID, issues.Comment, "   "); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Comment with a blank body = %v, want ErrInvalid", err)
 	}
 }

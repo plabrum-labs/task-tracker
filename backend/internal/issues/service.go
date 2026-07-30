@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
+	"github.com/Plabrum/tt/backend/internal/actions"
 	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/db"
 	"github.com/Plabrum/tt/backend/internal/ent"
@@ -20,7 +20,60 @@ import (
 	"github.com/Plabrum/tt/backend/internal/projects"
 )
 
+// Action is an action on an issue, taking a payload of type P.
+type Action[P any] = actions.Action[contract.IssueKey, *ent.Issue, P, contract.Issue]
+
+// Run performs an action on the issue with this id.
+//
+// The pair is the one transaction boundary the domain has: Run owns the
+// transaction and RunIn composes into a caller's, so the thirteen writes below
+// declare a rule and a payload and nothing else.
+func Run[P any](ctx context.Context, cl *ent.Client, id int, a *Action[P], p P) (contract.Issue, error) {
+	var out contract.Issue
+	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
+		var err error
+		out, err = RunIn(ctx, tx, id, a, p)
+		return err
+	})
+	return out, err
+}
+
+// RunIn is Run inside a caller's transaction.
+//
+// The row goes through the loader that carries the menu edges, so the check
+// Invoke makes is against the same facts a frontend's menu was rendered from.
+func RunIn[P any](ctx context.Context, tx *ent.Client, id int, a *Action[P], p P) (contract.Issue, error) {
+	e, err := row(ctx, tx, id)
+	if err != nil {
+		return contract.Issue{}, err
+	}
+	return actions.Invoke(ctx, menu, tx, e, a, p)
+}
+
+// Dispatch performs the action key names on the issue with this id.
+func Dispatch(
+	ctx context.Context,
+	cl *ent.Client,
+	id int,
+	key contract.IssueKey,
+	payload any,
+) (contract.Issue, error) {
+	var out contract.Issue
+	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
+		e, err := row(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		out, err = menu.Dispatch(ctx, tx, e, key, payload)
+		return err
+	})
+	return out, err
+}
+
 // Create captures a new issue, creating its project on first use.
+//
+// It has no subject, so it is not on any menu and is not an Action: there is no
+// issue yet for a rule to read.
 func Create(ctx context.Context, cl *ent.Client, p contract.IssueAddParams) (contract.Issue, error) {
 	var out contract.Issue
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
@@ -50,33 +103,25 @@ func CreateIn(ctx context.Context, tx *ent.Client, p contract.IssueAddParams) (c
 	return insert(ctx, tx, projectID, nil, p)
 }
 
-// AddSubIssue captures a new issue as a child of an existing one.
-func AddSubIssue(ctx context.Context, cl *ent.Client, id int, p contract.IssueAddParams) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = AddSubIssueIn(ctx, tx, id, p)
-		return err
-	})
-	return out, err
-}
+// The writes behind the actions in actions.go. Each is handed a loaded row that
+// its Spec has already cleared, so none of them restates a rule; what they do
+// restate — an archived project, a dependency cycle — is what a menu cannot
+// decide, because it needs a query.
 
-// AddSubIssueIn is AddSubIssue inside a caller's transaction.
+// addSubIssue files a new issue under this one.
 //
 // The child lands in its parent's project whatever the params say: a sub-issue
 // filed somewhere else would leave the parent's project showing a rollup over
 // work it does not contain.
-func AddSubIssueIn(ctx context.Context, tx *ent.Client, id int, p contract.IssueAddParams) (contract.Issue, error) {
-	parent, err := row(ctx, tx, id)
+func addSubIssue(
+	ctx context.Context,
+	tx *ent.Client,
+	e *ent.Issue,
+	p contract.IssueAddParams,
+) (contract.Issue, error) {
+	projectID, err := e.QueryProject().OnlyID(ctx)
 	if err != nil {
-		return contract.Issue{}, err
-	}
-	if !offers(parent, contract.KeyIssueAddSubIssue) {
-		return contract.Issue{}, errs.Conflictf("issue %d cannot take a sub-issue", id)
-	}
-	projectID, err := parent.QueryProject().OnlyID(ctx)
-	if err != nil {
-		return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", e.ID, err)
 	}
 	if err := refuseArchived(ctx, tx, projectID); err != nil {
 		return contract.Issue{}, err
@@ -86,7 +131,7 @@ func AddSubIssueIn(ctx context.Context, tx *ent.Client, id int, p contract.Issue
 	if err := validateChild(p); err != nil {
 		return contract.Issue{}, err
 	}
-	return insert(ctx, tx, projectID, &parent.ID, p)
+	return insert(ctx, tx, projectID, &e.ID, p)
 }
 
 // insert writes a new issue and reloads it. Status and the timestamps come from
@@ -140,84 +185,13 @@ func insert(
 	return Load(ctx, tx, created.ID)
 }
 
-// Start moves an issue into doing.
-func Start(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
-	return write(ctx, cl, id, StartIn)
-}
-
-// StartIn is Start inside a caller's transaction.
-func StartIn(ctx context.Context, tx *ent.Client, id int) (contract.Issue, error) {
-	return transition(ctx, tx, id, contract.KeyIssueStart, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
-		return u.SetStatus(entissue.StatusDoing).ClearClosedAt()
-	})
-}
-
-// Close marks an issue done.
-func Close(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
-	return write(ctx, cl, id, CloseIn)
-}
-
-// CloseIn is Close inside a caller's transaction.
-func CloseIn(ctx context.Context, tx *ent.Client, id int) (contract.Issue, error) {
-	return transition(ctx, tx, id, contract.KeyIssueClose, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
-		return u.SetStatus(entissue.StatusDone).SetClosedAt(time.Now())
-	})
-}
-
-// Reopen brings a closed issue back to todo.
-func Reopen(ctx context.Context, cl *ent.Client, id int) (contract.Issue, error) {
-	return write(ctx, cl, id, ReopenIn)
-}
-
-// ReopenIn is Reopen inside a caller's transaction.
-func ReopenIn(ctx context.Context, tx *ent.Client, id int) (contract.Issue, error) {
-	return transition(ctx, tx, id, contract.KeyIssueReopen, func(u *ent.IssueUpdateOne) *ent.IssueUpdateOne {
-		return u.SetStatus(entissue.StatusTodo).ClearClosedAt()
-	})
-}
-
-// transition applies a status change, having checked the same rule the menu
-// checked. The menu is a snapshot; this is what enforces.
-func transition(
+// edit changes an issue's title or body.
+func edit(
 	ctx context.Context,
 	tx *ent.Client,
-	id int,
-	key contract.IssueKey,
-	apply func(*ent.IssueUpdateOne) *ent.IssueUpdateOne,
+	e *ent.Issue,
+	p contract.IssueEditParams,
 ) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, key); err != nil {
-		return contract.Issue{}, err
-	}
-	if _, err := apply(e.Update()).Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("updating issue %d: %w", id, err)
-	}
-	return Load(ctx, tx, id)
-}
-
-// Edit changes an issue's title or body.
-func Edit(ctx context.Context, cl *ent.Client, id int, p contract.IssueEditParams) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = EditIn(ctx, tx, id, p)
-		return err
-	})
-	return out, err
-}
-
-// EditIn is Edit inside a caller's transaction.
-func EditIn(ctx context.Context, tx *ent.Client, id int, p contract.IssueEditParams) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, contract.KeyIssueEdit); err != nil {
-		return contract.Issue{}, err
-	}
 	if p.Title == nil && p.Body == nil {
 		return contract.Issue{}, errs.Invalidf("nothing to change")
 	}
@@ -234,96 +208,53 @@ func EditIn(ctx context.Context, tx *ent.Client, id int, p contract.IssueEditPar
 		u = u.SetBody(*p.Body)
 	}
 	if _, err := u.Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("editing issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("editing issue %d: %w", e.ID, err)
 	}
-	return Load(ctx, tx, id)
+	return Load(ctx, tx, e.ID)
 }
 
-// Delete removes an issue.
-func Delete(ctx context.Context, cl *ent.Client, id int) error {
-	return db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		return DeleteIn(ctx, tx, id)
-	})
-}
-
-// DeleteIn is Delete inside a caller's transaction.
+// remove deletes an issue.
 //
 // Its comments and refs go with it by cascade, and its sub-issues survive with
 // their parent_id cleared: deleting a parent should not delete work nobody
 // asked to lose.
-func DeleteIn(ctx context.Context, tx *ent.Client, id int) error {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return err
+//
+// It returns the zero issue because there is no issue left to return, and every
+// action in a group returns the same type.
+func remove(ctx context.Context, tx *ent.Client, e *ent.Issue, _ actions.None) (contract.Issue, error) {
+	if err := tx.Issue.DeleteOne(e).Exec(ctx); err != nil {
+		return contract.Issue{}, fmt.Errorf("deleting issue %d: %w", e.ID, err)
 	}
-	if err := refuse(e, contract.KeyIssueDelete); err != nil {
-		return err
-	}
-	if err := tx.Issue.DeleteOneID(id).Exec(ctx); err != nil {
-		return fmt.Errorf("deleting issue %d: %w", id, err)
-	}
-	return nil
+	return contract.Issue{}, nil
 }
 
-// SetPriority changes an issue's pick-order bump.
-func SetPriority(ctx context.Context, cl *ent.Client, id int, p contract.Priority) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = SetPriorityIn(ctx, tx, id, p)
-		return err
-	})
-	return out, err
-}
-
-// SetPriorityIn is SetPriority inside a caller's transaction.
-func SetPriorityIn(ctx context.Context, tx *ent.Client, id int, p contract.Priority) (contract.Issue, error) {
+// setPriority changes an issue's pick-order bump.
+func setPriority(
+	ctx context.Context,
+	tx *ent.Client,
+	e *ent.Issue,
+	p contract.Priority,
+) (contract.Issue, error) {
 	stored, err := priorityToEnt(p)
 	if err != nil {
 		return contract.Issue{}, err
 	}
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, contract.KeyIssueSetPriority); err != nil {
-		return contract.Issue{}, err
-	}
 	if _, err := e.Update().SetPriority(stored).Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("setting priority of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("setting priority of issue %d: %w", e.ID, err)
 	}
-	return Load(ctx, tx, id)
+	return Load(ctx, tx, e.ID)
 }
 
-// SetMilestone files an issue under a milestone, creating it on first use. An
+// setMilestone files an issue under a milestone, creating it on first use. An
 // empty name clears it.
-func SetMilestone(ctx context.Context, cl *ent.Client, id int, name string) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = SetMilestoneIn(ctx, tx, id, name)
-		return err
-	})
-	return out, err
-}
-
-// SetMilestoneIn is SetMilestone inside a caller's transaction.
-func SetMilestoneIn(ctx context.Context, tx *ent.Client, id int, name string) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, contract.KeyIssueSetMilestone); err != nil {
-		return contract.Issue{}, err
-	}
-
+func setMilestone(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
 	u := e.Update()
 	if strings.TrimSpace(name) == "" {
 		u = u.ClearMilestone()
 	} else {
 		projectID, err := e.QueryProject().OnlyID(ctx)
 		if err != nil {
-			return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", id, err)
+			return contract.Issue{}, fmt.Errorf("resolving project of issue %d: %w", e.ID, err)
 		}
 		milestoneID, err := milestones.EnsureIn(ctx, tx, projectID, name)
 		if err != nil {
@@ -332,31 +263,13 @@ func SetMilestoneIn(ctx context.Context, tx *ent.Client, id int, name string) (c
 		u = u.SetMilestoneID(milestoneID)
 	}
 	if _, err := u.Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("setting milestone of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("setting milestone of issue %d: %w", e.ID, err)
 	}
-	return Load(ctx, tx, id)
+	return Load(ctx, tx, e.ID)
 }
 
-// AddLabel puts a label on an issue, creating it on first use.
-func AddLabel(ctx context.Context, cl *ent.Client, id int, name string) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = AddLabelIn(ctx, tx, id, name)
-		return err
-	})
-	return out, err
-}
-
-// AddLabelIn is AddLabel inside a caller's transaction.
-func AddLabelIn(ctx context.Context, tx *ent.Client, id int, name string) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, contract.KeyIssueAddLabel); err != nil {
-		return contract.Issue{}, err
-	}
+// addLabel puts a label on an issue, creating it on first use.
+func addLabel(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
 	labelID, err := labels.EnsureIn(ctx, tx, name)
 	if err != nil {
 		return contract.Issue{}, err
@@ -365,100 +278,64 @@ func AddLabelIn(ctx context.Context, tx *ent.Client, id int, name string) (contr
 	// and AddLabelIDs on an existing edge violates the join table's key.
 	has, err := e.QueryLabels().Where(entlabel.IDEQ(labelID)).Exist(ctx)
 	if err != nil {
-		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", e.ID, err)
 	}
 	if !has {
 		if _, err := e.Update().AddLabelIDs(labelID).Save(ctx); err != nil {
-			return contract.Issue{}, fmt.Errorf("labelling issue %d: %w", id, err)
+			return contract.Issue{}, fmt.Errorf("labelling issue %d: %w", e.ID, err)
 		}
 	}
-	return Load(ctx, tx, id)
+	return Load(ctx, tx, e.ID)
 }
 
-// RemoveLabel takes a label off an issue.
-func RemoveLabel(ctx context.Context, cl *ent.Client, id int, name string) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = RemoveLabelIn(ctx, tx, id, name)
-		return err
-	})
-	return out, err
-}
-
-// RemoveLabelIn is RemoveLabel inside a caller's transaction.
-func RemoveLabelIn(ctx context.Context, tx *ent.Client, id int, name string) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, contract.KeyIssueRemoveLabel); err != nil {
-		return contract.Issue{}, err
-	}
+// removeLabel takes a label off an issue.
+func removeLabel(ctx context.Context, tx *ent.Client, e *ent.Issue, name string) (contract.Issue, error) {
 	labelID, err := labels.Lookup(ctx, tx, name)
 	if err != nil {
 		return contract.Issue{}, err
 	}
 	has, err := e.QueryLabels().Where(entlabel.IDEQ(labelID)).Exist(ctx)
 	if err != nil {
-		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("checking labels of issue %d: %w", e.ID, err)
 	}
 	if !has {
-		return contract.Issue{}, errs.Conflictf("issue %d is not labelled %q", id, labels.Normalise(name))
+		return contract.Issue{}, errs.Conflictf("issue %d is not labelled %q", e.ID, labels.Normalise(name))
 	}
 	if _, err := e.Update().RemoveLabelIDs(labelID).Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("unlabelling issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("unlabelling issue %d: %w", e.ID, err)
 	}
-	return Load(ctx, tx, id)
+	return Load(ctx, tx, e.ID)
 }
 
-// AddDep records that an issue waits on another.
-func AddDep(ctx context.Context, cl *ent.Client, id, blockerID int) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = AddDepIn(ctx, tx, id, blockerID)
-		return err
-	})
-	return out, err
-}
-
-// AddDepIn is AddDep inside a caller's transaction.
+// addDep records that an issue waits on another.
 //
 // The cycle check walks the dependency graph, so it is not a menu rule: a menu
 // reads one level down and this needs however many the chain is deep.
-func AddDepIn(ctx context.Context, tx *ent.Client, id, blockerID int) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, contract.KeyIssueAddDep); err != nil {
-		return contract.Issue{}, err
-	}
-	if id == blockerID {
-		return contract.Issue{}, errs.Conflictf("issue %d cannot block itself", id)
+func addDep(ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int) (contract.Issue, error) {
+	if e.ID == blockerID {
+		return contract.Issue{}, errs.Conflictf("issue %d cannot block itself", e.ID)
 	}
 	if _, err := row(ctx, tx, blockerID); err != nil {
 		return contract.Issue{}, err
 	}
 
 	exists, err := tx.Ref.Query().
-		Where(entref.BlockedIDEQ(id), entref.BlockerIDEQ(blockerID)).
+		Where(entref.BlockedIDEQ(e.ID), entref.BlockerIDEQ(blockerID)).
 		Exist(ctx)
 	if err != nil {
-		return contract.Issue{}, fmt.Errorf("checking dependencies of issue %d: %w", id, err)
+		return contract.Issue{}, fmt.Errorf("checking dependencies of issue %d: %w", e.ID, err)
 	}
 	if exists {
-		return contract.Issue{}, errs.Conflictf("issue %d already waits on issue %d", id, blockerID)
+		return contract.Issue{}, errs.Conflictf("issue %d already waits on issue %d", e.ID, blockerID)
 	}
-	if err := refuseCycle(ctx, tx, id, blockerID); err != nil {
+	if err := refuseCycle(ctx, tx, e.ID, blockerID); err != nil {
 		return contract.Issue{}, err
 	}
 
-	if _, err := tx.Ref.Create().SetBlockedID(id).SetBlockerID(blockerID).Save(ctx); err != nil {
-		return contract.Issue{}, fmt.Errorf("adding dependency %d -> %d: %w", id, blockerID, err)
+	if _, err := tx.Ref.Create().SetBlockedID(e.ID).SetBlockerID(blockerID).Save(ctx); err != nil {
+		return contract.Issue{}, fmt.Errorf("adding dependency %d -> %d: %w", e.ID, blockerID, err)
 	}
-	return Load(ctx, tx, id)
+	return Load(ctx, tx, e.ID)
 }
 
 // refuseCycle rejects a dependency that would close a loop, by walking from the
@@ -488,98 +365,26 @@ func refuseCycle(ctx context.Context, tx *ent.Client, id, blockerID int) error {
 	return nil
 }
 
-// RemoveDep drops a dependency.
-func RemoveDep(ctx context.Context, cl *ent.Client, id, blockerID int) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = RemoveDepIn(ctx, tx, id, blockerID)
-		return err
-	})
-	return out, err
-}
-
-// RemoveDepIn is RemoveDep inside a caller's transaction.
-func RemoveDepIn(ctx context.Context, tx *ent.Client, id, blockerID int) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Issue{}, err
-	}
-	if err := refuse(e, contract.KeyIssueRemoveDep); err != nil {
-		return contract.Issue{}, err
-	}
+// removeDep drops a dependency.
+func removeDep(ctx context.Context, tx *ent.Client, e *ent.Issue, blockerID int) (contract.Issue, error) {
 	deleted, err := tx.Ref.Delete().
-		Where(entref.BlockedIDEQ(id), entref.BlockerIDEQ(blockerID)).
+		Where(entref.BlockedIDEQ(e.ID), entref.BlockerIDEQ(blockerID)).
 		Exec(ctx)
 	if err != nil {
-		return contract.Issue{}, fmt.Errorf("removing dependency %d -> %d: %w", id, blockerID, err)
+		return contract.Issue{}, fmt.Errorf("removing dependency %d -> %d: %w", e.ID, blockerID, err)
 	}
 	if deleted == 0 {
-		return contract.Issue{}, errs.Conflictf("issue %d does not wait on issue %d", id, blockerID)
+		return contract.Issue{}, errs.Conflictf("issue %d does not wait on issue %d", e.ID, blockerID)
 	}
-	return Load(ctx, tx, id)
+	return Load(ctx, tx, e.ID)
 }
 
-// Comment appends a comment and returns the issue it landed on.
-func Comment(ctx context.Context, cl *ent.Client, id int, body string) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = CommentIn(ctx, tx, id, body)
-		return err
-	})
-	return out, err
-}
-
-// CommentIn is Comment inside a caller's transaction.
-func CommentIn(ctx context.Context, tx *ent.Client, id int, body string) (contract.Issue, error) {
-	e, err := row(ctx, tx, id)
-	if err != nil {
+// comment appends a comment and returns the issue it landed on.
+func comment(ctx context.Context, tx *ent.Client, e *ent.Issue, body string) (contract.Issue, error) {
+	if _, err := comments.AddIn(ctx, tx, e.ID, body); err != nil {
 		return contract.Issue{}, err
 	}
-	if err := refuse(e, contract.KeyIssueComment); err != nil {
-		return contract.Issue{}, err
-	}
-	if _, err := comments.AddIn(ctx, tx, id, body); err != nil {
-		return contract.Issue{}, err
-	}
-	return Load(ctx, tx, id)
-}
-
-// write is the plain/…In pairing for the writes that take only an id.
-func write(
-	ctx context.Context,
-	cl *ent.Client,
-	id int,
-	in func(context.Context, *ent.Client, int) (contract.Issue, error),
-) (contract.Issue, error) {
-	var out contract.Issue
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = in(ctx, tx, id)
-		return err
-	})
-	return out, err
-}
-
-// refuse turns the menu's verdict on key into the error a write returns. The
-// same rule decides both, and Action.Reason is the message either way.
-func refuse(e *ent.Issue, key contract.IssueKey) error {
-	for _, a := range Actions(e) {
-		if a.Key != key {
-			continue
-		}
-		if a.Runnable() {
-			return nil
-		}
-		return errs.Conflictf("issue %d: %s", e.ID, a.Reason)
-	}
-	return errs.Conflictf("issue %d cannot %s", e.ID, key)
-}
-
-// offers reports whether the menu for this row carries key without a refusal.
-func offers(e *ent.Issue, key contract.IssueKey) bool {
-	return refuse(e, key) == nil
+	return Load(ctx, tx, e.ID)
 }
 
 // refuseArchived keeps new work out of a project that was archived to get it
@@ -612,8 +417,8 @@ func validateChild(p contract.IssueAddParams) error {
 }
 
 // row reads the ent row a write is about to change, with the edges the menu
-// rules need. Going through withMenuEdges is what lets refuse() consult the
-// same Actions a frontend rendered.
+// rules need. Going through withMenuEdges is what lets the group's Check
+// consult the same Actions a frontend rendered.
 func row(ctx context.Context, tx *ent.Client, id int) (*ent.Issue, error) {
 	e, err := withMenuEdges(tx.Issue.Query().Where(entissue.IDEQ(id))).Only(ctx)
 	if err != nil {

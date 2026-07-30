@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Plabrum/tt/backend/contract"
+	"github.com/Plabrum/tt/backend/internal/actions"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	"github.com/Plabrum/tt/backend/internal/issues"
@@ -57,7 +58,7 @@ func TestListDefaultsToOpenWork(t *testing.T) {
 
 	open := addTo(t, cl, "tt", "open")
 	done := addTo(t, cl, "tt", "done")
-	if _, err := issues.Close(t.Context(), cl, done.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, done.ID, issues.Close, actions.None{}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -81,7 +82,7 @@ func TestListExcludesArchivedProjects(t *testing.T) {
 
 	kept := addTo(t, cl, "tt", "kept")
 	hidden := addTo(t, cl, "old", "hidden")
-	if _, err := projects.Archive(t.Context(), cl, "old"); err != nil {
+	if _, err := projects.Run(t.Context(), cl, "old", projects.Archive, actions.None{}); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 
@@ -95,7 +96,7 @@ func TestListExcludesArchivedProjects(t *testing.T) {
 	}
 
 	// Restoring puts the work back in view.
-	if _, err := projects.Restore(t.Context(), cl, "old"); err != nil {
+	if _, err := projects.Run(t.Context(), cl, "old", projects.Restore, actions.None{}); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if got := ids(list(t, cl, contract.IssueListParams{})); len(got) != 2 {
@@ -111,15 +112,15 @@ func TestListFilters(t *testing.T) {
 	tagged := addTo(t, cl, "tt", "tagged work")
 	elsewhere := addTo(t, cl, "other", "elsewhere")
 
-	if _, err := issues.AddLabel(t.Context(), cl, tagged.ID, "bug"); err != nil {
+	if _, err := issues.Run(t.Context(), cl, tagged.ID, issues.AddLabel, "bug"); err != nil {
 		t.Fatalf("AddLabel: %v", err)
 	}
-	if _, err := issues.SetMilestone(t.Context(), cl, tagged.ID, "v1"); err != nil {
+	if _, err := issues.Run(t.Context(), cl, tagged.ID, issues.SetMilestone, "v1"); err != nil {
 		t.Fatalf("SetMilestone: %v", err)
 	}
 
 	blocked := addTo(t, cl, "tt", "blocked")
-	if _, err := issues.AddDep(t.Context(), cl, blocked.ID, plain.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, blocked.ID, issues.AddDep, plain.ID); err != nil {
 		t.Fatalf("AddDep: %v", err)
 	}
 
@@ -154,11 +155,11 @@ func TestListLabelsAreAnded(t *testing.T) {
 	both := addTo(t, cl, "tt", "both")
 	one := addTo(t, cl, "tt", "one")
 	for _, name := range []string{"bug", "backend"} {
-		if _, err := issues.AddLabel(t.Context(), cl, both.ID, name); err != nil {
+		if _, err := issues.Run(t.Context(), cl, both.ID, issues.AddLabel, name); err != nil {
 			t.Fatalf("AddLabel %q: %v", name, err)
 		}
 	}
-	if _, err := issues.AddLabel(t.Context(), cl, one.ID, "bug"); err != nil {
+	if _, err := issues.Run(t.Context(), cl, one.ID, issues.AddLabel, "bug"); err != nil {
 		t.Fatalf("AddLabel: %v", err)
 	}
 
@@ -176,7 +177,7 @@ func TestListPickOrder(t *testing.T) {
 	first := addTo(t, cl, "tt", "first")
 	second := addTo(t, cl, "tt", "second")
 	third := addTo(t, cl, "tt", "third")
-	if _, err := issues.SetPriority(t.Context(), cl, third.ID, contract.PriorityHi); err != nil {
+	if _, err := issues.Run(t.Context(), cl, third.ID, issues.SetPriority, contract.PriorityHi); err != nil {
 		t.Fatalf("SetPriority: %v", err)
 	}
 
@@ -206,7 +207,7 @@ func TestListRowsCarryTheirMenu(t *testing.T) {
 
 	work := addTo(t, cl, "tt", "work")
 	blocker := addTo(t, cl, "tt", "blocker")
-	if _, err := issues.AddDep(t.Context(), cl, work.ID, blocker.ID); err != nil {
+	if _, err := issues.Run(t.Context(), cl, work.ID, issues.AddDep, blocker.ID); err != nil {
 		t.Fatalf("AddDep: %v", err)
 	}
 
@@ -236,11 +237,11 @@ func TestLoadStopsOneLevelDown(t *testing.T) {
 	cl := dbtest.Client(t)
 
 	grandparent := addTo(t, cl, "tt", "grandparent")
-	parent, err := issues.AddSubIssue(t.Context(), cl, grandparent.ID, contract.IssueAddParams{Title: "parent"})
+	parent, err := issues.Run(t.Context(), cl, grandparent.ID, issues.AddSubIssue, contract.IssueAddParams{Title: "parent"})
 	if err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
-	if _, err := issues.AddSubIssue(t.Context(), cl, parent.ID, contract.IssueAddParams{Title: "child"}); err != nil {
+	if _, err := issues.Run(t.Context(), cl, parent.ID, issues.AddSubIssue, contract.IssueAddParams{Title: "child"}); err != nil {
 		t.Fatalf("AddSubIssue: %v", err)
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
+	"github.com/Plabrum/tt/backend/internal/actions"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
 	entproject "github.com/Plabrum/tt/backend/internal/ent/project"
@@ -104,10 +105,10 @@ func TestEnsurePreservesExistingFields(t *testing.T) {
 
 	ensure(t, cl, "tt")
 	title := "Task tracker"
-	if _, err := projects.Edit(t.Context(), cl, "tt", contract.ProjectEditParams{Title: &title}); err != nil {
+	if _, err := projects.Run(t.Context(), cl, "tt", projects.Edit, contract.ProjectEditParams{Title: &title}); err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
-	if _, err := projects.Archive(t.Context(), cl, "tt"); err != nil {
+	if _, err := projects.Run(t.Context(), cl, "tt", projects.Archive, actions.None{}); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 
@@ -131,7 +132,7 @@ func TestArchiveAndRestore(t *testing.T) {
 
 	ensure(t, cl, "tt")
 
-	archived, err := projects.Archive(t.Context(), cl, "tt")
+	archived, err := projects.Run(t.Context(), cl, "tt", projects.Archive, actions.None{})
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
@@ -144,18 +145,18 @@ func TestArchiveAndRestore(t *testing.T) {
 	}
 
 	// Archiving twice is refused, by the same rule that withholds the menu entry.
-	if _, err := projects.Archive(t.Context(), cl, "tt"); !errors.Is(err, errs.ErrConflict) {
+	if _, err := projects.Run(t.Context(), cl, "tt", projects.Archive, actions.None{}); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("Archive twice = %v, want ErrConflict", err)
 	}
 
-	restored, err := projects.Restore(t.Context(), cl, "tt")
+	restored, err := projects.Run(t.Context(), cl, "tt", projects.Restore, actions.None{})
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if restored.Status != contract.ProjectActive {
 		t.Errorf("Status = %q, want %q", restored.Status, contract.ProjectActive)
 	}
-	if _, err := projects.Restore(t.Context(), cl, "tt"); !errors.Is(err, errs.ErrConflict) {
+	if _, err := projects.Run(t.Context(), cl, "tt", projects.Restore, actions.None{}); !errors.Is(err, errs.ErrConflict) {
 		t.Errorf("Restore twice = %v, want ErrConflict", err)
 	}
 }
@@ -166,7 +167,7 @@ func TestListDefaultsToActive(t *testing.T) {
 
 	ensure(t, cl, "kept")
 	ensure(t, cl, "old")
-	if _, err := projects.Archive(t.Context(), cl, "old"); err != nil {
+	if _, err := projects.Run(t.Context(), cl, "old", projects.Archive, actions.None{}); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 
@@ -196,7 +197,7 @@ func TestEdit(t *testing.T) {
 	ensure(t, cl, "tt")
 	title := "  Task tracker  "
 	description := "the tracker"
-	edited, err := projects.Edit(t.Context(), cl, "tt", contract.ProjectEditParams{
+	edited, err := projects.Run(t.Context(), cl, "tt", projects.Edit, contract.ProjectEditParams{
 		Title:       &title,
 		Description: &description,
 	})
@@ -210,7 +211,7 @@ func TestEdit(t *testing.T) {
 		t.Errorf("Description = %q, want %q", edited.Description, description)
 	}
 
-	if _, err := projects.Edit(t.Context(), cl, "tt", contract.ProjectEditParams{}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := projects.Run(t.Context(), cl, "tt", projects.Edit, contract.ProjectEditParams{}); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Edit with nothing set = %v, want ErrInvalid", err)
 	}
 }
@@ -222,10 +223,10 @@ func TestMissingSlugsAreNotFound(t *testing.T) {
 	if _, err := projects.Load(t.Context(), cl, "nope"); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Load = %v, want ErrNotFound", err)
 	}
-	if _, err := projects.Archive(t.Context(), cl, "nope"); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := projects.Run(t.Context(), cl, "nope", projects.Archive, actions.None{}); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Archive = %v, want ErrNotFound", err)
 	}
-	if _, err := projects.Edit(t.Context(), cl, "nope", contract.ProjectEditParams{}); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := projects.Run(t.Context(), cl, "nope", projects.Edit, contract.ProjectEditParams{}); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Edit = %v, want ErrNotFound", err)
 	}
 }

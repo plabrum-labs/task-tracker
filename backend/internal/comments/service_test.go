@@ -6,6 +6,7 @@ import (
 
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
+	"github.com/Plabrum/tt/backend/internal/actions"
 	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/dbtest"
 	"github.com/Plabrum/tt/backend/internal/ent"
@@ -94,7 +95,7 @@ func TestEditMovesUpdatedAt(t *testing.T) {
 		t.Error("a fresh comment reports itself edited")
 	}
 
-	edited, err := comments.Edit(t.Context(), cl, created.ID, "  after  ")
+	edited, err := comments.Run(t.Context(), cl, created.ID, comments.Edit, "  after  ")
 	if err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestEditMovesUpdatedAt(t *testing.T) {
 		t.Errorf("CreatedAt moved from %v to %v", created.CreatedAt, edited.CreatedAt)
 	}
 
-	if _, err := comments.Edit(t.Context(), cl, created.ID, ""); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := comments.Run(t.Context(), cl, created.ID, comments.Edit, ""); !errors.Is(err, errs.ErrInvalid) {
 		t.Errorf("Edit to a blank body = %v, want ErrInvalid", err)
 	}
 }
@@ -122,7 +123,7 @@ func TestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if err := comments.Delete(t.Context(), cl, created.ID); err != nil {
+	if _, err := comments.Run(t.Context(), cl, created.ID, comments.Delete, actions.None{}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
@@ -144,7 +145,7 @@ func TestCommentsCascadeWithTheirIssue(t *testing.T) {
 	if _, err := comments.Add(t.Context(), cl, id, "a note"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if err := issues.Delete(t.Context(), cl, id); err != nil {
+	if _, err := issues.Run(t.Context(), cl, id, issues.Delete, actions.None{}); err != nil {
 		t.Fatalf("deleting the issue: %v", err)
 	}
 
@@ -164,10 +165,10 @@ func TestMissingIDsAreNotFound(t *testing.T) {
 	if _, err := comments.Load(t.Context(), cl, 999); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Load = %v, want ErrNotFound", err)
 	}
-	if _, err := comments.Edit(t.Context(), cl, 999, "x"); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := comments.Run(t.Context(), cl, 999, comments.Edit, "x"); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Edit = %v, want ErrNotFound", err)
 	}
-	if err := comments.Delete(t.Context(), cl, 999); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := comments.Run(t.Context(), cl, 999, comments.Delete, actions.None{}); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("Delete = %v, want ErrNotFound", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Plabrum/tt/backend/contract"
 	"github.com/Plabrum/tt/backend/errs"
+	"github.com/Plabrum/tt/backend/internal/actions"
 	"github.com/Plabrum/tt/backend/internal/db"
 	"github.com/Plabrum/tt/backend/internal/ent"
 )
@@ -15,7 +16,53 @@ import (
 // is one user, so there is one name.
 const DefaultAuthor = "me"
 
+// Action is an action on a comment, taking a payload of type P.
+type Action[P any] = actions.Action[contract.CommentKey, *ent.Comment, P, contract.Comment]
+
+// Run performs an action on the comment with this id.
+func Run[P any](ctx context.Context, cl *ent.Client, id int, a *Action[P], p P) (contract.Comment, error) {
+	var out contract.Comment
+	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
+		var err error
+		out, err = RunIn(ctx, tx, id, a, p)
+		return err
+	})
+	return out, err
+}
+
+// RunIn is Run inside a caller's transaction.
+func RunIn[P any](ctx context.Context, tx *ent.Client, id int, a *Action[P], p P) (contract.Comment, error) {
+	e, err := row(ctx, tx, id)
+	if err != nil {
+		return contract.Comment{}, err
+	}
+	return actions.Invoke(ctx, menu, tx, e, a, p)
+}
+
+// Dispatch performs the action key names on the comment with this id.
+func Dispatch(
+	ctx context.Context,
+	cl *ent.Client,
+	id int,
+	key contract.CommentKey,
+	payload any,
+) (contract.Comment, error) {
+	var out contract.Comment
+	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
+		e, err := row(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		out, err = menu.Dispatch(ctx, tx, e, key, payload)
+		return err
+	})
+	return out, err
+}
+
 // Add appends a comment to an issue.
+//
+// It has no subject of its own — the subject is the issue — so it is not on the
+// comment menu and is not an Action.
 func Add(ctx context.Context, cl *ent.Client, issueID int, body string) (contract.Comment, error) {
 	var out contract.Comment
 	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
@@ -43,71 +90,31 @@ func AddIn(ctx context.Context, tx *ent.Client, issueID int, body string) (contr
 	return Convert(created), nil
 }
 
-// Edit replaces a comment's body.
-func Edit(ctx context.Context, cl *ent.Client, id int, body string) (contract.Comment, error) {
-	var out contract.Comment
-	err := db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		var err error
-		out, err = EditIn(ctx, tx, id, body)
-		return err
-	})
-	return out, err
-}
-
-// EditIn is Edit inside a caller's transaction.
+// edit replaces a comment's body.
 //
 // updated_at moves off created_at here, which is the whole record that an edit
 // happened — there is no separate edited-at stamp.
-func EditIn(ctx context.Context, tx *ent.Client, id int, body string) (contract.Comment, error) {
+func edit(ctx context.Context, _ *ent.Client, e *ent.Comment, body string) (contract.Comment, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return contract.Comment{}, errs.Invalidf("comment body is required")
 	}
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return contract.Comment{}, err
-	}
-	if !offers(e, contract.KeyCommentEdit) {
-		return contract.Comment{}, errs.Conflictf("comment %d cannot be edited", id)
-	}
 	updated, err := e.Update().SetBody(body).Save(ctx)
 	if err != nil {
-		return contract.Comment{}, fmt.Errorf("editing comment %d: %w", id, err)
+		return contract.Comment{}, fmt.Errorf("editing comment %d: %w", e.ID, err)
 	}
 	return Convert(updated), nil
 }
 
-// Delete removes a comment.
-func Delete(ctx context.Context, cl *ent.Client, id int) error {
-	return db.WithTx(ctx, cl, func(tx *ent.Client) error {
-		return DeleteIn(ctx, tx, id)
-	})
-}
-
-// DeleteIn is Delete inside a caller's transaction.
-func DeleteIn(ctx context.Context, tx *ent.Client, id int) error {
-	e, err := row(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	if !offers(e, contract.KeyCommentDelete) {
-		return errs.Conflictf("comment %d cannot be deleted", id)
-	}
+// remove deletes a comment.
+//
+// It returns the zero comment because there is no comment left to return, and
+// every action in a group returns the same type.
+func remove(ctx context.Context, tx *ent.Client, e *ent.Comment, _ actions.None) (contract.Comment, error) {
 	if err := tx.Comment.DeleteOne(e).Exec(ctx); err != nil {
-		return fmt.Errorf("deleting comment %d: %w", id, err)
+		return contract.Comment{}, fmt.Errorf("deleting comment %d: %w", e.ID, err)
 	}
-	return nil
-}
-
-// offers reports whether the menu for this row carries key without a refusal.
-// Going through Actions is what keeps the write and the menu from drifting.
-func offers(e *ent.Comment, key contract.CommentKey) bool {
-	for _, a := range Actions(e) {
-		if a.Key == key {
-			return a.Runnable()
-		}
-	}
-	return false
+	return contract.Comment{}, nil
 }
 
 // row reads the ent row a write is about to change.

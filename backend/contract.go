@@ -12,6 +12,7 @@ import (
 	"fmt"
 
 	"github.com/Plabrum/tt/backend/contract"
+	"github.com/Plabrum/tt/backend/internal/actions"
 	"github.com/Plabrum/tt/backend/internal/comments"
 	"github.com/Plabrum/tt/backend/internal/db"
 	"github.com/Plabrum/tt/backend/internal/ent"
@@ -109,92 +110,94 @@ func (a *API) Add(ctx context.Context, p contract.IssueAddParams) (contract.Issu
 
 // IssueStart moves an issue into doing.
 func (a *API) IssueStart(ctx context.Context, id int) (contract.Issue, error) {
-	return issues.Start(ctx, a.client, id)
+	return issues.Run(ctx, a.client, id, issues.Start, actions.None{})
 }
 
 // IssueClose marks an issue done.
 func (a *API) IssueClose(ctx context.Context, id int) (contract.Issue, error) {
-	return issues.Close(ctx, a.client, id)
+	return issues.Run(ctx, a.client, id, issues.Close, actions.None{})
 }
 
 // IssueReopen brings a closed issue back to todo.
 func (a *API) IssueReopen(ctx context.Context, id int) (contract.Issue, error) {
-	return issues.Reopen(ctx, a.client, id)
+	return issues.Run(ctx, a.client, id, issues.Reopen, actions.None{})
 }
 
 // IssueEdit changes an issue's title or body.
 func (a *API) IssueEdit(ctx context.Context, id int, p contract.IssueEditParams) (contract.Issue, error) {
-	return issues.Edit(ctx, a.client, id, p)
+	return issues.Run(ctx, a.client, id, issues.Edit, p)
 }
 
 // IssueDelete removes an issue.
 func (a *API) IssueDelete(ctx context.Context, id int) error {
-	return issues.Delete(ctx, a.client, id)
+	_, err := issues.Run(ctx, a.client, id, issues.Delete, actions.None{})
+	return err
 }
 
 // IssueSetPriority changes an issue's pick-order bump.
 func (a *API) IssueSetPriority(ctx context.Context, id int, p contract.Priority) (contract.Issue, error) {
-	return issues.SetPriority(ctx, a.client, id, p)
+	return issues.Run(ctx, a.client, id, issues.SetPriority, p)
 }
 
 // IssueSetMilestone files an issue under a milestone. An empty name clears it.
 func (a *API) IssueSetMilestone(ctx context.Context, id int, name string) (contract.Issue, error) {
-	return issues.SetMilestone(ctx, a.client, id, name)
+	return issues.Run(ctx, a.client, id, issues.SetMilestone, name)
 }
 
 // IssueAddLabel puts a label on an issue.
 func (a *API) IssueAddLabel(ctx context.Context, id int, name string) (contract.Issue, error) {
-	return issues.AddLabel(ctx, a.client, id, name)
+	return issues.Run(ctx, a.client, id, issues.AddLabel, name)
 }
 
 // IssueRemoveLabel takes a label off an issue.
 func (a *API) IssueRemoveLabel(ctx context.Context, id int, name string) (contract.Issue, error) {
-	return issues.RemoveLabel(ctx, a.client, id, name)
+	return issues.Run(ctx, a.client, id, issues.RemoveLabel, name)
 }
 
 // IssueAddSubIssue captures a new issue as a child of this one.
 func (a *API) IssueAddSubIssue(ctx context.Context, id int, p contract.IssueAddParams) (contract.Issue, error) {
-	return issues.AddSubIssue(ctx, a.client, id, p)
+	return issues.Run(ctx, a.client, id, issues.AddSubIssue, p)
 }
 
 // IssueAddDep records that an issue waits on another.
 func (a *API) IssueAddDep(ctx context.Context, id, blockerID int) (contract.Issue, error) {
-	return issues.AddDep(ctx, a.client, id, blockerID)
+	return issues.Run(ctx, a.client, id, issues.AddDep, blockerID)
 }
 
 // IssueRemoveDep drops a dependency.
 func (a *API) IssueRemoveDep(ctx context.Context, id, blockerID int) (contract.Issue, error) {
-	return issues.RemoveDep(ctx, a.client, id, blockerID)
+	return issues.Run(ctx, a.client, id, issues.RemoveDep, blockerID)
 }
 
 // IssueComment appends a comment to an issue.
 func (a *API) IssueComment(ctx context.Context, id int, body string) (contract.Issue, error) {
-	return issues.Comment(ctx, a.client, id, body)
+	return issues.Run(ctx, a.client, id, issues.Comment, body)
 }
 
 // ProjectEdit changes a project's title or description.
 func (a *API) ProjectEdit(ctx context.Context, slug string, p contract.ProjectEditParams) (contract.Project, error) {
-	return projects.Edit(ctx, a.client, slug, p)
+	return projects.Run(ctx, a.client, slug, projects.Edit, p)
 }
 
 // ProjectArchive takes a project's work out of the way.
 func (a *API) ProjectArchive(ctx context.Context, slug string) (contract.Project, error) {
-	return projects.Archive(ctx, a.client, slug)
+	return projects.Run(ctx, a.client, slug, projects.Archive, actions.None{})
 }
 
 // ProjectRestore brings an archived project back.
 func (a *API) ProjectRestore(ctx context.Context, slug string) (contract.Project, error) {
-	return projects.Restore(ctx, a.client, slug)
+	return projects.Run(ctx, a.client, slug, projects.Restore, actions.None{})
 }
 
 // CommentEdit replaces a comment's body.
 func (a *API) CommentEdit(ctx context.Context, id int, body string) (contract.Comment, error) {
-	return comments.Edit(ctx, a.client, id, body)
+	return comments.Run(ctx, a.client, id, comments.Edit, body)
 }
 
 // CommentDelete removes a comment.
 func (a *API) CommentDelete(ctx context.Context, id int) error {
-	return comments.Delete(ctx, a.client, id)
+	_, err := comments.Run(ctx, a.client, id, comments.Delete, actions.None{})
+	return err
 }
 
 // ResolveProject turns a working directory into the project slug a capture
