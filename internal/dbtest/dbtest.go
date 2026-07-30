@@ -10,12 +10,27 @@
 package dbtest
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/Plabrum/tt/ent"
 	"github.com/Plabrum/tt/internal/app"
 	"github.com/Plabrum/tt/internal/db"
 )
+
+// schemaMu serialises Schema.Create.
+//
+// ent's generated migrate.Tables is package-level, and the migrator rewrites
+// fields on those shared tables in place — atlas.go's setupTables assigns
+// idx.Name and fk.Symbol under a per-table lock that its own read path, realm
+// via aIndexes, never takes. Two callers migrating at once is therefore a data
+// race in a scenario nothing here tests: a real database is migrated by the
+// Atlas CLI, in another process, and Open does not migrate at all.
+//
+// Serialising declines the scenario rather than working around it. Each test
+// still gets its own database and the tests themselves still run in parallel;
+// only the schema build is one at a time.
+var schemaMu sync.Mutex
 
 // Client returns a fresh in-memory client, closed when the test finishes.
 //
@@ -28,7 +43,10 @@ func Client(t *testing.T) *ent.Client {
 	if err != nil {
 		t.Fatalf("opening test client: %v", err)
 	}
-	if err := client.Schema.Create(t.Context()); err != nil {
+	schemaMu.Lock()
+	err = client.Schema.Create(t.Context())
+	schemaMu.Unlock()
+	if err != nil {
 		t.Fatalf("creating test schema: %v", err)
 	}
 	t.Cleanup(func() {
