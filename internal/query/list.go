@@ -16,30 +16,13 @@ import (
 	"github.com/Plabrum/tt/internal/issue"
 )
 
-// Service answers the list reads.
-type Service struct {
-	client *ent.Client
-}
-
-func NewService(client *ent.Client) *Service {
-	return &Service{client: client}
-}
-
 // List returns the rows matching p, in pick order.
-func (s *Service) List(ctx context.Context, p ListParams) ([]Row, error) {
-	// A read needs no transaction. The three follow-up queries are keyed to
-	// the ids the first one returned, so a concurrent write can at worst make
-	// a flag stale by one refresh — never make a row incoherent.
-	return s.ListIn(ctx, s.client, p)
-}
-
-// ListIn is List against a caller's client.
 //
 // It is four statements, and stays four statements whether it returns one row
 // or three hundred: labels and the milestone name are eager-loaded, and the
 // blocked flag and subtask rollup are batched over the ids the first query
 // produced. Nothing here scales with the row count.
-func (s *Service) ListIn(ctx context.Context, cl *ent.Client, p ListParams) ([]Row, error) {
+func List(ctx context.Context, cl *ent.Client, p ListParams) ([]Row, error) {
 	preds, err := predicates(p)
 	if err != nil {
 		return nil, err

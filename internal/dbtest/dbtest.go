@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Plabrum/tt/ent"
+	"github.com/Plabrum/tt/internal/app"
 	"github.com/Plabrum/tt/internal/db"
 )
 
@@ -33,4 +34,12 @@ func Client(t *testing.T) *ent.Client {
 		}
 	})
 	return client
+}
+
+// API returns an API over a fresh client, plus the client itself so a test can
+// seed rows and check what landed without going back through the API.
+func API(t *testing.T) (*ent.Client, *app.API) {
+	t.Helper()
+	client := Client(t)
+	return client, app.New(client)
 }

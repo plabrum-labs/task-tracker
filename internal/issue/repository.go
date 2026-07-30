@@ -14,14 +14,10 @@ import (
 	"github.com/Plabrum/tt/internal/errs"
 )
 
-// repository is the boundary between ent rows and the view types in model.go.
-// Nothing above it sees an ent type, and nothing below it sees a Detail.
-type repository struct{}
-
 // insert writes a new issue. Status and the timestamps come from schema
 // defaults, so there is nothing here that a second write path could set
 // differently.
-func (repository) insert(ctx context.Context, cl *ent.Client, projectID int, p AddParams) (*ent.Issue, error) {
+func insert(ctx context.Context, cl *ent.Client, projectID int, p AddParams) (*ent.Issue, error) {
 	domainPriority := p.Priority
 	if domainPriority == "" {
 		domainPriority = PriorityNormal
@@ -47,7 +43,7 @@ func (repository) insert(ctx context.Context, cl *ent.Client, projectID int, p A
 // All four collections hang off Issue itself, so this is a single eager-loaded
 // query rather than a call into the ref and comment services — which do not
 // exist yet, and which this package must not depend on when they do.
-func (repository) view(ctx context.Context, cl *ent.Client, id int) (Detail, error) {
+func view(ctx context.Context, cl *ent.Client, id int) (Detail, error) {
 	e, err := cl.Issue.Query().
 		Where(entissue.IDEQ(id)).
 		WithProject().

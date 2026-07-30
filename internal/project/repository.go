@@ -8,9 +8,6 @@ import (
 	entproject "github.com/Plabrum/tt/ent/project"
 )
 
-// repository is the only place that talks to the projects table.
-type repository struct{}
-
 // upsert returns the id of the project with this slug, creating it if it is
 // not there.
 //
@@ -27,7 +24,7 @@ type repository struct{}
 //
 // Setting one column to itself is the smallest DO UPDATE that yields a row,
 // which is exactly what is wanted: no field is touched, and an id comes back.
-func (repository) upsert(ctx context.Context, cl *ent.Client, slug string) (int, error) {
+func upsert(ctx context.Context, cl *ent.Client, slug string) (int, error) {
 	id, err := cl.Project.Create().
 		SetSlug(slug).
 		OnConflictColumns(entproject.FieldSlug).

@@ -1,7 +1,6 @@
 package project_test
 
 import (
-	"context"
 	"testing"
 
 	entproject "github.com/Plabrum/tt/ent/project"
@@ -11,15 +10,14 @@ import (
 
 func TestEnsureIsIdempotent(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
+	ctx := t.Context()
 	client := dbtest.Client(t)
-	svc := project.NewService(client)
 
-	first, err := svc.Ensure(ctx, "tt")
+	first, err := project.Ensure(ctx, client, "tt")
 	if err != nil {
 		t.Fatalf("first Ensure: %v", err)
 	}
-	second, err := svc.Ensure(ctx, "tt")
+	second, err := project.Ensure(ctx, client, "tt")
 	if err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}
@@ -38,9 +36,8 @@ func TestEnsureIsIdempotent(t *testing.T) {
 // in a project you had described would erase the description.
 func TestEnsurePreservesTitle(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
+	ctx := t.Context()
 	client := dbtest.Client(t)
-	svc := project.NewService(client)
 
 	existing := client.Project.Create().
 		SetSlug("tt").
@@ -48,7 +45,7 @@ func TestEnsurePreservesTitle(t *testing.T) {
 		SetDescription("the one you are reading").
 		SaveX(ctx)
 
-	id, err := svc.Ensure(ctx, "tt")
+	id, err := project.Ensure(ctx, client, "tt")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -69,15 +66,14 @@ func TestEnsurePreservesTitle(t *testing.T) {
 // rows, whichever door they came in through.
 func TestEnsureNormalises(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
+	ctx := t.Context()
 	client := dbtest.Client(t)
-	svc := project.NewService(client)
 
-	first, err := svc.Ensure(ctx, "My Repo")
+	first, err := project.Ensure(ctx, client, "My Repo")
 	if err != nil {
 		t.Fatalf("Ensure(%q): %v", "My Repo", err)
 	}
-	second, err := svc.Ensure(ctx, "my-repo")
+	second, err := project.Ensure(ctx, client, "my-repo")
 	if err != nil {
 		t.Fatalf("Ensure(%q): %v", "my-repo", err)
 	}
@@ -95,11 +91,11 @@ func TestEnsureNormalises(t *testing.T) {
 
 func TestEnsureRejectsEmptySlug(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	svc := project.NewService(dbtest.Client(t))
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	for _, slug := range []string{"", "   ", "///"} {
-		if _, err := svc.Ensure(ctx, slug); err == nil {
+		if _, err := project.Ensure(ctx, client, slug); err == nil {
 			t.Errorf("Ensure(%q) succeeded, want an error", slug)
 		}
 	}

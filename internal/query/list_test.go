@@ -1,7 +1,6 @@
 package query_test
 
 import (
-	"context"
 	"slices"
 	"testing"
 	"time"
@@ -14,12 +13,6 @@ import (
 	"github.com/Plabrum/tt/internal/query"
 )
 
-func newService(t *testing.T) (*ent.Client, *query.Service) {
-	t.Helper()
-	client := dbtest.Client(t)
-	return client, query.NewService(client)
-}
-
 func ids(rows []query.Row) []int {
 	out := make([]int, len(rows))
 	for i, r := range rows {
@@ -30,15 +23,15 @@ func ids(rows []query.Row) []int {
 
 func TestListScopesToProject(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	tt := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	other := client.Project.Create().SetSlug("other").SaveX(ctx)
 	mine := client.Issue.Create().SetTitle("mine").SetProject(tt).SaveX(ctx)
 	theirs := client.Issue.Create().SetTitle("theirs").SetProject(other).SaveX(ctx)
 
-	scoped, err := svc.List(ctx, query.ListParams{Project: "tt"})
+	scoped, err := query.List(ctx, client, query.ListParams{Project: "tt"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -50,7 +43,7 @@ func TestListScopesToProject(t *testing.T) {
 	}
 
 	// "" is -A: no scoping at all, not a project literally named "".
-	all, err := svc.List(ctx, query.ListParams{})
+	all, err := query.List(ctx, client, query.ListParams{})
 	if err != nil {
 		t.Fatalf("List(-A): %v", err)
 	}
@@ -61,8 +54,8 @@ func TestListScopesToProject(t *testing.T) {
 
 func TestListDefaultStatusesHideDone(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	mk := func(title string, st entissue.Status) *ent.Issue {
@@ -72,7 +65,7 @@ func TestListDefaultStatusesHideDone(t *testing.T) {
 	doing := mk("doing", entissue.StatusDoing)
 	done := mk("done", entissue.StatusDone)
 
-	byDefault, err := svc.List(ctx, query.ListParams{Project: "tt"})
+	byDefault, err := query.List(ctx, client, query.ListParams{Project: "tt"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -81,7 +74,7 @@ func TestListDefaultStatusesHideDone(t *testing.T) {
 	}
 
 	// -a passes all three explicitly.
-	all, err := svc.List(ctx, query.ListParams{
+	all, err := query.List(ctx, client, query.ListParams{
 		Project:  "tt",
 		Statuses: []issue.Status{issue.StatusTodo, issue.StatusDoing, issue.StatusDone},
 	})
@@ -93,7 +86,7 @@ func TestListDefaultStatusesHideDone(t *testing.T) {
 	}
 
 	// A single explicit status is what a board column asks for.
-	onlyDone, err := svc.List(ctx, query.ListParams{
+	onlyDone, err := query.List(ctx, client, query.ListParams{
 		Project: "tt", Statuses: []issue.Status{issue.StatusDone},
 	})
 	if err != nil {
@@ -112,8 +105,8 @@ func TestListDefaultStatusesHideDone(t *testing.T) {
 // reach the top by priority.
 func TestListPickOrder(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	at := func(day int) time.Time { return time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC) }
@@ -127,7 +120,7 @@ func TestListPickOrder(t *testing.T) {
 	newHi := mk("new hi", entissue.PriorityHi, at(4))
 	oldHi := mk("old hi", entissue.PriorityHi, at(2))
 
-	rows, err := svc.List(ctx, query.ListParams{Project: "tt"})
+	rows, err := query.List(ctx, client, query.ListParams{Project: "tt"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -142,8 +135,8 @@ func TestListPickOrder(t *testing.T) {
 // across refreshes.
 func TestListOrderIsStable(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	same := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -155,7 +148,7 @@ func TestListOrderIsStable(t *testing.T) {
 	}
 
 	for range 3 {
-		rows, err := svc.List(ctx, query.ListParams{Project: "tt"})
+		rows, err := query.List(ctx, client, query.ListParams{Project: "tt"})
 		if err != nil {
 			t.Fatalf("List: %v", err)
 		}
@@ -167,8 +160,8 @@ func TestListOrderIsStable(t *testing.T) {
 
 func TestListLabels(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	backend := client.Label.Create().SetName("backend").SaveX(ctx)
@@ -184,7 +177,7 @@ func TestListLabels(t *testing.T) {
 		SetTitle("one").SetProject(proj).AddLabels(backend).SaveX(ctx)
 	client.Issue.Create().SetTitle("none").SetProject(proj).SaveX(ctx)
 
-	rows, err := svc.List(ctx, query.ListParams{Project: "tt"})
+	rows, err := query.List(ctx, client, query.ListParams{Project: "tt"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -204,7 +197,7 @@ func TestListLabels(t *testing.T) {
 	}
 
 	// -l is ANDed: two labels means both, not either.
-	filtered, err := svc.List(ctx, query.ListParams{
+	filtered, err := query.List(ctx, client, query.ListParams{
 		Project: "tt", Labels: []string{"backend", "ui"},
 	})
 	if err != nil {
@@ -215,7 +208,7 @@ func TestListLabels(t *testing.T) {
 	}
 
 	// A label nothing carries filters everything out rather than erroring.
-	none, err := svc.List(ctx, query.ListParams{Project: "tt", Labels: []string{"bug"}})
+	none, err := query.List(ctx, client, query.ListParams{Project: "tt", Labels: []string{"bug"}})
 	if err != nil {
 		t.Fatalf("List(-l bug): %v", err)
 	}
@@ -226,15 +219,15 @@ func TestListLabels(t *testing.T) {
 
 func TestListMilestone(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	v1 := client.Milestone.Create().SetName("v1").SetProject(proj).SaveX(ctx)
 	inV1 := client.Issue.Create().SetTitle("in v1").SetProject(proj).SetMilestone(v1).SaveX(ctx)
 	client.Issue.Create().SetTitle("unscheduled").SetProject(proj).SaveX(ctx)
 
-	rows, err := svc.List(ctx, query.ListParams{Project: "tt"})
+	rows, err := query.List(ctx, client, query.ListParams{Project: "tt"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -248,7 +241,7 @@ func TestListMilestone(t *testing.T) {
 		}
 	}
 
-	filtered, err := svc.List(ctx, query.ListParams{Project: "tt", Milestone: "v1"})
+	filtered, err := query.List(ctx, client, query.ListParams{Project: "tt", Milestone: "v1"})
 	if err != nil {
 		t.Fatalf("List(-M): %v", err)
 	}
@@ -259,8 +252,8 @@ func TestListMilestone(t *testing.T) {
 
 func TestListSubtaskRollup(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	mk := func(title string, st entissue.Status) *ent.Issue {
@@ -290,7 +283,7 @@ func TestListSubtaskRollup(t *testing.T) {
 	link(parentA, shared, entref.KindSubtask)
 	link(parentB, shared, entref.KindSubtask)
 
-	rows, err := svc.List(ctx, query.ListParams{
+	rows, err := query.List(ctx, client, query.ListParams{
 		Project:  "tt",
 		Statuses: []issue.Status{issue.StatusTodo, issue.StatusDoing, issue.StatusDone},
 	})
@@ -323,8 +316,8 @@ func TestListSubtaskRollup(t *testing.T) {
 
 func TestListBlocked(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	mk := func(title string, st entissue.Status) *ent.Issue {
@@ -346,7 +339,7 @@ func TestListBlocked(t *testing.T) {
 	decomposed := mk("has an open child", entissue.StatusTodo)
 	link(decomposed, mk("open child", entissue.StatusTodo), entref.KindSubtask)
 
-	rows, err := svc.List(ctx, query.ListParams{Project: "tt"})
+	rows, err := query.List(ctx, client, query.ListParams{Project: "tt"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -372,7 +365,7 @@ func TestListBlocked(t *testing.T) {
 	}
 
 	// --blocked and the column are one predicate, so they must agree exactly.
-	only, err := svc.List(ctx, query.ListParams{Project: "tt", BlockedOnly: true})
+	only, err := query.List(ctx, client, query.ListParams{Project: "tt", BlockedOnly: true})
 	if err != nil {
 		t.Fatalf("List(--blocked): %v", err)
 	}
@@ -394,8 +387,8 @@ func TestListBlocked(t *testing.T) {
 
 func TestListSearch(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	wanted := client.Issue.Create().
@@ -405,7 +398,7 @@ func TestListSearch(t *testing.T) {
 	client.Issue.Create().SetTitle("something else").SetProject(proj).SaveX(ctx)
 
 	for _, term := range []string{"wire", "WIRE THE", "the schema"} {
-		rows, err := svc.List(ctx, query.ListParams{Project: "tt", Search: term})
+		rows, err := query.List(ctx, client, query.ListParams{Project: "tt", Search: term})
 		if err != nil {
 			t.Fatalf("List(%q): %v", term, err)
 		}
@@ -417,7 +410,7 @@ func TestListSearch(t *testing.T) {
 	// Title only: a body match is not a hit, because Row does not carry the
 	// body and a substring inside a paragraph is not what a two-word search
 	// means.
-	rows, err := svc.List(ctx, query.ListParams{Project: "tt", Search: "widgets"})
+	rows, err := query.List(ctx, client, query.ListParams{Project: "tt", Search: "widgets"})
 	if err != nil {
 		t.Fatalf("List(widgets): %v", err)
 	}
@@ -428,8 +421,8 @@ func TestListSearch(t *testing.T) {
 
 func TestListLimit(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	client, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
 	proj := client.Project.Create().SetSlug("tt").SaveX(ctx)
 	at := func(day int) time.Time { return time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC) }
@@ -441,7 +434,7 @@ func TestListLimit(t *testing.T) {
 	}
 
 	// The limit takes the head of the pick order, not an arbitrary page.
-	rows, err := svc.List(ctx, query.ListParams{Project: "tt", Limit: 2})
+	rows, err := query.List(ctx, client, query.ListParams{Project: "tt", Limit: 2})
 	if err != nil {
 		t.Fatalf("List(limit): %v", err)
 	}
@@ -449,7 +442,7 @@ func TestListLimit(t *testing.T) {
 		t.Errorf("limited ids = %v, want %v", got, all[:2])
 	}
 
-	unlimited, err := svc.List(ctx, query.ListParams{Project: "tt", Limit: 0})
+	unlimited, err := query.List(ctx, client, query.ListParams{Project: "tt", Limit: 0})
 	if err != nil {
 		t.Fatalf("List(no limit): %v", err)
 	}
@@ -461,10 +454,10 @@ func TestListLimit(t *testing.T) {
 // TestListEmptyIsNotNil: `tt ls --json` on a fresh database must print [].
 func TestListEmptyIsNotNil(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	_, svc := newService(t)
+	ctx := t.Context()
+	client := dbtest.Client(t)
 
-	rows, err := svc.List(ctx, query.ListParams{Project: "nothing-here"})
+	rows, err := query.List(ctx, client, query.ListParams{Project: "nothing-here"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
