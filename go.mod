@@ -3,7 +3,6 @@ module github.com/Plabrum/tt
 go 1.26
 
 require (
-	ariga.io/atlas v0.36.2-0.20250730182955-2c6300d0a3e1
 	entgo.io/ent v0.14.6
 	modernc.org/sqlite v1.55.0
 )
@@ -11,6 +10,7 @@ require (
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
 	4d63.com/gochecknoglobals v0.2.2 // indirect
+	ariga.io/atlas v0.36.2-0.20250730182955-2c6300d0a3e1 // indirect
 	charm.land/lipgloss/v2 v2.0.3 // indirect
 	codeberg.org/chavacava/garif v0.2.0 // indirect
 	codeberg.org/polyfloyd/go-errorlint v1.9.0 // indirect
