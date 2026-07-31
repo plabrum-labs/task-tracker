@@ -1,0 +1,29 @@
+[package]
+name = "tt-spike"
+version = "0.1.0"
+edition = "2024"
+
+# The domain core still names none of this. `action.rs` mentions no crate at
+# all, `issue.rs` and `project.rs` mention only serde's derives, and everything
+# below is reached through one module each: `wire.rs` for JSON, `store.rs` for
+# SQL, `cli.rs` and `tui.rs` for the two frontends. The tree is what a real
+# application costs, not what an action costs.
+[dependencies]
+chrono = "0.4"
+clap = { version = "4.5", features = ["env", "string"] }
+crossterm = "0.29"
+ratatui = "0.29"
+schemars = "1.2.2"
+sea-orm = { version = "1.1", default-features = false, features = [
+    "sqlx-sqlite",
+    "runtime-tokio-rustls",
+    "macros",
+    "with-chrono",
+] }
+serde = { version = "1.0.229", features = ["derive"] }
+# `preserve_order` is load-bearing rather than a preference: without it
+# `serde_json::Map` is a `BTreeMap`, the properties of a derived schema come
+# back alphabetically, and `form::of_schema` renders fields in an order the
+# payload type never declared.
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

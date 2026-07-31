@@ -1,0 +1,5 @@
+(test
+ (name test_tt)
+ (libraries tt alcotest yojson cmdliner notty-community)
+ (flags
+  (:standard -warn-error +8)))

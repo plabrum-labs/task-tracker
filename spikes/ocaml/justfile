@@ -1,0 +1,97 @@
+# dune lives in the opam switch rather than on the system PATH, so every recipe
+# sources the switch first. Without it the commands are simply not found.
+opam := "eval $(opam env --switch=default)"
+
+# Path to the SQLite store the db-* recipes operate on.
+db := absolute_path(env("TT_DB", "tt.db"))
+
+default:
+    @just --list
+
+# The release profile is what ../README.md's findings are measured under: dune
+# promotes alerts to errors in the dev profile, so a dev build is stricter than
+# the one the findings describe.
+
+# Rewrite every source file in place with ocamlformat.
+format:
+    {{ opam }} && dune build @fmt --auto-promote
+
+# Compile everything.
+build:
+    {{ opam }} && dune build --profile release
+
+# --force because dune otherwise caches a passing run and prints nothing.
+
+# The domain, the wire, the frontends, and the SQL edge against real SQLite.
+test:
+    {{ opam }} && dune test --profile release --force
+
+# The erased path from outside: the offers, their schemas, then one dispatch.
+show:
+    {{ opam }} && dune exec --profile release bin/show.exe
+
+# A refusal exits 123 — it is the object's answer, not a usage error.
+#
+#     just cli project ls
+#     just cli issue show 1
+#     just cli issue editTitle 1 --title=new
+#     just cli issue action 1 editTitle '{"title":"new"}'
+
+# The command line, over the same routes. Takes a subcommand.
+cli *args:
+    {{ opam }} && dune exec --profile release bin/cli.exe -- {{ args }}
+
+# Escape steps back out of a form, so it is not the way out. q is.
+
+# The terminal UI. Up/down to move, enter to pick, q to quit.
+tui:
+    {{ opam }} && dune exec --profile release bin/tui.exe
+
+# OCaml has no clippy. The compiler's warning set is the linter, and dune's dev
+# profile is the strict one — it promotes alerts to errors, which the release
+# profile the other recipes use does not. @fmt is checked rather than promoted,
+# so an unformatted file fails here.
+
+# Build under the dev profile, where alerts are errors, and check formatting.
+lint:
+    {{ opam }} && dune build && dune build @fmt
+
+# Delete the build tree.
+clean:
+    {{ opam }} && dune clean
+
+# Lints, build and tests. Mirrors the root justfile's verify.
+verify: lint build test
+
+# The db-* recipes shell out to the Atlas CLI, which has to be installed
+# separately — the same arrangement, and the same reason, as the root justfile's.
+# `verify` does not depend on them: lib/schema.sql is what the store applies, and
+# migrations/ is what a real deployment would replay.
+#
+#     brew install ariga/tap/atlas
+
+# Generate a new versioned migration from lib/schema.sql.
+db-migrate name:
+    atlas migrate diff --env local {{ name }}
+
+# Apply every pending migration to the store.
+db-upgrade:
+    atlas migrate apply --env local --url "sqlite://{{ db }}"
+
+# Which migrations the store has applied, and what is pending.
+db-status:
+    atlas migrate status --env local --url "sqlite://{{ db }}"
+
+# Fail if lib/schema.sql has drifted from migrations/.
+db-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    atlas migrate diff --env local drift_check
+    shopt -s nullglob
+    drift=(migrations/*_drift_check.sql)
+    if (( ${#drift[@]} )); then
+        rm -f "${drift[@]}"
+        atlas migrate hash --env local
+        echo "lib/schema.sql has drifted from migrations/ — run 'just db-migrate <name>'" >&2
+        exit 1
+    fi

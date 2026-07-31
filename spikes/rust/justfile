@@ -1,0 +1,46 @@
+default:
+    @just --list
+
+# Compile everything.
+build:
+    cargo build
+
+# The domain, the wire, the frontends, and the SQL edge against real SQLite.
+test:
+    cargo test
+
+# The erased path from outside: the offers, their schemas, then one dispatch.
+show:
+    cargo run --quiet --example show
+
+# A refusal exits 123 — it is the object's answer, not a usage error.
+#
+#     just cli project ls
+#     just cli issue show 1
+#     just cli issue editStatus 1 --status doing --note started
+#     just cli issue action 1 editStatus '{"status":"doing"}'
+
+# The command line, over the same groups. Takes a subcommand.
+cli *args:
+    cargo run --quiet --bin cli -- {{ args }}
+
+# Escape steps back, q quits, left/right cycle an enum field.
+
+# The terminal UI. Up/down to move, enter to pick.
+tui:
+    cargo run --quiet --bin tui
+
+# Rustfmt over the crate. Rewrites files, so it is not part of verify.
+format:
+    cargo fmt
+
+# Clippy, denying warnings.
+lint:
+    cargo clippy --all-targets -- -D warnings
+
+# Delete the build tree.
+clean:
+    cargo clean
+
+# Lints, build and tests. Mirrors the root justfile's verify.
+verify: lint build test

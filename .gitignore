@@ -2,3 +2,6 @@
 *.db
 *.db-wal
 *.db-shm
+
+/spikes/ocaml/_build/
+/spikes/rust/target/

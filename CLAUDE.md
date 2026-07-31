@@ -7,29 +7,16 @@ Personal task tracker. Go CLI + TUI over SQLite, backed by Ent.
 Use the `justfile` recipes (`just --list`) rather than rediscovering the
 underlying commands.
 
-- `just format` — apply formatting. Run before every commit.
-- `just lint` — formatting, `go vet` and the enabled linters.
-- `just test` / `just test-race` — unit tests, in-memory SQLite.
-- `just generate` — regenerate ent. Run after editing
-  `backend/internal/ent/schema/`, and commit the result.
-- `just db-migrate <name>` — generate a new versioned migration from the ent
-  schema. `just db-upgrade` applies pending ones to the store, `just db-status`
-  says what is pending, `just db-check` fails if the two have drifted apart.
-- `just verify` — the full gate. A change is not complete until it passes.
-- `just hooks` — install the git hooks. Run once per clone.
-
 If a recipe is missing or broken, report that. Do not silently bypass or
 substitute it. Never claim verification succeeded unless the command was
 actually run.
 
-Linting is `golangci-lint`, pinned as a `tool` directive in `go.mod` and run
-via `go tool` — there is nothing to install. `.golangci.yml` holds the enabled
-linters; `goimports` and `go vet` are part of it, so `just lint` subsumes both.
-Enabling or disabling a linter is a stop-and-ask, and every suppression in that
-file says why.
+Enabling or disabling a linter is a stop-and-ask, and every suppression in
+`.golangci.yml` says why.
 
-The `db-*` recipes are the exception to that: they shell out to the Atlas CLI,
-which has to be installed separately.
+Every tool the build needs is pinned in `go.mod`. The `db-*` recipes are the
+exception: they shell out to the Atlas CLI, which has to be installed
+separately.
 
     brew install ariga/tap/atlas      # or: curl -sSf https://atlasgo.sh | sh
 
@@ -55,22 +42,6 @@ is not yet staged is therefore invisible to the hooks, and a tool the commit
 itself introduces will fail to resolve — stage `go.mod` and `go.sum` in the
 same commit as whatever needs them.
 
-## Surface decisions; decide them together
-
-When a decision surfaces while you're implementing — a design choice, a
-tradeoff, a scope cut, a "this turned out harder than expected" — don't quietly
-make the call and keep going, even with a clear recommendation, even when the
-call seems small. Lay out the options and let me weigh in. I want to make these
-calls with you, not find them afterwards in the diff.
-
-This applies with equal force to *discoveries*. If you find a latent bug, a
-wrong assumption, or a case the plan didn't handle, raise it before designing a
-fix — even when the fix seems obvious and even when it's "just correctness."
-Finding the problem is itself the fork.
-
-Not a request to check in on every trivial detail: obvious mechanical choices
-with one sensible answer don't need a checkpoint. It's about genuine forks,
-where a reasonable person might pick differently. When in doubt, surface it.
 
 ## Commits
 
@@ -109,49 +80,7 @@ breaks the build — is exactly what this section is for. Say what breaks.
 
 ## Architecture
 
-`CONTRACT.md` owns what the backend returns and where each package lives. Read
-it before moving code between packages.
-
 Dependency flow: `cli`/`tui` → `backend` → domain package → Ent → SQLite.
-
-These are load-bearing. Breaking one is a design change, not a refactor.
-
-1. **`cli` and `tui` never import `ent`.** They import `backend`,
-   `backend/contract` and `backend/errs`; everything else is under
-   `backend/internal/` and the compiler rejects it. This also keeps
-   lazily-loaded edges out of render code, where `Edges.Labels == nil` can't be
-   distinguished from "has no labels" — contract types have fields, not edges.
-2. **Taxonomy never depends on work.** `projects`, `milestones` and `labels`
-   must not import `issues`.
-3. **A domain owns every read of its own object**, however many tables it
-   joins. The issue list joins labels, milestones and refs and still lives in
-   `issues/queries.go`.
-4. **`actions.go` is pure.** No context, no client, no error, no queries — it
-   takes a loaded object and returns its menu. A rule needing a query is not a
-   menu rule.
-5. **Write methods come in pairs.** The plain one owns the transaction via
-   `db.WithTx`; the `…In` one takes an `*ent.Client` and composes into a
-   caller's transaction. The plain one wraps the `…In` one so the two cannot
-   drift. `backend/contract.go` calls the plain one and does nothing else.
-
-Any rule a user can hit must be reachable identically from the CLI and the TUI.
-Logic in `cli/` or `tui/` is in the wrong place. Legality is decided in
-`actions.go` and enforced in `service.go`; a frontend only decides how to
-render the result.
-
-## Contracts
-
-`--json` keys and exit codes are the agent-facing API, not implementation
-details. Changing one is a stop-and-ask.
-
-- Each contract type has a unit test that marshals a literal and compares
-  against an expected JSON string written inline, so a key change shows up as
-  a failing test rather than a surprise. No fixture files, and no regeneration
-  step — changing the contract means editing the literal by hand.
-- `Actions` is `json:"-"`. A menu change can never move a `--json` key.
-- Exit codes: 0 success, 1 error, 2 usage, 3 not found, 4 nothing eligible.
-- **A flag either works or returns an error.** Never parse a flag and silently
-  ignore it.
 
 ## Bugs
 
