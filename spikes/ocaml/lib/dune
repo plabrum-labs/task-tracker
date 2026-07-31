@@ -17,7 +17,7 @@
   unix
   uri)
  (preprocess
-  (pps ppx_yojson_conv ppx_deriving_jsonschema))
+  (pps ppx_yojson_conv ppx_deriving_jsonschema ppx_action))
  ; Warning 8 is non-exhaustive match. It is an error in dune's dev profile but
  ; only a warning under --profile release, so a release build will happily
  ; compile a match that is missing a case and raise Match_failure at runtime.

@@ -8,5 +8,8 @@ include Models
 module Services = Services
 (** The projects table, and the only module that names it. *)
 
+module Schemas = Schemas
+(** The payload shapes a project's actions accept. *)
+
 module Actions = Actions
 (** Everything a project can be asked, and the two things that make one. *)

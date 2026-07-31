@@ -1,0 +1,7 @@
+; The [%action ...] rewriter. A ppx cannot live under lib/'s (include_subdirs
+; qualified), so it is its own library here and named in lib/dune's preprocess.
+
+(library
+ (name ppx_action)
+ (kind ppx_rewriter)
+ (libraries ppxlib))

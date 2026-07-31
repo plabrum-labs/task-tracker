@@ -14,5 +14,8 @@ include Models
 module Services = Services
 (** The issues table, and the only module that names it. *)
 
+module Schemas = Schemas
+(** The payload shapes an issue's actions accept. *)
+
 module Actions = Actions
 (** Everything an issue can be asked, in two registrations. *)

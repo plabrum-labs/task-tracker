@@ -5,216 +5,162 @@
     because the store put it there. A hook earns its keep where an action is a verb with a
     precondition, and a CRUD-shaped edit is not one of those. Creating something still is.
 
-    A creator is an ordinary action whose [execute] writes a different table: [addIssue] is offered
-    against a project and inserts an issue, [createProject] against the list of live projects and
-    inserts a project. Nothing about the declaration marks either as special — [execute] holds the
-    transaction, so what it writes and to which table is its own business.
+    One action is one [%action …]; its payload shape is in {!Schemas}. A creator is an ordinary
+    action whose [execute] writes a different table — [addIssue] inserts an issue, [createProject] a
+    project — and nothing about the declaration marks either as special, because [execute] holds the
+    transaction and what it writes is its own business.
 
-    See [../issue/actions.ml] for why each [Spec] is named. *)
+    See [../issue/actions.ml] for the shape of an [%action] declaration. *)
 
 open Platform
-open Ppx_yojson_conv_lib.Yojson_conv.Primitives
 
 (** The editable columns, written and reported as one. [updated_at] is the store's to stamp. *)
 let saved (project : Models.t) conn =
   Db.broken (Services.update project conn)
   |> Result.map (fun () -> Models.subject project ^ ": saved")
 
-module Edit_title = struct
-  module Spec = struct
-    include Action.Defaults
-
-    type obj = Models.t
-
-    type payload = { title : string  (** What to call the project. *) }
-    [@@deriving yojson, jsonschema ~ocaml_doc]
-
-    let key = "editTitle"
-
-    let execute (project : obj) p conn =
-      let title = String.trim p.title in
-      if title = "" then Error (Error.Invalid "title is required")
-      else saved { project with title } conn
-  end
-
-  include Wire.Make (Spec)
-end
-
-module Edit_body = struct
-  module Spec = struct
-    include Action.Defaults
-
-    type obj = Models.t
-
-    type payload = { body : string  (** What the project is for. Blank clears it. *) }
-    [@@deriving yojson, jsonschema ~ocaml_doc]
-
-    let key = "editBody"
-    let execute (project : obj) p conn = saved { project with body = p.body } conn
-  end
-
-  include Wire.Make (Spec)
-end
-
 let issues n = if n = 1 then "1 issue" else Printf.sprintf "%d issues" n
 
-module Edit_status = struct
-  module Spec = struct
-    include Action.Defaults
+module Edit_title =
+  [%action
+  include Action.Defaults
 
-    type obj = Models.t
+  type obj = Models.t
+  type payload = Schemas.edit_title
 
-    type payload = {
-      status : Models.Status.t;  (** Whether the project is still being worked on. *)
-    }
-    [@@deriving yojson, jsonschema ~ocaml_doc]
+  let key = "editTitle"
 
-    let key = "editStatus"
+  let execute (project : obj) (p : payload) conn =
+    let title = String.trim p.title in
+    if title = "" then Error (Error.Invalid "title is required")
+    else saved { project with title } conn]
 
-    (* The refusal is stated against the object rather than against the payload,
-       so it holds whichever status was asked for — archiving is the only move
-       that could break it, and asking to stay active is refused too. That is
-       what a hook seeing only the object costs, and the alternative is a rule
-       split between [is_disabled] and [execute]. *)
-    let is_disabled (project : obj) =
-      if project.doing > 0 then
-        Some (Printf.sprintf "finish or drop %s first" (issues project.doing))
-      else None
+module Edit_body =
+  [%action
+  include Action.Defaults
 
-    let execute (project : obj) p conn = saved { project with status = p.status } conn
-  end
+  type obj = Models.t
+  type payload = Schemas.edit_body
 
-  include Wire.Make (Spec)
-end
+  let key = "editBody"
+  let execute (project : obj) (p : payload) conn = saved { project with body = p.body } conn]
 
-module Delete = struct
-  module Spec = struct
-    include Action.Defaults
-    include Wire.No_payload
+module Edit_status =
+  [%action
+  include Action.Defaults
 
-    type obj = Models.t
+  type obj = Models.t
+  type payload = Schemas.edit_status
 
-    let key = "delete"
+  let key = "editStatus"
 
-    let is_disabled (project : obj) =
-      match project.status with
-      | Models.Status.Active -> Some "archive it first"
-      | Models.Status.Archived -> None
+  (* The refusal is stated against the object rather than against the payload, so it holds whichever
+   status was asked for — archiving is the only move that could break it, and asking to stay active
+   is refused too. That is what a hook seeing only the object costs, and the alternative is a rule
+   split between [is_disabled] and [execute]. *)
+  let is_disabled (project : obj) =
+    if project.doing > 0 then Some (Printf.sprintf "finish or drop %s first" (issues project.doing))
+    else None
 
-    let execute project () conn =
-      Db.broken (Services.delete project conn)
-      |> Result.map (fun () -> Models.subject project ^ ": deleted")
-  end
+  let execute (project : obj) (p : payload) conn = saved { project with status = p.status } conn]
 
-  include Wire.Make (Spec)
-end
+module Delete =
+  [%action
+  include Action.Defaults
+  include Wire.No_payload
 
-module Restore = struct
-  module Spec = struct
-    include Action.Defaults
-    include Wire.No_payload
+  type obj = Models.t
 
-    type obj = Models.restorable
+  let key = "delete"
 
-    let key = "restore"
+  let is_disabled (project : obj) =
+    match project.status with
+    | Models.Status.Active -> Some "archive it first"
+    | Models.Status.Archived -> None
 
-    (* The one refusal a hook can state only because its object was widened to
-       carry the answer. The partial unique index is still what guarantees it;
-       this is what turns a constraint violation into a sentence. *)
-    let is_disabled (r : obj) =
-      if r.slug_taken then Some (Printf.sprintf "project %S exists again" r.deleted.inner.slug)
-      else None
+  let execute project () conn =
+    Db.broken (Services.delete project conn)
+    |> Result.map (fun () -> Models.subject project ^ ": deleted")]
 
-    let execute (r : obj) () conn =
-      Db.broken (Services.restore r.deleted conn)
-      |> Result.map (fun () -> Models.subject r.deleted.inner ^ ": restored")
-  end
+module Restore =
+  [%action
+  include Action.Defaults
+  include Wire.No_payload
 
-  include Wire.Make (Spec)
-end
+  type obj = Models.restorable
 
-module Add_issue = struct
-  module Spec = struct
-    include Action.Defaults
+  let key = "restore"
 
-    type obj = Models.t
+  (* The one refusal a hook can state only because its object was widened to carry the answer. The
+   partial unique index is still what guarantees it; this is what turns a constraint violation into
+   a sentence. *)
+  let is_disabled (r : obj) =
+    if r.slug_taken then Some (Printf.sprintf "project %S exists again" r.deleted.inner.slug)
+    else None
 
-    type payload = {
-      title : string;  (** What to call the issue. *)
-      body : string option; [@yojson.option] [@jsonschema.option]  (** What it is about. *)
-      priority : Issue.Priority.t option; [@yojson.option] [@jsonschema.option]
-          (** How far up the list it sorts. Normal unless said otherwise. *)
-    }
-    [@@deriving yojson, jsonschema ~ocaml_doc]
+  let execute (r : obj) () conn =
+    Db.broken (Services.restore r.deleted conn)
+    |> Result.map (fun () -> Models.subject r.deleted.inner ^ ": restored")]
 
-    let key = "addIssue"
+module Add_issue =
+  [%action
+  include Action.Defaults
 
-    let is_disabled (project : obj) =
-      match project.status with
-      | Models.Status.Archived -> Some "project is archived"
-      | Models.Status.Active -> None
+  type obj = Models.t
+  type payload = Schemas.add_issue
 
-    (* An action on a project writing to the issues table. The store assigns the
-       id, so the message reads the row it wrote rather than the draft it built. *)
-    let execute (project : obj) p conn =
-      let title = String.trim p.title in
-      if title = "" then Error (Error.Invalid "title is required")
-      else
-        let draft =
-          {
-            Issue.project_id = project.id;
-            title;
-            body = Option.value p.body ~default:"";
-            priority = Option.value p.priority ~default:Issue.Priority.Normal;
-          }
-        in
-        Db.broken (Issue.Services.create draft conn)
-        |> Result.map (fun (issue : Issue.t) -> Issue.subject issue ^ ": created")
-  end
+  let key = "addIssue"
 
-  include Wire.Make (Spec)
-end
+  let is_disabled (project : obj) =
+    match project.status with
+    | Models.Status.Archived -> Some "project is archived"
+    | Models.Status.Active -> None
 
-module Create_project = struct
-  module Spec = struct
-    include Action.Defaults
+  (* An action on a project writing to the issues table. The store assigns the id, so the message
+   reads the row it wrote rather than the draft it built. *)
+  let execute (project : obj) (p : payload) conn =
+    let title = String.trim p.title in
+    if title = "" then Error (Error.Invalid "title is required")
+    else
+      let draft =
+        {
+          Issue.project_id = project.id;
+          title;
+          body = Option.value p.body ~default:"";
+          priority = Option.value p.priority ~default:Issue.Priority.Normal;
+        }
+      in
+      Db.broken (Issue.Services.create draft conn)
+      |> Result.map (fun (issue : Issue.t) -> Issue.subject issue ^ ": created")]
 
-    type obj = Models.t list
+module Create_project =
+  [%action
+  include Action.Defaults
 
-    type payload = {
-      slug : string;  (** The short name the project is addressed by. *)
-      title : string option; [@yojson.option] [@jsonschema.option]  (** What to call it. *)
-      body : string option; [@yojson.option] [@jsonschema.option]  (** What it is for. *)
-    }
-    [@@deriving yojson, jsonschema ~ocaml_doc]
+  type obj = Models.t list
+  type payload = Schemas.create_project
 
-    let key = "createProject"
+  let key = "createProject"
 
-    (* The duplicate check cannot be a hook, because a hook is given the parent
-       and not the payload — it can be told there are projects and not which
-       slug is being asked for. So the loaded list is the parent, and the
-       refusal comes from [execute]. The partial unique index is still what
-       guarantees it; this is only what turns a constraint violation into a
-       sentence. *)
-    let execute projects p conn =
-      let slug = String.trim p.slug in
-      if slug = "" then Error (Error.Invalid "slug is required")
-      else if List.exists (fun (project : Models.t) -> project.slug = slug) projects then
-        Error (Error.Conflict (Printf.sprintf "project %S already exists" slug))
-      else
-        let draft =
-          {
-            Models.slug;
-            title = Option.value p.title ~default:"";
-            body = Option.value p.body ~default:"";
-          }
-        in
-        Db.broken (Services.create draft conn)
-        |> Result.map (fun (project : Models.t) -> Models.subject project ^ ": created")
-  end
-
-  include Wire.Make (Spec)
-end
+  (* The duplicate check cannot be a hook, because a hook is given the parent and not the payload — it
+   can be told there are projects and not which slug is being asked for. So the loaded list is the
+   parent, and the refusal comes from [execute]. The partial unique index is still what guarantees
+   it; this is only what turns a constraint violation into a sentence. *)
+  let execute projects (p : payload) conn =
+    let slug = String.trim p.slug in
+    if slug = "" then Error (Error.Invalid "slug is required")
+    else if List.exists (fun (project : Models.t) -> project.slug = slug) projects then
+      Error (Error.Conflict (Printf.sprintf "project %S already exists" slug))
+    else
+      let draft =
+        {
+          Models.slug;
+          title = Option.value p.title ~default:"";
+          body = Option.value p.body ~default:"";
+        }
+      in
+      Db.broken (Services.create draft conn)
+      |> Result.map (fun (project : Models.t) -> Models.subject project ^ ": created")]
 
 (** Everything a live project offers, in the order it is offered: the edits, then leaving, then the
     one thing it makes. [addIssue]'s [execute] writes a different table, and nothing about its place

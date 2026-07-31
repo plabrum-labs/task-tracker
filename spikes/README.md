@@ -232,62 +232,75 @@ rather than `///`, which the payload types here now do.
 ### 3. The `wire` split closed the gap that was supposed to be Rust's headline
 
 Earlier rounds had OCaml writing `~schema` and `~decode` on every action while
-Rust derived both from a `type Payload` bound. That gap is gone, and moving the
-transport out is what removed it. Neither language's *action* mentions a
-decoder or a schema now. Both pair the two exactly once, at registration:
+Rust derived both from a `type Payload` bound. That gap is gone. Neither
+language's *action* mentions a decoder or a schema; each states a payload type
+and the framework derives both from it:
 
 ```ocaml
-Wire.entry Edit_title.action (module Edit_title.Payload)
+type payload = Schemas.edit_title
 ```
 ```rust
-Entry::of::<EditTitle>()
+type Payload = EditTitlePayload;
 ```
 
-In both, the pairing is checked. `Wire.entry Edit_title.action (module
-Edit_body.Payload)` is a type error, so the schema an action advertises cannot
-belong to a different type than the one it decodes.
+The pairing cannot be got wrong, and in OCaml it is now *generated* rather than
+merely checked. In Rust the `type Payload` bound is what `schemars` and `serde`
+both read. In OCaml the `[%action]` ppx reads `type payload = Schemas.edit_title`
+and emits the decoder and schema bindings from that one name —
+`Schemas.edit_title_of_yojson` and `Schemas.edit_title_jsonschema` — so an action
+cannot advertise a schema belonging to a different type than the one it decodes,
+because it never names either binding itself.
 
-The remaining asymmetry is small and in Rust's favour: `Entry::of::<EditTitle>()`
-names the action once, where OCaml names it and its payload module separately.
+Registration names the action once in both: `Edit_title.entry` in a group list,
+`Entry::of::<EditTitle>()` in Rust. The small asymmetry an earlier round noted —
+OCaml naming the action and its payload module separately at registration — is
+gone.
 
-### 4. Optional arguments reproduce a base class; nesting the payload is what makes it read
+### 4. A ppx is the base class and the decorator; the payload lives apart
 
-`Action.make`'s defaults are optional arguments with a trailing `()`:
+snacks' readability is a base class and a decorator. OCaml's equivalent is
+`[%action …]`: a struct holding the object type, the key, whichever hooks it
+overrides — the rest come from `include Action.Defaults` — and `execute`, which
+the ppx wraps into the `module Spec = struct … end` / `include Wire.Make (Spec)`
+pair a reader would otherwise write on every action:
 
 ```ocaml
-let make ?(is_available = fun _ -> true) ?(is_disabled = fun _ -> None) ~key ~execute () = …
+module Edit_title = [%action
+  include Action.Defaults
+  type obj = Models.t
+  type payload = Schemas.edit_title
+  let key = "editTitle"
+  let execute (issue : obj) (p : payload) conn =
+    let title = String.trim p.title in
+    if title = "" then Error (Error.Invalid "title is required")
+    else saved { issue with title } conn]
 ```
 
-`Edit_title` passes two arguments and says nothing about either availability
-hook, which is what the Rust `impl` does by leaving the default methods alone.
-The `()` is load-bearing: without a final positional argument the optional ones
-cannot be erased.
+That is the same trade Rust makes with a `#[derive]` over a trait — a macro does
+the boilerplate so the declaration is only the declaration. It is a new
+dependency (`ppxlib`) and ~40 lines of rewriter in `ppx/`, which is the honest
+cost, and it is the thing the goal doc means by "the language's answer to a
+generic base class and a decorator".
 
-One action is one module, holding its payload type and the action over it. The
-payload module is **nested and not opened**, which is what keeps the object's
-fields visible in `execute`. Opening it instead puts the payload's fields in the
-same scope as the object's, and `Edit_title`'s payload has a `title` field, so:
+The payload type is not in the action. It is one line, `type payload =
+Schemas.edit_title`, pointing at `schemas.ml`, where every payload shape and the
+field descriptions a frontend shows sit together as the wire contract. What that
+costs is a reference where snacks has the Struct inline and reading one action
+means reading two files; what it buys is that the shapes are in one place and the
+action is only its behaviour. The ppx keeps the split free of ceremony — it is
+what generates the decoder and schema bindings from the referenced type's name
+(finding 3), so the action does not re-alias them.
 
-```ocaml
-~execute:(fun issue p -> … Ok { issue with title })
-```
-
-infers `issue` as the *payload* type. The definition typechecks; the error
-surfaces later at the registration site, pointing at the wrong line. OCaml's
-type-directed record disambiguation silently picked the nearer type, and only a
-downstream annotation caught it.
-
-`(p : Payload.t)` on `execute` is still required: nothing else pins `'p`, since
-the payload module is no longer an argument to `make`. That is one annotation
-per action, against Rust's `type Payload = EditTitlePayload`.
-
-At application scale this hazard turned up twice more on the OCaml side and
-never on the Rust one, because it is a hazard about *field names in scope*
-rather than about actions: `Project.t` and `Project.draft` share `slug`,
-`title` and `body`, and `Issue.t` and `Issue.draft` share `title`, `body` and
-`priority`, so `store.ml` and `project.ml` both carry annotations that exist
-only to stop disambiguation choosing the later declaration. Rust's struct
-literals name their type.
+Two annotations remain on `execute`, and they are the residue of OCaml's
+type-directed record disambiguation. `Models.t` and the payload type share field
+names — both an issue and its `editTitle` payload have `title` — and neither
+module is opened, so `{ issue with title }` is pinned with `(issue : obj)` and
+`p.title` with `(p : payload)`. The inline-payload form needed only the first,
+because the payload's fields were then in scope to disambiguate the second; moving
+the payload to `schemas.ml` trades that one saved annotation for the shapes being
+in one place. The same disambiguation shows up wherever a row type and a `draft`
+share field names — the services and the models carry annotations for it too.
+Rust's struct literals name their type and need none of this.
 
 ### 5. Exhaustiveness: neither language names any site
 
@@ -684,6 +697,17 @@ clearest single number in the table. And the two `.mli` files are 47 lines of
 code and 156 lines total, of which the doc comments are the part worth keeping;
 Rust buys the same encapsulation with `mod entities;` and one private tuple
 field.
+
+A third argument-rather-than-measurement is the declaration ppx. `[%action]` is
+~40 lines of `ppxlib` rewriter in `ppx/`, plus the dependency, and it exists only
+to lift the `module Spec = struct … end` / `include Wire.Make (Spec)` pair off
+every action — OCaml's answer to the `#[derive]`-over-a-trait that gives the Rust
+declaration its shape, and the same kind of cost. It comes with a `schemas.ml`
+per object, where the payload shapes moved so an action states only its
+behaviour; that is a split for readability rather than a line count. (This is one
+of two places the OCaml column here predates a refactor: the store is now
+`caqti`-blocking rather than `petrol` over `lwt`, so findings 12–13 and the
+`nottui`/`lwt` note below are measured against the earlier tree.)
 
 Dependencies moved too. `rust/Cargo.toml` went from three crates to nine —
 sea-orm, tokio, clap, ratatui, crossterm and chrono are all new, and `sqlx`
