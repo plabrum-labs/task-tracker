@@ -2,13 +2,20 @@
 
     This file is the point of the module. The row type, the column list, the liveness predicates and
     the SQL are all private, so nothing outside [services.ml] can name the issues table — and every
-    read below therefore carries its soft-delete filter by construction. A caller cannot write the
-    query that forgets it, because it cannot write a query at all.
+    read below therefore carries its soft-delete filter by construction.
 
-    That is the same trick [action.mli] uses to make {!Action.run} the only path to a write, applied
+    The seal narrowed when [execute] gained the transaction. It used to be that a caller could not
+    write the query that forgets the filter because it could not write a query at all; an action now
+    holds a {!Db.conn} and {!Db.find} and its siblings are public, so an action {e could} issue a
+    raw SELECT of this table and see a deleted row. What this module still guarantees is that no
+    read stated {e here} forgets the filter, and every read the rest of the tree has goes through
+    here. The airtight version was a property of a pure [execute] with no connection to reach for,
+    and that is the price of letting an action write for itself.
+
+    It is the same trick [action.mli] uses to make {!Action.run} the only path to a write, applied
     to the soft-delete filter instead. It is also what stands in for SQL views: {!list} is "live
     issues of live projects" as a function rather than as a view, and it is the only way to ask for
-    issues.
+    issues without naming the table.
 
     Every read is a fresh query. Nothing is cached, so what a frontend rendered is a snapshot and a
     write is checked against the row as it is now. *)

@@ -332,11 +332,13 @@ performs the write against an object that refused it.
 
 Each language can close it, and they pay in different places.
 
-OCaml closes it with a file. `action.mli` makes `('obj, 'p) t` abstract and
-exports `make`, `key`, `availability` and `run`; `execute` is then a field
+OCaml closes it with a file. `action.mli` makes `('obj, 'p, 'conn) t` abstract
+and exports `make`, `key`, `availability` and `run`; `execute` is then a field
 nobody outside `action.ml` can name, and the bypass is `Error: Unbound record
 field execute`. The cost is the interface itself — every exported value's type
-written a second time, by hand.
+written a second time, by hand. It matters more than it did: `execute` now holds
+the transaction and does the write, so the field the `.mli` hides is not a pure
+function that hands back an object but the write itself.
 
 Rust cannot do it by sealing the trait, which would only shut out other crates.
 It does it with a token whose constructor is private to `action.rs`:
@@ -356,18 +358,25 @@ The two costs scale differently. Rust's is paid again by every action added;
 OCaml's is paid once, and the same file buys the rest of the module's
 encapsulation.
 
-**A second module needed sealing, and that is where the comparison turns.** The
-store has to guarantee that no read can forget its soft-delete predicate, which
-means the tables must not be nameable from outside. OCaml writes `store.mli` —
-another 88 lines, of which 23 are code and the rest are the doc comments that
-are the only reason to keep it. Rust writes `mod entities;` without a `pub` and
-is finished: the entity types, the raw DDL and the row structs are private,
-`store.rs` exports the loads and the writes, and there is no second copy of any
-signature to maintain.
+**A second module is still sealed, and giving `execute` the transaction narrowed
+what the seal buys.** The store keeps its tables unnameable from outside — OCaml
+still writes the interface, now one `services.mli` per object (17 lines of code
+across the two and 114 with the doc comments that are the only reason to keep
+them), and Rust still writes `mod entities;` without a `pub`. What changed is the
+guarantee. It used to be that no read *anywhere* could forget the soft-delete
+predicate, because a pure `execute` had no connection to read through and every
+read went through the sealed loads. Now `execute` holds the transaction and
+`Db.find` is public, so an action *could* issue a raw SELECT that sees a deleted
+row; the seal guarantees only that no read *stated in the module* forgets the
+filter, and every read the rest of the tree has still goes through there. The
+airtight version was a property of the pure `execute` this change removed.
 
-So finding 7's cost is not symmetric after all. Rust pays per *action*; OCaml
-pays per *module that needs sealing*, and an application has more of those than
-a harness does.
+Rust is measured before its own version of this change, so its `execute` is still
+pure and its seal still airtight — the honest comparison waits until Rust holds
+the transaction too. Finding 7's cost stays asymmetric — Rust pays `Checked` per
+*action*, OCaml pays an `.mli` per *module that needs sealing* — but the
+soft-delete guarantee that made the store the decisive second module is no longer
+airtight on the side that took the change.
 
 ### 8. Both can type "an action group never contains Absent", and Rust's is tidier
 
@@ -460,30 +469,27 @@ a `TestBackend` buffer, so both `test_frontend.ml` and `tests/frontend.rs` drive
 the whole frontend by keystroke and assert against the rendered frame, with no
 pty, no sleeps and no mocks.
 
-### 11. The two frontends could not have the same shape, and the seam is the finding
+### 11. The two frontends have the same shape now, and the row is where the last difference was
 
-nottui is incremental — the state is a set of `Lwd.var`s and the view recomputes
-— and ratatui is immediate-mode. That much is a library difference and not
-interesting. What is interesting is where the database ended up.
+An earlier round had this the other way round: nottui was incremental and its key
+handler ran the store inline under `Lwt_main.run`, so OCaml needed no seam while
+Rust's `async` store forced one. Both of those premises are gone. The OCaml TUI
+is `notty` over a blocking `caqti`, written as the same three functions Rust
+uses — `render` and `on_key state -> intent` are pure, `apply conn state intent`
+is where the database is — and `intent` is the seam. `test_frontend.ml`'s
+`intents` suite asserts what a key *means* separately from what it *does*, exactly
+as `tests/frontend.rs` does; the OCaml tests are no longer the ones that cannot
+separate the two.
 
-OCaml's key handler calls `Wire.dispatch` and the store inline, because its state
-holds the connection and Lwt is ambient; `view.ml` runs the promise to completion
-with `Lwt_main.run` inside a helper and the rest of the file is synchronous.
-Rust cannot: the store is `async`, so an inline key handler would have to be
-`async` too, and an async key handler is not testable without a runtime driving
-it.
-
-So `tui.rs` is three functions instead of one —
-`render(&State, &mut Frame)` and `on_key(&State, KeyCode) -> Intent` are pure,
-`apply(&Db, State, Intent) -> State` is where the database is — and `Intent` is
-the seam. It is more machinery than OCaml needs and it is also the more
-assertable design: `tests/frontend.rs` asserts what a key *means* separately
-from what it *does*, and the OCaml tests cannot separate the two.
-
-The same split shows up in the rows. An OCaml row closes over a `persist`
-function; a Rust row carries a `Persist` tag matched exhaustively in one place,
-because a closure returning a future would have to be boxed. The tag is the
-worse ergonomics and the better check.
+The rows were the last place the two differed, and this change closed it. An
+OCaml row used to close over a `persist` function — the store call its group
+would end in — while a Rust row carries a `Persist` tag matched in one place,
+because a closure returning a future would have to be boxed. With `execute`
+holding the transaction there is no persist to carry: the OCaml `row` is
+`Do { key; disabled; schema }` and the write is the action's own. So the tag is
+now a difference in Rust's design alone, and stays one until Rust takes the same
+change — the measurement is that `grep persist lib/frontend/tui.ml` finds
+nothing.
 
 ### 12. sea-orm has petrol's schema gaps, and none of its migration ones
 
@@ -553,30 +559,35 @@ one is silent, is fixed by one word in `Cargo.toml`, and is asserted in
 `tests/frontend.rs` so that removing the word fails a test rather than reordering
 a form.
 
-### 15. Nominal traits keep `Action` and `Creator` apart for free
+### 15. With `execute` writing, there is no `Creator` for a type to keep apart
 
-A creator produces a child that does not exist yet, so its `create` returns a
-different type from what it was offered against. At `Parent = Child` it is
-structurally identical to an action — and the store `INSERT`s the result of one
-and `UPDATE`s the result of the other, with no field of either saying which. A
-single type covering both would make the store's dispatch unsound.
+The finding used to be that a creator produces a child that does not exist yet,
+so its `create` returns a different type from what it was offered against — and
+because the store `INSERT`s the result of one and `UPDATE`s the result of the
+other with no field saying which, a single type covering both would make the
+store's dispatch unsound. Rust kept `Action` and `Creator` apart with nominal
+traits; OCaml kept `('obj, 'p) t` and `('parent, 'p, 'child) creator` apart by
+discipline and by prefixing every field name.
 
-Rust's traits are nominal, so `Action` and `Creator` are distinct because they
-are written distinctly, and nothing at a use site has to remember it. OCaml's
-records are nominal too, but `('obj, 'p) t` and `('parent, 'p, 'child) creator`
-have to be kept apart by discipline in the interface and by prefixing every
-field name (`creator_key`, `creator_is_available`) because a structure cannot
-define one label twice.
+`execute` holding the transaction removes the premise. Nothing hands a result
+back for a store to place, so there is no store dispatch to be made unsound and
+no reason for a creator to be a separate type. `addIssue` and `createProject` are
+ordinary actions whose `execute` happens to `INSERT`; the OCaml `creator` record
+and the `out` type parameter are both gone, and `('obj, 'p, 'conn) Action.t` is
+the only action type there is — `grep -ri creator lib` finds the word only in
+comments.
 
-Rust pays for it in duplicated default-method bodies: `availability` and `run`
-are the same three lines on both traits. Factoring `decide` and `enforce` out as
-private functions in `action.rs` reduces the duplication to two signatures,
-which is the honest cost.
+The group-store pairing went with it. A soft delete is an update, so a group used
+to be paired with the store call that wrote its result, and the extra registration
+lists existed only so that pairing was written once per frontend rather than once
+per row. There is no store call beside a group now — the lists collapsed to one
+per object (findings above).
 
-What neither language decides is the pairing of a group with a store call. A
-soft delete is an update, so `delete_project` and `update_project` have the same
-type, and the four registration lists exist only so that pairing is written once
-per frontend rather than once per row.
+Rust is measured before its own version of this change, so it still writes two
+nominal traits and still pays the duplicated `availability`/`run` default-method
+bodies. What was "both languages keep two types apart, and Rust's is tidier" is
+now "Rust has two types where OCaml has one" — pending Rust holding the
+transaction too.
 
 ### 16. `Deleted<T>` is one generic type where OCaml writes two records
 

@@ -62,7 +62,8 @@ type t = {
 }
 
 type draft = { project_id : int; title : string; body : string; priority : Priority.t }
-(** What a creator returns and the store turns into a row. No [id] and no stamps: those are the
-    store's to assign, and a type that could carry them would let a caller propose one. *)
+(** What [addIssue]'s [execute] builds and hands to {!Services.create}: an issue minus what the
+    store assigns. No [id] and no stamps, because a type that could carry them would let a caller
+    propose one. *)
 
 let subject (t : t) = Printf.sprintf "issue %d" t.id
