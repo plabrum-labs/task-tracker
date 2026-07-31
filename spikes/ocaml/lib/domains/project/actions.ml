@@ -5,30 +5,36 @@
     because the store put it there. A hook earns its keep where an action is a verb with a
     precondition, and a CRUD-shaped edit is not one of those. Creating something still is.
 
-    A creator is an ordinary action whose [out] is not its [obj]: [addIssue] is offered against a
-    project and returns an {!Issue.draft}. Nothing about the declaration marks it as special, and
-    nothing has to — the group it is registered in is what INSERTs the result.
+    A creator is an ordinary action whose [execute] writes a different table: [addIssue] is offered
+    against a project and inserts an issue, [createProject] against the list of live projects and
+    inserts a project. Nothing about the declaration marks either as special — [execute] holds the
+    transaction, so what it writes and to which table is its own business.
 
     See [../issue/actions.ml] for why each [Spec] is named. *)
 
 open Platform
 open Ppx_yojson_conv_lib.Yojson_conv.Primitives
 
+(** The editable columns, written and reported as one. [updated_at] is the store's to stamp. *)
+let saved (project : Models.t) conn =
+  Db.broken (Services.update project conn)
+  |> Result.map (fun () -> Models.subject project ^ ": saved")
+
 module Edit_title = struct
   module Spec = struct
     include Action.Defaults
 
     type obj = Models.t
-    type out = Models.t
 
     type payload = { title : string  (** What to call the project. *) }
     [@@deriving yojson, jsonschema ~ocaml_doc]
 
     let key = "editTitle"
 
-    let execute (project : obj) p =
+    let execute (project : obj) p conn =
       let title = String.trim p.title in
-      if title = "" then Error (Error.Invalid "title is required") else Ok { project with title }
+      if title = "" then Error (Error.Invalid "title is required")
+      else saved { project with title } conn
   end
 
   include Wire.Make (Spec)
@@ -39,13 +45,12 @@ module Edit_body = struct
     include Action.Defaults
 
     type obj = Models.t
-    type out = Models.t
 
     type payload = { body : string  (** What the project is for. Blank clears it. *) }
     [@@deriving yojson, jsonschema ~ocaml_doc]
 
     let key = "editBody"
-    let execute (project : obj) p = Ok { project with body = p.body }
+    let execute (project : obj) p conn = saved { project with body = p.body } conn
   end
 
   include Wire.Make (Spec)
@@ -58,7 +63,6 @@ module Edit_status = struct
     include Action.Defaults
 
     type obj = Models.t
-    type out = Models.t
 
     type payload = {
       status : Models.Status.t;  (** Whether the project is still being worked on. *)
@@ -77,7 +81,7 @@ module Edit_status = struct
         Some (Printf.sprintf "finish or drop %s first" (issues project.doing))
       else None
 
-    let execute (project : obj) p = Ok { project with status = p.status }
+    let execute (project : obj) p conn = saved { project with status = p.status } conn
   end
 
   include Wire.Make (Spec)
@@ -89,7 +93,6 @@ module Delete = struct
     include Wire.No_payload
 
     type obj = Models.t
-    type out = Models.t
 
     let key = "delete"
 
@@ -98,7 +101,9 @@ module Delete = struct
       | Models.Status.Active -> Some "archive it first"
       | Models.Status.Archived -> None
 
-    let execute project () = Ok project
+    let execute project () conn =
+      Db.broken (Services.delete project conn)
+      |> Result.map (fun () -> Models.subject project ^ ": deleted")
   end
 
   include Wire.Make (Spec)
@@ -110,7 +115,6 @@ module Restore = struct
     include Wire.No_payload
 
     type obj = Models.restorable
-    type out = Models.t Deleted.t
 
     let key = "restore"
 
@@ -121,7 +125,9 @@ module Restore = struct
       if r.slug_taken then Some (Printf.sprintf "project %S exists again" r.deleted.inner.slug)
       else None
 
-    let execute (r : obj) () = Ok r.deleted
+    let execute (r : obj) () conn =
+      Db.broken (Services.restore r.deleted conn)
+      |> Result.map (fun () -> Models.subject r.deleted.inner ^ ": restored")
   end
 
   include Wire.Make (Spec)
@@ -132,7 +138,6 @@ module Add_issue = struct
     include Action.Defaults
 
     type obj = Models.t
-    type out = Issue.draft
 
     type payload = {
       title : string;  (** What to call the issue. *)
@@ -149,17 +154,22 @@ module Add_issue = struct
       | Models.Status.Archived -> Some "project is archived"
       | Models.Status.Active -> None
 
-    let execute (project : obj) p =
+    (* An action on a project writing to the issues table. The store assigns the
+       id, so the message reads the row it wrote rather than the draft it built. *)
+    let execute (project : obj) p conn =
       let title = String.trim p.title in
       if title = "" then Error (Error.Invalid "title is required")
       else
-        Ok
+        let draft =
           {
             Issue.project_id = project.id;
             title;
             body = Option.value p.body ~default:"";
             priority = Option.value p.priority ~default:Issue.Priority.Normal;
           }
+        in
+        Db.broken (Issue.Services.create draft conn)
+        |> Result.map (fun (issue : Issue.t) -> Issue.subject issue ^ ": created")
   end
 
   include Wire.Make (Spec)
@@ -170,7 +180,6 @@ module Create_project = struct
     include Action.Defaults
 
     type obj = Models.t list
-    type out = Models.draft
 
     type payload = {
       slug : string;  (** The short name the project is addressed by. *)
@@ -187,72 +196,40 @@ module Create_project = struct
        refusal comes from [execute]. The partial unique index is still what
        guarantees it; this is only what turns a constraint violation into a
        sentence. *)
-    let execute projects p =
+    let execute projects p conn =
       let slug = String.trim p.slug in
       if slug = "" then Error (Error.Invalid "slug is required")
       else if List.exists (fun (project : Models.t) -> project.slug = slug) projects then
         Error (Error.Conflict (Printf.sprintf "project %S already exists" slug))
       else
-        Ok
+        let draft =
           {
             Models.slug;
             title = Option.value p.title ~default:"";
             body = Option.value p.body ~default:"";
           }
+        in
+        Db.broken (Services.create draft conn)
+        |> Result.map (fun (project : Models.t) -> Models.subject project ^ ": created")
   end
 
   include Wire.Make (Spec)
 end
 
 (** The edits, in the order they are offered. *)
-let group : (Models.t, Models.t, Db.conn) Wire.group =
-  {
-    entries = [ Edit_title.entry; Edit_body.entry; Edit_status.entry ];
-    persist =
-      (fun conn project ->
-        Db.broken (Services.update project conn)
-        |> Result.map (fun () -> Models.subject project ^ ": saved"));
-  }
+let group : Models.t Wire.group = [ Edit_title.entry; Edit_body.entry; Edit_status.entry ]
 
-(** Leaving. Separate from {!group} only because the write that follows is. *)
-let trash : (Models.t, Models.t, Db.conn) Wire.group =
-  {
-    entries = [ Delete.entry ];
-    persist =
-      (fun conn project ->
-        Db.broken (Services.delete project conn)
-        |> Result.map (fun () -> Models.subject project ^ ": deleted"));
-  }
+(** Leaving. Separate from {!group} only so it is offered from the same screen with its own reason
+    to exist stated apart. *)
+let trash : Models.t Wire.group = [ Delete.entry ]
 
-(** What a row in the trash offers, which is coming back and nothing else. *)
-let deleted_group : (Models.restorable, Models.t Deleted.t, Db.conn) Wire.group =
-  {
-    entries = [ Restore.entry ];
-    persist =
-      (fun conn deleted ->
-        Db.broken (Services.restore deleted conn)
-        |> Result.map (fun () -> Models.subject deleted.inner ^ ": restored"));
-  }
+(** What a row in the trash offers, which is coming back and nothing else. Offered against the
+    restorable type, so an edit cannot reach it. *)
+let deleted_group : Models.restorable Wire.group = [ Restore.entry ]
 
-(** What a project can make. The result is a draft rather than an issue: an action produces a value
-    and the store assigns the id, so the type of what [execute] returns is the type of what has not
-    been written yet. *)
-let creators : (Models.t, Issue.draft, Db.conn) Wire.group =
-  {
-    entries = [ Add_issue.entry ];
-    persist =
-      (fun conn draft ->
-        Db.broken (Issue.Services.create draft conn)
-        |> Result.map (fun (issue : Issue.t) -> Issue.subject issue ^ ": created"));
-  }
+(** What a project can make. *)
+let creators : Models.t Wire.group = [ Add_issue.entry ]
 
 (** The one action with no object to address. Its parent is the list of live projects, which is what
     a uniqueness refusal has to read. *)
-let root : (Models.t list, Models.draft, Db.conn) Wire.group =
-  {
-    entries = [ Create_project.entry ];
-    persist =
-      (fun conn draft ->
-        Db.broken (Services.create draft conn)
-        |> Result.map (fun (project : Models.t) -> Models.subject project ^ ": created"));
-  }
+let root : Models.t list Wire.group = [ Create_project.entry ]

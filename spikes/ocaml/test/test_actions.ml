@@ -1,9 +1,13 @@
 (** The domain and the wire.
 
-    The first half is typed payloads and no JSON. The second half is the wire, where JSON is the
-    point. Both are pure — no database, no clock — because every [execute] and both hooks are
-    functions of the object and the payload and nothing else. The store's half is [test_store.ml]
-    and the frontends' is [test_frontend.ml]. *)
+    Availability is a pure function of the object, so what an object offers is asserted against
+    objects built in memory with no database in sight. Running an action is not: [execute] holds the
+    transaction and writes for itself now, so a run goes against a real in-memory SQLite connection
+    — the same fixture [test_store.ml] uses — and a case asserts the message it returned and, where
+    the point is what it wrote, reads the row back. The schema half is pure again: it is what
+    [[@@deriving jsonschema]] put beside the payload type, and needs neither a clock nor a database.
+
+    The store's own half is [test_store.ml] and the frontends' is [test_frontend.ml]. *)
 
 open Tt
 open Tt.Platform
@@ -12,6 +16,8 @@ open Tt.Frontend
 
 let stamp = "2026-01-01T00:00:00Z"
 
+(** Objects built in memory, for the availability hooks — which read only the object. A run needs a
+    row that exists, and reaches for {!fixture} instead. *)
 let issue ?(status = Issue.Status.Todo) ?(priority = Issue.Priority.Normal) ?status_note () :
     Issue.t =
   {
@@ -47,6 +53,35 @@ let restorable ?(slug_taken = false) p : Project.restorable =
 
 let deleted_issue i : Issue.t Deleted.t = { inner = i; deleted_at = stamp }
 
+(* --- a real connection, for the runs ------------------------------------- *)
+
+let ok = function Ok value -> value | Error e -> Alcotest.failf "store: %s" (Db.show_error e)
+
+(** One connection, the schema applied, and one project [tt] (id 1) with one issue (id 1) under it.
+    A run goes against these; an [addIssue] then makes issue 2, a second [createProject] project 2.
+*)
+let fixture () =
+  let conn = ok (Db.connect "sqlite3::memory:") in
+  ok (Db.apply_ddl conn Schema.ddl);
+  let project =
+    ok (Project.Services.create { slug = "tt"; title = "task tracker"; body = "" } conn)
+  in
+  let issue =
+    ok
+      (Issue.Services.create
+         { project_id = project.id; title = "a title"; body = "a body"; priority = Normal }
+         conn)
+  in
+  (conn, project, issue)
+
+let reload_issue conn id =
+  match ok (Issue.Services.find ~id conn) with Some i -> i | None -> Alcotest.fail "issue gone"
+
+let reload_project conn slug =
+  match ok (Project.Services.find ~slug conn) with
+  | Some p -> p
+  | None -> Alcotest.fail "project gone"
+
 (* --- what alcotest compares ---------------------------------------------- *)
 
 let error = Alcotest.testable (fun ppf e -> Format.pp_print_string ppf (Error.to_string e)) ( = )
@@ -60,42 +95,10 @@ let issue_t =
         (Option.value i.status_note ~default:"-"))
     ( = )
 
-let project_t =
-  Alcotest.testable
-    (fun ppf (p : Project.t) ->
-      Format.fprintf ppf "%s %S %s %d/%d/%d" (Project.subject p) p.title
-        (Project.Status.to_string p.status)
-        p.todo p.doing p.done_)
-    ( = )
-
-let issue_draft =
-  Alcotest.testable
-    (fun ppf (d : Issue.draft) ->
-      Format.fprintf ppf "%d %S %S %s" d.project_id d.title d.body
-        (Issue.Priority.to_string d.priority))
-    ( = )
-
-let project_draft =
-  Alcotest.testable
-    (fun ppf (d : Project.draft) -> Format.fprintf ppf "%S %S %S" d.slug d.title d.body)
-    ( = )
-
 (** [None] is "not offered at all", [Some None] runnable, [Some (Some reason)] refused with its
     reason. Three cases, and only two of them are states an action can be in — which is the whole of
     what {!Wire.available} says. *)
 let listed = Alcotest.(option (option string))
-
-let deleted_issue_t =
-  Alcotest.testable
-    (fun ppf (d : Issue.t Deleted.t) ->
-      Format.fprintf ppf "%s @ %s" (Issue.subject d.inner) d.deleted_at)
-    ( = )
-
-let deleted_project_t =
-  Alcotest.testable
-    (fun ppf (d : Project.t Deleted.t) ->
-      Format.fprintf ppf "%s @ %s" (Project.subject d.inner) d.deleted_at)
-    ( = )
 
 (* --- reaching the wire --------------------------------------------------- *)
 
@@ -105,11 +108,11 @@ let offered key group obj =
 
 let keys_of group obj = List.map (fun ((e : _ Wire.entry), _) -> e.key) (Wire.available obj group)
 
-let dispatch obj group key payload =
-  Wire.dispatch obj group ~key ~payload:(Yojson.Safe.from_string payload)
+let dispatch conn obj group key payload =
+  Wire.dispatch obj group ~key ~payload:(Yojson.Safe.from_string payload) conn
 
-let schema key (group : _ Wire.group) =
-  let e = List.find (fun (e : _ Wire.entry) -> e.key = key) group.entries in
+let schema key group =
+  let e = List.find (fun (e : _ Wire.entry) -> e.key = key) group in
   Yojson.Safe.to_string e.schema
 
 let is_conflict = function
@@ -122,6 +125,7 @@ let is_invalid = function
 
 let case name f = Alcotest.test_case name `Quick f
 let check_bool name value = Alcotest.(check bool) name true value
+let message = Alcotest.(result string error)
 
 (* --- the issue: every action is always offered --------------------------- *)
 
@@ -151,58 +155,72 @@ let issue_offers =
           (offered "restore" Issue.Actions.deleted_group (deleted_issue (issue ()))));
   ]
 
-(* --- the issue: what execute refuses -------------------------------------- *)
+(* --- the issue: what execute writes and refuses --------------------------- *)
 
 let issue_writes =
   [
-    case "editTitle trims its input" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok { (issue ()) with title = "new" })
-          (Action.run (issue ()) Issue.Actions.Edit_title.action { title = " new " }));
-    case "editTitle refuses a blank title" (fun () ->
-        check_bool ""
-          (is_invalid (Action.run (issue ()) Issue.Actions.Edit_title.action { title = "   " })));
+    case "editTitle trims its input and reports the write" (fun () ->
+        let conn, _, issue = fixture () in
+        Alcotest.check message "" (Ok "issue 1: saved")
+          (Action.run issue Issue.Actions.Edit_title.action { title = " new " } conn);
+        Alcotest.(check string) "the trimmed title landed" "new" (reload_issue conn issue.id).title);
+    case "editTitle refuses a blank title, and writes nothing" (fun () ->
+        let conn, _, issue = fixture () in
+        check_bool "refused"
+          (is_invalid (Action.run issue Issue.Actions.Edit_title.action { title = "   " } conn));
+        Alcotest.(check string) "the old title stands" "a title" (reload_issue conn issue.id).title);
     case "editBody accepts a blank body, because that is how you clear one" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok { (issue ()) with body = "" })
-          (Action.run (issue ()) Issue.Actions.Edit_body.action { body = "" }));
+        let conn, _, issue = fixture () in
+        Alcotest.check message "" (Ok "issue 1: saved")
+          (Action.run issue Issue.Actions.Edit_body.action { body = "" } conn);
+        Alcotest.(check string) "" "" (reload_issue conn issue.id).body);
     case "editStatus records its optional note" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok { (issue ()) with status = Issue.Status.Doing; status_note = Some "started" })
-          (Action.run (issue ()) Issue.Actions.Edit_status.action
-             { status = Issue.Status.Doing; note = Some "started" }));
+        let conn, _, issue = fixture () in
+        ignore
+          (Action.run issue Issue.Actions.Edit_status.action
+             { status = Issue.Status.Doing; note = Some "started" }
+             conn
+            : (string, Error.t) result);
+        Alcotest.check issue_t ""
+          { issue with status = Issue.Status.Doing; status_note = Some "started" }
+          (reload_issue conn issue.id));
     case "editStatus without a note clears the one describing the old status" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok { (issue ()) with status = Issue.Status.Done })
-          (Action.run (issue ~status_note:"started" ()) Issue.Actions.Edit_status.action
-             { status = Issue.Status.Done; note = None }));
+        let conn, _, issue = fixture () in
+        ignore
+          (Action.run issue Issue.Actions.Edit_status.action
+             { status = Issue.Status.Doing; note = Some "started" }
+             conn
+            : (string, Error.t) result);
+        ignore
+          (Action.run (reload_issue conn issue.id) Issue.Actions.Edit_status.action
+             { status = Issue.Status.Done; note = None }
+             conn
+            : (string, Error.t) result);
+        check_bool "" ((reload_issue conn issue.id).status_note = None));
     case "editPriority sets the priority" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok { (issue ()) with priority = Issue.Priority.High })
-          (Action.run (issue ()) Issue.Actions.Edit_priority.action
-             { priority = Issue.Priority.High }));
-    case "delete leaves the issue alone, because the column it sets is not on it" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok (issue ()))
-          (Action.run (issue ()) Issue.Actions.Delete.action ()));
-    case "restore leaves the trash row alone for the same reason" (fun () ->
-        Alcotest.check
-          Alcotest.(result deleted_issue_t error)
-          ""
-          (Ok (deleted_issue (issue ())))
-          (Action.run (deleted_issue (issue ())) Issue.Actions.Restore.action ()));
+        let conn, _, issue = fixture () in
+        ignore
+          (Action.run issue Issue.Actions.Edit_priority.action
+             { priority = Issue.Priority.High }
+             conn
+            : (string, Error.t) result);
+        check_bool "" ((reload_issue conn issue.id).priority = Issue.Priority.High));
+    case "delete stamps the row and reports it, and the issue leaves the live reads" (fun () ->
+        let conn, _, issue = fixture () in
+        Alcotest.check message "" (Ok "issue 1: deleted")
+          (Action.run issue Issue.Actions.Delete.action () conn);
+        check_bool "gone from the live reads" (ok (Issue.Services.find ~id:issue.id conn) = None));
+    case "restore clears the stamp and brings the row back" (fun () ->
+        let conn, _, issue = fixture () in
+        ok (Issue.Services.delete issue conn);
+        let deleted =
+          match ok (Issue.Services.trashed conn) with
+          | d :: _ -> d
+          | [] -> Alcotest.fail "not in the trash"
+        in
+        Alcotest.check message "" (Ok "issue 1: restored")
+          (Action.run deleted Issue.Actions.Restore.action () conn);
+        check_bool "back in the live reads" (ok (Issue.Services.find ~id:issue.id conn) <> None));
   ]
 
 (* --- the project: the half with preconditions ----------------------------- *)
@@ -245,73 +263,100 @@ let project_offers =
           (offered "restore" Project.Actions.deleted_group (restorable (project ()))));
   ]
 
-(* --- the project: what execute refuses ------------------------------------ *)
+(* --- the project: what execute writes and refuses ------------------------- *)
 
 let project_writes =
   [
     case "run enforces the hooks before executing" (fun () ->
-        check_bool "" (is_conflict (Action.run (project ()) Project.Actions.Delete.action ())));
+        let conn, project, _ = fixture () in
+        check_bool "a delete of an active project is a conflict"
+          (is_conflict (Action.run project Project.Actions.Delete.action () conn));
+        check_bool "and nothing was written" (ok (Project.Services.find ~slug:"tt" conn) <> None));
     case "editStatus refused by the hook does not reach execute" (fun () ->
+        let conn, _, _ = fixture () in
+        (* One issue doing, so archiving is refused by the hook. *)
+        let doing = { (reload_project conn "tt") with doing = 1 } in
         check_bool ""
           (is_conflict
-             (Action.run (project ~doing:1 ()) Project.Actions.Edit_status.action
-                { status = Project.Status.Archived })));
+             (Action.run doing Project.Actions.Edit_status.action
+                { status = Project.Status.Archived }
+                conn));
+        check_bool "the project is still active"
+          ((reload_project conn "tt").status = Project.Status.Active));
     case "editTitle refuses a blank title here too" (fun () ->
+        let conn, project, _ = fixture () in
         check_bool ""
-          (is_invalid (Action.run (project ()) Project.Actions.Edit_title.action { title = " " })));
-    case "restore hands the store the trash row and nothing else" (fun () ->
-        Alcotest.check
-          Alcotest.(result deleted_project_t error)
-          ""
-          (Ok { inner = project (); deleted_at = stamp })
-          (Action.run (restorable (project ())) Project.Actions.Restore.action ()));
+          (is_invalid (Action.run project Project.Actions.Edit_title.action { title = " " } conn)));
+    case "restore brings a deleted project back" (fun () ->
+        let conn, project, _ = fixture () in
+        ok (Project.Services.update { project with status = Project.Status.Archived } conn);
+        ok (Project.Services.delete project conn);
+        let deleted =
+          match ok (Project.Services.trashed conn) with
+          | d :: _ -> d
+          | [] -> Alcotest.fail "not in the trash"
+        in
+        Alcotest.check message "" (Ok "project tt: restored")
+          (Action.run (restorable deleted.inner) Project.Actions.Restore.action () conn);
+        check_bool "and is live again" (ok (Project.Services.find ~slug:"tt" conn) <> None));
     case "create enforces the hooks before creating" (fun () ->
+        let conn, _, _ = fixture () in
+        let archived = { (reload_project conn "tt") with status = Project.Status.Archived } in
         check_bool ""
           (is_conflict
-             (Action.run
-                (project ~status:Project.Status.Archived ())
-                Project.Actions.Add_issue.action
-                { title = "x"; body = None; priority = None })));
+             (Action.run archived Project.Actions.Add_issue.action
+                { title = "x"; body = None; priority = None }
+                conn)));
     case "addIssue defaults the body and the priority" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_draft error)
-          ""
-          (Ok { project_id = 1; title = "ship"; body = ""; priority = Issue.Priority.Normal })
-          (Action.run (project ()) Project.Actions.Add_issue.action
-             { title = " ship "; body = None; priority = None }));
+        let conn, project, _ = fixture () in
+        Alcotest.check message "" (Ok "issue 2: created")
+          (Action.run project Project.Actions.Add_issue.action
+             { title = " ship "; body = None; priority = None }
+             conn);
+        let created = reload_issue conn 2 in
+        check_bool ""
+          (created.title = "ship" && created.body = "" && created.priority = Issue.Priority.Normal));
     case "addIssue carries what it was given" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_draft error)
-          ""
-          (Ok { project_id = 1; title = "ship"; body = "why"; priority = Issue.Priority.High })
-          (Action.run (project ()) Project.Actions.Add_issue.action
-             { title = "ship"; body = Some "why"; priority = Some Issue.Priority.High }));
+        let conn, project, _ = fixture () in
+        ignore
+          (Action.run project Project.Actions.Add_issue.action
+             { title = "ship"; body = Some "why"; priority = Some Issue.Priority.High }
+             conn
+            : (string, Error.t) result);
+        let created = reload_issue conn 2 in
+        check_bool ""
+          (created.title = "ship" && created.body = "why" && created.priority = Issue.Priority.High));
     case "addIssue refuses a blank title" (fun () ->
+        let conn, project, _ = fixture () in
         check_bool ""
           (is_invalid
-             (Action.run (project ()) Project.Actions.Add_issue.action
-                { title = "  "; body = None; priority = None })));
+             (Action.run project Project.Actions.Add_issue.action
+                { title = "  "; body = None; priority = None }
+                conn)));
     case "createProject refuses a slug the loaded list already holds" (fun () ->
+        let conn, _, _ = fixture () in
+        let projects = ok (Project.Services.list conn) in
         check_bool ""
           (is_conflict
-             (Action.run
-                [ project () ]
-                Project.Actions.Create_project.action
-                { slug = "tt"; title = None; body = None })));
+             (Action.run projects Project.Actions.Create_project.action
+                { slug = "tt"; title = None; body = None }
+                conn)));
     case "createProject accepts one it does not" (fun () ->
-        Alcotest.check
-          Alcotest.(result project_draft error)
-          ""
-          (Ok { slug = "other"; title = "another"; body = "" })
-          (Action.run
-             [ project () ]
-             Project.Actions.Create_project.action
-             { slug = "other"; title = Some "another"; body = None }));
+        let conn, _, _ = fixture () in
+        let projects = ok (Project.Services.list conn) in
+        Alcotest.check message "" (Ok "project other: created")
+          (Action.run projects Project.Actions.Create_project.action
+             { slug = "other"; title = Some "another"; body = None }
+             conn);
+        let created = reload_project conn "other" in
+        check_bool "" (created.title = "another" && created.body = ""));
     case "createProject refuses a blank slug" (fun () ->
+        let conn, _, _ = fixture () in
         check_bool ""
           (is_invalid
              (Action.run [] Project.Actions.Create_project.action
-                { slug = " "; title = None; body = None })));
+                { slug = " "; title = None; body = None }
+                conn)));
   ]
 
 (* --- the wire ------------------------------------------------------------- *)
@@ -333,60 +378,65 @@ let wire =
           ""
           [ "editTitle"; "editBody"; "editStatus" ]
           (keys_of Project.Actions.group (project ~doing:1 ())));
-    case "dispatch refuses what the hooks refused" (fun () ->
+    case "dispatch refuses what the hooks refused, before any write" (fun () ->
+        let conn, _, _ = fixture () in
+        let doing = { (reload_project conn "tt") with doing = 1 } in
         check_bool ""
           (is_conflict
-             (dispatch (project ~doing:1 ()) Project.Actions.group "editStatus"
-                {|{"status":"archived"}|})));
+             (dispatch conn doing Project.Actions.group "editStatus" {|{"status":"archived"}|})));
     case "a creator's dispatch refuses what the hooks refused" (fun () ->
+        let conn, _, _ = fixture () in
+        let archived = { (reload_project conn "tt") with status = Project.Status.Archived } in
         check_bool ""
           (is_conflict
-             (dispatch
-                (project ~status:Project.Status.Archived ())
-                Project.Actions.creators "addIssue" {|{"title":"x"}|})));
+             (dispatch conn archived Project.Actions.creators "addIssue" {|{"title":"x"}|})));
     case "an unknown key is invalid" (fun () ->
-        check_bool "" (is_invalid (dispatch (issue ()) Issue.Actions.group "explode" "{}")));
+        let conn, _, issue = fixture () in
+        check_bool "" (is_invalid (dispatch conn issue Issue.Actions.group "explode" "{}")));
     case "a missing required field is invalid" (fun () ->
-        check_bool "" (is_invalid (dispatch (issue ()) Issue.Actions.group "editTitle" "{}")));
+        let conn, _, issue = fixture () in
+        check_bool "" (is_invalid (dispatch conn issue Issue.Actions.group "editTitle" "{}")));
     case "a wrongly typed field is invalid" (fun () ->
+        let conn, _, issue = fixture () in
         check_bool ""
-          (is_invalid (dispatch (issue ()) Issue.Actions.group "editTitle" {|{"title":5}|})));
+          (is_invalid (dispatch conn issue Issue.Actions.group "editTitle" {|{"title":5}|})));
     case "a field the schema does not advertise is invalid" (fun () ->
+        let conn, _, issue = fixture () in
         check_bool ""
           (is_invalid
-             (dispatch (issue ()) Issue.Actions.group "editTitle" {|{"title":"x","bogus":1}|})));
-    case "an empty payload accepts an empty object" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok (issue ()))
-          (dispatch (issue ()) Issue.Actions.trash "delete" "{}"));
+             (dispatch conn issue Issue.Actions.group "editTitle" {|{"title":"x","bogus":1}|})));
+    case "an empty payload accepts an empty object, and the write goes through" (fun () ->
+        let conn, _, issue = fixture () in
+        Alcotest.check message "" (Ok "issue 1: deleted")
+          (dispatch conn issue Issue.Actions.trash "delete" "{}"));
     case "an empty payload refuses arguments it never advertised" (fun () ->
+        let conn, _, issue = fixture () in
         check_bool ""
-          (is_invalid (dispatch (issue ()) Issue.Actions.trash "delete" {|{"why":"because"}|})));
+          (is_invalid (dispatch conn issue Issue.Actions.trash "delete" {|{"why":"because"}|})));
     case "an enum accepts a name it advertises" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok { (issue ()) with status = Issue.Status.Doing })
-          (dispatch (issue ()) Issue.Actions.group "editStatus" {|{"status":"doing"}|}));
+        let conn, _, issue = fixture () in
+        Alcotest.check message "" (Ok "issue 1: saved")
+          (dispatch conn issue Issue.Actions.group "editStatus" {|{"status":"doing"}|});
+        check_bool "" ((reload_issue conn issue.id).status = Issue.Status.Doing));
     case "an enum refuses a name it does not" (fun () ->
+        let conn, _, issue = fixture () in
         check_bool ""
           (is_invalid
-             (dispatch (issue ()) Issue.Actions.group "editStatus" {|{"status":"blocked"}|})));
+             (dispatch conn issue Issue.Actions.group "editStatus" {|{"status":"blocked"}|})));
     case "an enum refuses the constructor name" (fun () ->
+        let conn, _, issue = fixture () in
         check_bool ""
-          (is_invalid (dispatch (issue ()) Issue.Actions.group "editStatus" {|{"status":"Doing"}|})));
+          (is_invalid (dispatch conn issue Issue.Actions.group "editStatus" {|{"status":"Doing"}|})));
     case "an optional enum may be omitted" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_draft error)
-          ""
-          (Ok { project_id = 1; title = "x"; body = ""; priority = Issue.Priority.Normal })
-          (dispatch (project ()) Project.Actions.creators "addIssue" {|{"title":"x"}|}));
+        let conn, project, _ = fixture () in
+        Alcotest.check message "" (Ok "issue 2: created")
+          (dispatch conn project Project.Actions.creators "addIssue" {|{"title":"x"}|});
+        check_bool "" ((reload_issue conn 2).priority = Issue.Priority.Normal));
     case "an optional enum refuses the null its own schema offers" (fun () ->
+        let conn, project, _ = fixture () in
         check_bool ""
           (is_invalid
-             (dispatch (project ()) Project.Actions.creators "addIssue"
+             (dispatch conn project Project.Actions.creators "addIssue"
                 {|{"title":"x","priority":null}|})));
   ]
 
@@ -399,45 +449,57 @@ let wire =
 let shared_keys =
   [
     case "an issue status is not a project status" (fun () ->
+        let conn, _, _ = fixture () in
+        let project = reload_project conn "tt" in
         check_bool ""
           (is_invalid
-             (dispatch (project ()) Project.Actions.group "editStatus" {|{"status":"doing"}|})));
+             (dispatch conn project Project.Actions.group "editStatus" {|{"status":"doing"}|})));
     case "a project status is not an issue status" (fun () ->
+        let conn, _, issue = fixture () in
         check_bool ""
           (is_invalid
-             (dispatch (issue ()) Issue.Actions.group "editStatus" {|{"status":"archived"}|})));
+             (dispatch conn issue Issue.Actions.group "editStatus" {|{"status":"archived"}|})));
     case "the issue payload's note is not advertised by the project's editStatus" (fun () ->
+        let conn, _, _ = fixture () in
+        let project = reload_project conn "tt" in
         check_bool ""
           (is_invalid
-             (dispatch (project ()) Project.Actions.group "editStatus"
+             (dispatch conn project Project.Actions.group "editStatus"
                 {|{"status":"archived","note":"x"}|})));
     (* [editTitle]'s two payloads are the same shape, so nothing but the
        object's type keeps them apart — and the type is enough only because the
        groups are separate values. *)
     case "editTitle's two payloads are interchangeable, and its two groups are not" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Ok { (issue ()) with title = "x" })
-          (dispatch (issue ()) Issue.Actions.group "editTitle" {|{"title":"x"}|});
-        Alcotest.check
-          Alcotest.(result project_t error)
-          ""
-          (Ok { (project ()) with title = "x" })
-          (dispatch (project ()) Project.Actions.group "editTitle" {|{"title":"x"}|}));
+        let conn, project, issue = fixture () in
+        Alcotest.check message "" (Ok "issue 1: saved")
+          (dispatch conn issue Issue.Actions.group "editTitle" {|{"title":"x"}|});
+        Alcotest.check message "" (Ok "project tt: saved")
+          (dispatch conn project Project.Actions.group "editTitle" {|{"title":"x"}|}));
+    (* The wire and the typed path reach the same action, so on a fresh fixture
+       each they return the same message — the write and the reason for it are
+       one thing, seen twice. *)
     case "the wire agrees with the typed path" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_t error)
-          ""
-          (Action.run (issue ()) Issue.Actions.Edit_title.action { title = " new " })
-          (dispatch (issue ()) Issue.Actions.group "editTitle" {|{"title":" new "}|}));
+        let typed =
+          let conn, _, issue = fixture () in
+          Action.run issue Issue.Actions.Edit_title.action { title = " new " } conn
+        in
+        let wired =
+          let conn, _, issue = fixture () in
+          dispatch conn issue Issue.Actions.group "editTitle" {|{"title":" new "}|}
+        in
+        Alcotest.check message "" typed wired);
     case "the creator wire agrees with the typed path" (fun () ->
-        Alcotest.check
-          Alcotest.(result issue_draft error)
-          ""
-          (Action.run (project ()) Project.Actions.Add_issue.action
-             { title = "ship"; body = None; priority = None })
-          (dispatch (project ()) Project.Actions.creators "addIssue" {|{"title":"ship"}|}));
+        let typed =
+          let conn, project, _ = fixture () in
+          Action.run project Project.Actions.Add_issue.action
+            { title = "ship"; body = None; priority = None }
+            conn
+        in
+        let wired =
+          let conn, project, _ = fixture () in
+          dispatch conn project Project.Actions.creators "addIssue" {|{"title":"ship"}|}
+        in
+        Alcotest.check message "" typed wired);
   ]
 
 (* --- the derived schemas -------------------------------------------------- *)
@@ -508,9 +570,10 @@ let ppx_disagreement =
           |> Yojson.Safe.Util.member "note" |> Yojson.Safe.Util.member "type"
           |> Yojson.Safe.to_string));
     case "the decoder does not" (fun () ->
+        let conn, _, issue = fixture () in
         check_bool ""
           (is_invalid
-             (dispatch (issue ()) Issue.Actions.group "editStatus"
+             (dispatch conn issue Issue.Actions.group "editStatus"
                 {|{"status":"doing","note":null}|})));
   ]
 
@@ -611,9 +674,9 @@ let clock =
 let suite =
   [
     ("issue: what is offered", issue_offers);
-    ("issue: what execute refuses", issue_writes);
+    ("issue: what execute writes", issue_writes);
     ("project: what is offered", project_offers);
-    ("project: what execute refuses", project_writes);
+    ("project: what execute writes", project_writes);
     ("the wire", wire);
     ("keys registered against both objects", shared_keys);
     ("the derived schemas", schemas);

@@ -26,7 +26,7 @@ let check_bool name value = Alcotest.(check bool) name true value
 (* --- the form derived from a schema --------------------------------------- *)
 
 let schema key (group : _ Wire.group) =
-  (List.find (fun (e : _ Wire.entry) -> e.key = key) group.entries).schema
+  (List.find (fun (e : _ Wire.entry) -> e.key = key) group).schema
 
 let fields key group = Form.of_schema (schema key group)
 

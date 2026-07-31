@@ -52,6 +52,26 @@ let connect uri : (conn, error) result =
   | Error e -> Error (failed e)
   | Ok conn -> Result.map (fun () -> conn) (exec conn foreign_keys ())
 
+(** One public call is one transaction. [f] is run inside [BEGIN]…[COMMIT]; a refusal — any [Error]
+    at all, including one after rows are written — rolls the whole thing back. The frontends open
+    this at their edge and hand the connection down to an action's [execute], so what an action does
+    to the transaction is undone in full if it, or anything after it, says no.
+
+    A [transact] error from the driver — [start], [commit] or [rollback] failing — is the machine
+    saying no rather than the row, so it reaches a caller as {!Error.Broken}. This is the one place
+    that speaks {!Error.t} rather than {!error}, because the body it wraps is a caller's whole edge
+    computation and that is already in {!Error.t}. *)
+let transaction (conn : conn) (f : unit -> ('a, Error.t) result) : ('a, Error.t) result =
+  let (module C : Caqti_blocking.CONNECTION) = conn in
+  let broken e = Error.Broken (Caqti_error.show e) in
+  match C.start () with
+  | Error e -> Error (broken e)
+  | Ok () -> (
+      match f () with
+      | Ok _ as ok -> ( match C.commit () with Ok () -> ok | Error e -> Error (broken e))
+      | Error _ as refusal -> (
+          match C.rollback () with Ok () -> refusal | Error e -> Error (broken e)))
+
 (** One statement per request is Caqti's rule, so the file is split on its statement terminator. A
     [;] inside a comment would break this, which is why there is not one. *)
 let statements sql =

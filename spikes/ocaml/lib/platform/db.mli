@@ -28,6 +28,14 @@ val connect : string -> (conn, error) result
 (** [connect uri] opens a database and turns foreign keys on. ["sqlite3::memory:"] is one database
     per connection, which is what makes a test fixture a connection. *)
 
+val transaction : conn -> (unit -> ('a, Error.t) result) -> ('a, Error.t) result
+(** [transaction conn f] runs [f] inside one [BEGIN]…[COMMIT], rolling back on any [Error] — the
+    guarantee behind "one public call is one transaction". The frontends open it at their edge and
+    the connection reaches an action's [execute]; a refusal after rows are written undoes them.
+
+    A driver-level transaction failure is a {!Error.Broken}, so the result is {!Error.t} rather than
+    {!error}: the body it wraps is already an edge computation in {!Error.t}. *)
+
 val apply_ddl : conn -> string -> (unit, error) result
 (** [apply_ddl conn sql] runs a DDL text one statement at a time. Safe on a database that already
     has it. The text is the caller's — see [domains/schema.sql]. *)

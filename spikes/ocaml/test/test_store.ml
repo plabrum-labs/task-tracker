@@ -88,17 +88,12 @@ let reading =
 
 let writing =
   [
-    case "update persists what an action returned, and stamps only updated_at" (fun () ->
+    case "update persists an edit, and stamps only updated_at" (fun () ->
         let conn, _, _, first, _, _ = fixture () in
-        let updated =
-          match
-            Action.run first Issue.Actions.Edit_status.action
-              { status = Issue.Status.Doing; note = Some "started" }
-          with
-          | Ok updated -> updated
-          | Error e -> Alcotest.failf "editStatus refused: %s" (Error.to_string e)
-        in
-        ok "update" (Issue.Services.update updated conn);
+        ok "update"
+          (Issue.Services.update
+             { first with status = Issue.Status.Doing; status_note = Some "started" }
+             conn);
         match ok "issue" (Issue.Services.find ~id:first.id conn) with
         | None -> Alcotest.fail "the issue is gone"
         | Some (i : Issue.t) ->
@@ -107,32 +102,55 @@ let writing =
             check_bool "created_at is untouched" (i.created_at = first.created_at));
     case "the counts follow the write" (fun () ->
         let conn, _, _, first, _, _ = fixture () in
-        let updated =
-          Result.get_ok
-            (Action.run first Issue.Actions.Edit_status.action
-               { status = Issue.Status.Doing; note = None })
-        in
-        ok "update" (Issue.Services.update updated conn);
+        ok "update" (Issue.Services.update { first with status = Issue.Status.Doing } conn);
         match ok "project" (Project.Services.find ~slug:"tt" conn) with
         | None -> Alcotest.fail "the project is gone"
         | Some (p : Project.t) -> check_bool "" (p.todo = 2 && p.doing = 1));
     case "clearing an optional column writes NULL rather than an empty string" (fun () ->
         let conn, _, _, first, _, _ = fixture () in
-        let noted =
-          Result.get_ok
-            (Action.run first Issue.Actions.Edit_status.action
-               { status = Issue.Status.Doing; note = Some "started" })
-        in
-        ok "update" (Issue.Services.update noted conn);
-        let cleared =
-          Result.get_ok
-            (Action.run noted Issue.Actions.Edit_status.action
-               { status = Issue.Status.Done; note = None })
-        in
-        ok "update" (Issue.Services.update cleared conn);
+        ok "update"
+          (Issue.Services.update
+             { first with status = Issue.Status.Doing; status_note = Some "started" }
+             conn);
+        ok "update"
+          (Issue.Services.update { first with status = Issue.Status.Done; status_note = None } conn);
         match ok "issue" (Issue.Services.find ~id:first.id conn) with
         | Some (i : Issue.t) -> check_bool "" (i.status_note = None)
         | None -> Alcotest.fail "the issue is gone");
+  ]
+
+(** The guarantee behind "one public call is one transaction": whatever an action's [execute] writes
+    is undone if it, or anything after it, refuses. The frontends open the transaction and this is
+    what makes a refusal after rows are written leave nothing behind. *)
+let transactions =
+  [
+    case "a refusal after a write rolls the write back" (fun () ->
+        let conn, _, _, _, _, _ = fixture () in
+        let before = List.length (ok "list" (Project.Services.list conn)) in
+        let result =
+          Db.transaction conn (fun () ->
+              let _ =
+                ok "insert"
+                  (Project.Services.create { slug = "rolled"; title = ""; body = "" } conn)
+              in
+              Error (Error.Conflict "changed my mind"))
+        in
+        check_bool "the transaction reported the refusal" (Result.is_error result);
+        check_bool "and the row it wrote is gone"
+          (List.length (ok "list" (Project.Services.list conn)) = before));
+    case "a transaction that returns Ok commits its writes" (fun () ->
+        let conn, _, _, _, _, _ = fixture () in
+        let before = List.length (ok "list" (Project.Services.list conn)) in
+        let result =
+          Db.transaction conn (fun () ->
+              let _ =
+                ok "insert" (Project.Services.create { slug = "kept"; title = ""; body = "" } conn)
+              in
+              Ok ())
+        in
+        check_bool "committed" (Result.is_ok result);
+        check_bool "and the row is there"
+          (List.length (ok "list" (Project.Services.list conn)) = before + 1));
   ]
 
 let deleting =
@@ -252,6 +270,7 @@ let suite =
     ("store: creation", creation);
     ("store: reading", reading);
     ("store: writing", writing);
+    ("store: transactions", transactions);
     ("store: deleting", deleting);
     ("store: restoring", restoring);
     ("store: the emitted schema", emitted);

@@ -128,10 +128,11 @@ type 'address route = {
 (** One registered action as this frontend needs it: the key it answers to, the schema its
     subcommand renders, and the write.
 
-    The write is load, dispatch, persist — in that order, so {!Action.run} stays the only path to a
-    write and the hooks are checked against the row as it is now rather than as some earlier [show]
-    reported it. The object type and the result type are both erased here, which is what lets four
-    groups that agree on neither sit in one list. *)
+    The write is load then dispatch, inside one {!Db.transaction} — so {!Action.run} stays the only
+    path to a write, the hooks are checked against the row as it is now rather than as some earlier
+    [show] reported it, and a refusal after rows are written rolls the whole call back. The object
+    type is erased here, which is what lets groups offered against different objects sit in one
+    list. *)
 
 let routes ~load group =
   List.map
@@ -141,10 +142,11 @@ let routes ~load group =
         schema = entry.schema;
         write =
           (fun address ~payload conn ->
-            let* obj = load address conn in
-            Wire.submit conn group obj ~key:entry.key ~payload);
+            Db.transaction conn (fun () ->
+                let* obj = load address conn in
+                Wire.dispatch obj group ~key:entry.key ~payload conn));
       })
-    group.Wire.entries
+    group
 
 let project_routes =
   routes ~load:live_project Project.Actions.group

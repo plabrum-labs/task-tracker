@@ -76,52 +76,53 @@ let enum_jsonschema ~names : Yojson.Safe.t =
 
 (** One action, stated once.
 
-    Everything an action is, in one structure: the object it applies to, what it produces, its
-    payload type, its key, its two hooks and its write. The two JSON values are what
-    [[@@deriving yojson, jsonschema]] puts beside the payload type, so a spec names its payload once
-    and cannot advertise a schema belonging to a different type than the one it decodes. *)
+    Everything an action is, in one structure: the object it applies to, its payload type, its key,
+    its two hooks and its write. [execute] is given the connection and does whatever it likes with
+    it — any rows, any tables — returning the message a frontend reports. The two JSON values are
+    what [[@@deriving yojson, jsonschema]] puts beside the payload type, so a spec names its payload
+    once and cannot advertise a schema belonging to a different type than the one it decodes.
+
+    This is the one place ['conn] is fixed to a real {!Db.conn}: {!Action} threads it opaquely, and
+    a spec's [execute] writes through the store with it. *)
 module type SPEC = sig
   type obj
-  type out
   type payload
 
   val key : string
   val is_available : obj -> bool
   val is_disabled : obj -> string option
-  val execute : obj -> payload -> (out, Error.t) result
+  val execute : obj -> payload -> Db.conn -> (string, Error.t) result
   val payload_of_yojson : Yojson.Safe.t -> payload
   val payload_jsonschema : Yojson.Safe.t
 end
 
-type ('obj, 'out) entry = {
+type 'obj entry = {
   key : string;
   schema : Yojson.Safe.t;  (** the arguments, as the JSON Schema an agent consumes *)
   is_available : 'obj -> bool;
   is_disabled : 'obj -> string option;
-  run : 'obj -> Yojson.Safe.t -> ('out, Error.t) result;
+  run : 'obj -> Yojson.Safe.t -> Db.conn -> (string, Error.t) result;
 }
 (** One action with its payload type erased.
 
     The type is universally quantified in {!Make} and captured by the [run] closure, so it does not
     appear here. That is the erasure, and it is a closure rather than an existential type — there is
-    nothing to open. *)
+    nothing to open. What survives is the message every action returns, the one thing a frontend
+    reports without knowing which action ran. *)
 
 module type ACTION = sig
   type obj
-  type out
   type payload
 
-  val action : (obj, payload, out) Action.t
+  val action : (obj, payload, Db.conn) Action.t
   (** The typed path, for code that names its action statically. *)
 
-  val entry : (obj, out) entry
+  val entry : obj entry
   (** The erased path, for a registration list. *)
 end
 
-module Make (S : SPEC) :
-  ACTION with type obj = S.obj and type out = S.out and type payload = S.payload = struct
+module Make (S : SPEC) : ACTION with type obj = S.obj and type payload = S.payload = struct
   type obj = S.obj
-  type out = S.out
   type payload = S.payload
 
   let action =
@@ -134,48 +135,40 @@ module Make (S : SPEC) :
       schema = S.payload_jsonschema;
       is_available = S.is_available;
       is_disabled = S.is_disabled;
-      run = (fun obj json -> Result.bind (decode S.payload_of_yojson json) (Action.run obj action));
+      run =
+        (fun obj json conn ->
+          Result.bind (decode S.payload_of_yojson json) (fun payload ->
+              Action.run obj action payload conn));
     }
 end
 
 (** {1 Groups} *)
 
-type ('obj, 'out, 'conn) group = {
-  entries : ('obj, 'out) entry list;
-  persist : 'conn -> 'out -> (string, Error.t) result;
-}
-(** The actions one kind of object offers, and how what they return is written.
+type 'obj group = 'obj entry list
+(** The actions one kind of object offers.
 
-    Registration is a value of this type. Carrying the write is what lets a creator be an ordinary
-    action: an INSERT and an UPDATE are the same shape, and it is the group rather than the type of
-    the result that says which. The pairing is stated once, where the actions are registered, rather
-    than once per frontend per row.
-
-    The connection is a type parameter because this file knows about JSON and nothing else; {!Store}
-    is downstream of it. *)
+    Registration is a list of erased entries. There is no store call beside it any more: each
+    [execute] holds the transaction and writes for itself, so an INSERT, an UPDATE and a
+    [deleted_at] stamp are told apart by what their bodies do rather than by which group they sit
+    in. The split that remains is the object a group is offered against — a live row, a deleted one,
+    or the list a creator is checked against. *)
 
 (** What the object offers, in registration order.
 
     An action that does not apply is dropped and a refused one is kept with its reason, so a caller
     is told both what it can do and what it could do but for a reason. [None] is runnable. *)
-let available (obj : 'obj) (group : ('obj, 'out, 'conn) group) :
-    (('obj, 'out) entry * string option) list =
+let available (obj : 'obj) (group : 'obj group) : ('obj entry * string option) list =
   List.filter_map
     (fun entry -> if entry.is_available obj then Some (entry, entry.is_disabled obj) else None)
-    group.entries
+    group
 
-let holds key (group : ('obj, 'out, 'conn) group) =
-  List.exists (fun entry -> entry.key = key) group.entries
+let holds key (group : 'obj group) = List.exists (fun entry -> entry.key = key) group
 
-(** The one entry point for a caller holding a key and a blob. The hooks are not checked here —
-    {!Action.run}, which {!Make} wired in, checks them against the live object, so what a frontend
-    rendered stays a snapshot. *)
-let dispatch (obj : 'obj) (group : ('obj, 'out, 'conn) group) ~key ~payload =
-  match List.find_opt (fun entry -> entry.key = key) group.entries with
+(** The one entry point for a caller holding a key and a blob. Decode, check the hooks against the
+    live object, then write — all of it {!Action.run}'s doing, so what a frontend rendered stays a
+    snapshot and the write is checked against the row as it is now. The connection is the frontend's
+    open transaction, so a refusal rolls back anything already written. *)
+let dispatch (obj : 'obj) (group : 'obj group) ~key ~payload conn =
+  match List.find_opt (fun entry -> entry.key = key) group with
   | None -> Error (Error.Invalid (Printf.sprintf "no action %S" key))
-  | Some entry -> entry.run obj payload
-
-(** Dispatch, then write. Both frontends end here, so neither can reach an action the other cannot
-    and neither states which store call follows. *)
-let submit conn (group : ('obj, 'out, 'conn) group) obj ~key ~payload =
-  Result.bind (dispatch obj group ~key ~payload) (group.persist conn)
+  | Some entry -> entry.run obj payload conn

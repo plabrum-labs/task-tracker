@@ -32,14 +32,18 @@ let program =
   print_offers "no projects yet" (actions projects Project.Actions.root);
 
   let* _ =
-    Wire.submit conn Project.Actions.root projects ~key:"createProject"
-      ~payload:(Yojson.Safe.from_string {|{"slug":"tt","title":"task tracker"}|})
+    Db.transaction conn (fun () ->
+        Wire.dispatch projects Project.Actions.root ~key:"createProject"
+          ~payload:(Yojson.Safe.from_string {|{"slug":"tt","title":"task tracker"}|})
+          conn)
   in
   let* project = Db.broken (Project.Services.find ~slug:"tt" conn) in
   let project = Option.get project in
   let* _ =
-    Wire.submit conn Project.Actions.creators project ~key:"addIssue"
-      ~payload:(Yojson.Safe.from_string {|{"title":"ship the mvp","priority":"high"}|})
+    Db.transaction conn (fun () ->
+        Wire.dispatch project Project.Actions.creators ~key:"addIssue"
+          ~payload:(Yojson.Safe.from_string {|{"title":"ship the mvp","priority":"high"}|})
+          conn)
   in
 
   let* project = Db.broken (Project.Services.find ~slug:"tt" conn) in

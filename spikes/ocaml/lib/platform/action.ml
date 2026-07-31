@@ -1,8 +1,8 @@
-type ('obj, 'p, 'out) t = {
+type ('obj, 'p, 'conn) t = {
   key : string;
   is_available : 'obj -> bool;
   is_disabled : 'obj -> string option;
-  execute : 'obj -> 'p -> ('out, Error.t) result;
+  execute : 'obj -> 'p -> 'conn -> (string, Error.t) result;
 }
 
 module Defaults = struct
@@ -15,10 +15,10 @@ let key action = action.key
 let is_available action obj = action.is_available obj
 let is_disabled action obj = action.is_disabled obj
 
-let run obj action payload =
+let run obj action payload conn =
   if not (action.is_available obj) then
     Error (Error.Conflict (Printf.sprintf "%s does not apply" action.key))
   else
     match action.is_disabled obj with
     | Some reason -> Error (Error.Conflict reason)
-    | None -> action.execute obj payload
+    | None -> action.execute obj payload conn

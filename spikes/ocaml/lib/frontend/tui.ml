@@ -158,14 +158,16 @@ let load conn screen : (string * row list, Error.t) result =
 
 (* --- the write ----------------------------------------------------------- *)
 
-(** Load, dispatch, persist. The groups a screen offers are listed here and the store call each one
-    ends in is not: that is the group's own, stated where the actions are registered. What is left
-    is which object a screen's actions are about, which is the one thing a registration cannot know.
-*)
+(** Load, then dispatch, inside one {!Db.transaction}. The store call each action ends in is the
+    action's own, done by its [execute]; what is left here is which object a screen's actions are
+    about, which is the one thing a registration cannot know. A refusal rolls the call back. *)
 let write conn screen ~key ~payload : (string, Error.t) result =
   let attempt group load () =
     if not (Wire.holds key group) then None
-    else Some (Result.bind (load ()) (fun obj -> Wire.submit conn group obj ~key ~payload))
+    else
+      Some
+        (Db.transaction conn (fun () ->
+             Result.bind (load ()) (fun obj -> Wire.dispatch obj group ~key ~payload conn)))
   in
   let attempts =
     match screen with
