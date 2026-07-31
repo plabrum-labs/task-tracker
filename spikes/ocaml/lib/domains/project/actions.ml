@@ -216,20 +216,17 @@ module Create_project = struct
   include Wire.Make (Spec)
 end
 
-(** The edits, in the order they are offered. *)
-let group : Models.t Wire.group = [ Edit_title.entry; Edit_body.entry; Edit_status.entry ]
-
-(** Leaving. Separate from {!group} only so it is offered from the same screen with its own reason
-    to exist stated apart. *)
-let trash : Models.t Wire.group = [ Delete.entry ]
+(** Everything a live project offers, in the order it is offered: the edits, then leaving, then the
+    one thing it makes. [addIssue]'s [execute] writes a different table, and nothing about its place
+    in this list says so. *)
+let group : Models.t Wire.group =
+  [ Edit_title.entry; Edit_body.entry; Edit_status.entry; Delete.entry; Add_issue.entry ]
 
 (** What a row in the trash offers, which is coming back and nothing else. Offered against the
     restorable type, so an edit cannot reach it. *)
 let deleted_group : Models.restorable Wire.group = [ Restore.entry ]
 
-(** What a project can make. *)
-let creators : Models.t Wire.group = [ Add_issue.entry ]
-
 (** The one action with no object to address. Its parent is the list of live projects, which is what
-    a uniqueness refusal has to read. *)
+    a uniqueness refusal has to read — the one split that is about what availability is checked
+    against rather than about what gets written. *)
 let root : Models.t list Wire.group = [ Create_project.entry ]

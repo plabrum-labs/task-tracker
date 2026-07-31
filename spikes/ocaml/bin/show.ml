@@ -41,7 +41,7 @@ let program =
   let project = Option.get project in
   let* _ =
     Db.transaction conn (fun () ->
-        Wire.dispatch project Project.Actions.creators ~key:"addIssue"
+        Wire.dispatch project Project.Actions.group ~key:"addIssue"
           ~payload:(Yojson.Safe.from_string {|{"title":"ship the mvp","priority":"high"}|})
           conn)
   in
@@ -49,15 +49,8 @@ let program =
   let* project = Db.broken (Project.Services.find ~slug:"tt" conn) in
   let project = Option.get project in
   let* issues = Db.broken (Issue.Services.list ~project_slug:"tt" conn) in
-  print_offers "the project, with one issue to do"
-    (actions project Project.Actions.group
-    @ actions project Project.Actions.trash
-    @ actions project Project.Actions.creators);
-  List.iter
-    (fun issue ->
-      print_offers "the issue"
-        (actions issue Issue.Actions.group @ actions issue Issue.Actions.trash))
-    issues;
+  print_offers "the project, with one issue to do" (actions project Project.Actions.group);
+  List.iter (fun issue -> print_offers "the issue" (actions issue Issue.Actions.group)) issues;
   Ok ()
 
 let () = match program with Ok () -> () | Error e -> print_endline (Error.to_string e)

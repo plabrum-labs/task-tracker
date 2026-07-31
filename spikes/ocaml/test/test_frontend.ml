@@ -86,7 +86,7 @@ let forms =
     case "an action with no arguments yields an empty form" (fun () ->
         Alcotest.(check (result (list field) string))
           "" (Ok [])
-          (fields "delete" Issue.Actions.trash));
+          (fields "delete" Issue.Actions.group));
     case "a type with no form field fails the whole form" (fun () ->
         Alcotest.(check (result (list field) string))
           "" (Error {|n: no form field for type "integer"|})
@@ -113,7 +113,7 @@ let forms =
                };
                title;
              ])
-          (fields "addIssue" Project.Actions.creators));
+          (fields "addIssue" Project.Actions.group));
     (* The schema says [note] may be null and the decoder refuses null, so the
        form has to omit the field instead. Both halves of that are checked in
        [test_actions.ml]; this is the encoding that survives them. *)

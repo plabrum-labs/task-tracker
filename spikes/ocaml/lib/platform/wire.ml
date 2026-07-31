@@ -162,8 +162,6 @@ let available (obj : 'obj) (group : 'obj group) : ('obj entry * string option) l
     (fun entry -> if entry.is_available obj then Some (entry, entry.is_disabled obj) else None)
     group
 
-let holds key (group : 'obj group) = List.exists (fun entry -> entry.key = key) group
-
 (** The one entry point for a caller holding a key and a blob. Decode, check the hooks against the
     live object, then write — all of it {!Action.run}'s doing, so what a frontend rendered stays a
     snapshot and the write is checked against the row as it is now. The connection is the frontend's

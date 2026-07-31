@@ -1,4 +1,4 @@
-(** Everything an issue can be asked, in three registrations.
+(** Everything an issue can be asked, in two registrations.
 
     One action is one {!Wire.Make}: its key, its two hooks, its payload type and — from that type —
     both the decoder and the advertised schema. Its [execute] is given the open transaction and
@@ -11,9 +11,10 @@
     path would compile and be unusable. Naming it costs two lines per action and is the whole of
     what the functor form did not remove.
 
-    The split into three is by the object a group is offered against, not by what its actions write:
-    {!group} and {!trash} both act on a live issue, {!deleted_group} on one in the trash — which is
-    what keeps a deleted row out of reach of an edit.
+    There is one group per object. {!group} is everything a live issue offers — the four edits and
+    the delete, which is an update like any other now that [execute] does its own write. The only
+    split left is by the object itself: {!deleted_group} is offered against a row in the trash, so a
+    deleted issue cannot be edited because an edit was never registered against its type.
 
     None of the four edits refuses anything. Many issues may be [doing] at once, there is no WIP
     rule, and nothing else about an issue constrains what may be done to it — so both hooks are the
@@ -148,13 +149,9 @@ module Restore = struct
   include Wire.Make (Spec)
 end
 
-(** The edits, in the order they are offered. *)
+(** Everything a live issue offers, in the order it is offered. *)
 let group : Models.t Wire.group =
-  [ Edit_title.entry; Edit_body.entry; Edit_status.entry; Edit_priority.entry ]
-
-(** Leaving. Separate from {!group} only so it is offered from the same screen but with its own
-    reason to exist stated apart. *)
-let trash : Models.t Wire.group = [ Delete.entry ]
+  [ Edit_title.entry; Edit_body.entry; Edit_status.entry; Edit_priority.entry; Delete.entry ]
 
 (** What a row in the trash offers, which is coming back and nothing else. Offered against the
     deleted type, so an edit cannot reach it. *)

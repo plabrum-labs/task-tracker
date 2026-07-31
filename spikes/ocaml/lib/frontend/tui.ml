@@ -1,7 +1,7 @@
 (** The erased path with a person on the end of it.
 
     Same three calls as {!Command}: {!Wire.available} for the menu, {!Form.of_schema} for the
-    arguments, {!Wire.submit} for the write. Nothing here names an action key — a row appears in a
+    arguments, {!Wire.dispatch} for the write. Nothing here names an action key — a row appears in a
     menu because the action is registered, and its form has the fields its payload type derived.
     Adding a fifth issue action changes no line of this file.
 
@@ -137,8 +137,6 @@ let load conn screen : (string * row list, Error.t) result =
       Ok
         ( Printf.sprintf "%s: %s" (Project.subject project) project.title,
           do_rows project Project.Actions.group
-          @ do_rows project Project.Actions.trash
-          @ do_rows project Project.Actions.creators
           @ List.map
               (fun (i : Issue.t) ->
                 Go
@@ -154,40 +152,23 @@ let load conn screen : (string * row list, Error.t) result =
       let* issue = live_issue conn id in
       Ok
         ( Printf.sprintf "%s: %s" (Issue.subject issue) issue.title,
-          do_rows issue Issue.Actions.group @ do_rows issue Issue.Actions.trash )
+          do_rows issue Issue.Actions.group )
 
 (* --- the write ----------------------------------------------------------- *)
 
 (** Load, then dispatch, inside one {!Db.transaction}. The store call each action ends in is the
-    action's own, done by its [execute]; what is left here is which object a screen's actions are
-    about, which is the one thing a registration cannot know. A refusal rolls the call back. *)
+    action's own, done by its [execute]; each screen is about one object, and that object is the
+    whole of what determines its group — so there is no group-by-group pairing left to write here. A
+    refusal rolls the call back. *)
 let write conn screen ~key ~payload : (string, Error.t) result =
-  let attempt group load () =
-    if not (Wire.holds key group) then None
-    else
-      Some
-        (Db.transaction conn (fun () ->
-             Result.bind (load ()) (fun obj -> Wire.dispatch obj group ~key ~payload conn)))
+  let run group load =
+    Db.transaction conn (fun () ->
+        Result.bind (load ()) (fun obj -> Wire.dispatch obj group ~key ~payload conn))
   in
-  let attempts =
-    match screen with
-    | Projects ->
-        let projects () = Db.broken (Project.Services.list conn) in
-        [ attempt Project.Actions.root projects ]
-    | Issues slug ->
-        let project () = live_project conn slug in
-        [
-          attempt Project.Actions.group project;
-          attempt Project.Actions.trash project;
-          attempt Project.Actions.creators project;
-        ]
-    | Detail { id; _ } ->
-        let issue () = live_issue conn id in
-        [ attempt Issue.Actions.group issue; attempt Issue.Actions.trash issue ]
-  in
-  match List.find_map (fun attempt -> attempt ()) attempts with
-  | Some outcome -> outcome
-  | None -> Error (Error.Invalid (Printf.sprintf "no action %S" key))
+  match screen with
+  | Projects -> run Project.Actions.root (fun () -> Db.broken (Project.Services.list conn))
+  | Issues slug -> run Project.Actions.group (fun () -> live_project conn slug)
+  | Detail { id; _ } -> run Issue.Actions.group (fun () -> live_issue conn id)
 
 (* --- keys ---------------------------------------------------------------- *)
 

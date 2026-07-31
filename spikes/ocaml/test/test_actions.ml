@@ -149,7 +149,7 @@ let issue_offers =
           (offered "editPriority" Issue.Actions.group (issue ~priority:Issue.Priority.High ())));
     case "delete is offered on any issue" (fun () ->
         Alcotest.check listed "" (Some None)
-          (offered "delete" Issue.Actions.trash (issue ~status:Issue.Status.Doing ())));
+          (offered "delete" Issue.Actions.group (issue ~status:Issue.Status.Doing ())));
     case "restore is offered on any deleted issue" (fun () ->
         Alcotest.check listed "" (Some None)
           (offered "restore" Issue.Actions.deleted_group (deleted_issue (issue ()))));
@@ -244,16 +244,15 @@ let project_offers =
           (offered "editBody" Project.Actions.group (project ~doing:3 ())));
     case "delete is refused while the project is active" (fun () ->
         Alcotest.check listed "" (Some (Some "archive it first"))
-          (offered "delete" Project.Actions.trash (project ())));
+          (offered "delete" Project.Actions.group (project ())));
     case "delete is runnable once it is archived" (fun () ->
         Alcotest.check listed "" (Some None)
-          (offered "delete" Project.Actions.trash (project ~status:Project.Status.Archived ())));
+          (offered "delete" Project.Actions.group (project ~status:Project.Status.Archived ())));
     case "addIssue is refused on an archived project" (fun () ->
         Alcotest.check listed "" (Some (Some "project is archived"))
-          (offered "addIssue" Project.Actions.creators (project ~status:Project.Status.Archived ())));
+          (offered "addIssue" Project.Actions.group (project ~status:Project.Status.Archived ())));
     case "addIssue is runnable on an active one" (fun () ->
-        Alcotest.check listed "" (Some None)
-          (offered "addIssue" Project.Actions.creators (project ())));
+        Alcotest.check listed "" (Some None) (offered "addIssue" Project.Actions.group (project ())));
     case "restore is refused once the slug has been taken again" (fun () ->
         Alcotest.check listed "" (Some (Some {|project "tt" exists again|}))
           (offered "restore" Project.Actions.deleted_group
@@ -366,17 +365,17 @@ let wire =
     case "the issue group is offered in registration order" (fun () ->
         Alcotest.(check (list string))
           ""
-          [ "editTitle"; "editBody"; "editStatus"; "editPriority" ]
+          [ "editTitle"; "editBody"; "editStatus"; "editPriority"; "delete" ]
           (keys_of Issue.Actions.group (issue ())));
     case "the project group is offered in registration order" (fun () ->
         Alcotest.(check (list string))
           ""
-          [ "editTitle"; "editBody"; "editStatus" ]
+          [ "editTitle"; "editBody"; "editStatus"; "delete"; "addIssue" ]
           (keys_of Project.Actions.group (project ())));
     case "a refused action is still offered" (fun () ->
         Alcotest.(check (list string))
           ""
-          [ "editTitle"; "editBody"; "editStatus" ]
+          [ "editTitle"; "editBody"; "editStatus"; "delete"; "addIssue" ]
           (keys_of Project.Actions.group (project ~doing:1 ())));
     case "dispatch refuses what the hooks refused, before any write" (fun () ->
         let conn, _, _ = fixture () in
@@ -388,8 +387,7 @@ let wire =
         let conn, _, _ = fixture () in
         let archived = { (reload_project conn "tt") with status = Project.Status.Archived } in
         check_bool ""
-          (is_conflict
-             (dispatch conn archived Project.Actions.creators "addIssue" {|{"title":"x"}|})));
+          (is_conflict (dispatch conn archived Project.Actions.group "addIssue" {|{"title":"x"}|})));
     case "an unknown key is invalid" (fun () ->
         let conn, _, issue = fixture () in
         check_bool "" (is_invalid (dispatch conn issue Issue.Actions.group "explode" "{}")));
@@ -408,11 +406,11 @@ let wire =
     case "an empty payload accepts an empty object, and the write goes through" (fun () ->
         let conn, _, issue = fixture () in
         Alcotest.check message "" (Ok "issue 1: deleted")
-          (dispatch conn issue Issue.Actions.trash "delete" "{}"));
+          (dispatch conn issue Issue.Actions.group "delete" "{}"));
     case "an empty payload refuses arguments it never advertised" (fun () ->
         let conn, _, issue = fixture () in
         check_bool ""
-          (is_invalid (dispatch conn issue Issue.Actions.trash "delete" {|{"why":"because"}|})));
+          (is_invalid (dispatch conn issue Issue.Actions.group "delete" {|{"why":"because"}|})));
     case "an enum accepts a name it advertises" (fun () ->
         let conn, _, issue = fixture () in
         Alcotest.check message "" (Ok "issue 1: saved")
@@ -430,13 +428,13 @@ let wire =
     case "an optional enum may be omitted" (fun () ->
         let conn, project, _ = fixture () in
         Alcotest.check message "" (Ok "issue 2: created")
-          (dispatch conn project Project.Actions.creators "addIssue" {|{"title":"x"}|});
+          (dispatch conn project Project.Actions.group "addIssue" {|{"title":"x"}|});
         check_bool "" ((reload_issue conn 2).priority = Issue.Priority.Normal));
     case "an optional enum refuses the null its own schema offers" (fun () ->
         let conn, project, _ = fixture () in
         check_bool ""
           (is_invalid
-             (dispatch conn project Project.Actions.creators "addIssue"
+             (dispatch conn project Project.Actions.group "addIssue"
                 {|{"title":"x","priority":null}|})));
   ]
 
@@ -497,7 +495,7 @@ let shared_keys =
         in
         let wired =
           let conn, project, _ = fixture () in
-          dispatch conn project Project.Actions.creators "addIssue" {|{"title":"ship"}|}
+          dispatch conn project Project.Actions.group "addIssue" {|{"title":"ship"}|}
         in
         Alcotest.check message "" typed wired);
   ]
@@ -537,7 +535,7 @@ let schemas =
     case "an action with no arguments advertises an object with no properties" (fun () ->
         Alcotest.(check string)
           "" {|{"type":"object","properties":{},"required":[],"additionalProperties":false}|}
-          (schema "delete" Issue.Actions.trash));
+          (schema "delete" Issue.Actions.group));
     (* An optional field of a primitive type widens to ["string","null"]; an
        optional field of any other type is wrapped in anyOf instead. One
        deriver, two encodings of the same idea. *)
@@ -546,7 +544,7 @@ let schemas =
         Alcotest.(check string)
           ""
           {|{"type":"object","properties":{"priority":{"description":"How far up the list it sorts. Normal unless said otherwise.","anyOf":[{"type":"string","enum":["normal","high"]},{"type":"null"}]},"body":{"description":"What it is about.","type":["string","null"]},"title":{"description":"What to call the issue.","type":"string"}},"required":["title"],"additionalProperties":false}|}
-          (schema "addIssue" Project.Actions.creators));
+          (schema "addIssue" Project.Actions.group));
     case "createProject advertises one required field and two optional ones" (fun () ->
         Alcotest.(check string)
           ""
@@ -610,7 +608,7 @@ let descriptions =
     case "and an optional one wrapped in anyOf" (fun () ->
         Alcotest.(check (option string))
           "" (Some "How far up the list it sorts. Normal unless said otherwise.")
-          (described "addIssue" Project.Actions.creators "priority"));
+          (described "addIssue" Project.Actions.group "priority"));
     case "a field whose type has a schema of its own does not" (fun () ->
         Alcotest.(check (option string))
           "" None

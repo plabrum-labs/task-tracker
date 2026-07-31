@@ -15,4 +15,4 @@ module Services = Services
 (** The issues table, and the only module that names it. *)
 
 module Actions = Actions
-(** Everything an issue can be asked, in three registrations. *)
+(** Everything an issue can be asked, in two registrations. *)

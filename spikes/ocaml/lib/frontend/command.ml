@@ -1,19 +1,20 @@
 (** The erased path with a shell or an agent on the end of it.
 
     Same three calls as {!Tui}: {!Wire.available} for what is on offer, {!Form.of_schema} for the
-    arguments, {!Wire.submit} for the write. Nothing here names an action key — an action gets a
+    arguments, {!Wire.dispatch} for the write. Nothing here names an action key — an action gets a
     subcommand because it is registered, and that subcommand's options are the fields its payload
     type derived. Adding a fifth issue action changes no line of this file.
 
     Two ways in, over the same routes. [action KEY JSON] is the erased path itself: one command
     carrying any action's payload as a blob, which is what an agent holding the output of [show]
     already has. The per-action subcommands are the same dispatch with the blob spelled out as
-    options, for a person at a prompt. Both end at {!Wire.submit}, so neither can reach an action
+    options, for a person at a prompt. Both end at {!Wire.dispatch}, so neither can reach an action
     the other cannot.
 
-    What this file still states is how an address becomes an object. A group knows what writes its
-    result; it does not know that a project is found by slug and a trash row by slug among the
-    deleted. That pairing is the four lines of {!project_routes} and the three of {!issue_routes}.
+    What this file still states is how an address becomes an object. An action writes for itself; it
+    does not know that a project is found by slug and a trash row by slug among the deleted. That
+    pairing is the two lines each of {!project_routes} and {!issue_routes} — a live object loaded
+    one way, a deleted one the other.
 
     A module of the library rather than the executable, so a test can evaluate a command against an
     [~argv] with no terminal involved. What is built here is a {!Cmdliner.Cmd.t} yielding either
@@ -150,13 +151,10 @@ let routes ~load group =
 
 let project_routes =
   routes ~load:live_project Project.Actions.group
-  @ routes ~load:live_project Project.Actions.trash
-  @ routes ~load:live_project Project.Actions.creators
   @ routes ~load:restorable_project Project.Actions.deleted_group
 
 let issue_routes =
   routes ~load:live_issue Issue.Actions.group
-  @ routes ~load:live_issue Issue.Actions.trash
   @ routes ~load:trashed_issue Issue.Actions.deleted_group
 
 (** The root creator has no object to address, so its parent is the list of live projects — which is
@@ -197,18 +195,14 @@ let issue_ls ~project_slug conn =
 
 let project_show slug conn =
   let* project = live_project slug conn in
-  let actions =
-    offers project Project.Actions.group
-    @ offers project Project.Actions.trash
-    @ offers project Project.Actions.creators
-  in
+  let actions = offers project Project.Actions.group in
   Ok
     (Yojson.Safe.pretty_to_string
        (`Assoc [ ("project", project_json project); ("actions", `List actions) ]))
 
 let issue_show id conn =
   let* issue = live_issue id conn in
-  let actions = offers issue Issue.Actions.group @ offers issue Issue.Actions.trash in
+  let actions = offers issue Issue.Actions.group in
   Ok
     (Yojson.Safe.pretty_to_string
        (`Assoc [ ("issue", issue_json issue); ("actions", `List actions) ]))
