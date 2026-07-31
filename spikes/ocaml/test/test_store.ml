@@ -9,10 +9,13 @@
     nothing else changed in between. *)
 
 open Tt
+open Tt.Platform
+open Tt.Domains
+open Tt.Frontend
 
 let ok what = function
   | Ok value -> value
-  | Error e -> Alcotest.failf "%s: %s" what (Store.show_error e)
+  | Error e -> Alcotest.failf "%s: %s" what (Db.show_error e)
 
 let titles rows = List.map (fun (i : Issue.t) -> i.title) rows
 let slugs rows = List.map (fun (p : Project.t) -> p.slug) rows
@@ -20,17 +23,17 @@ let slugs rows = List.map (fun (p : Project.t) -> p.slug) rows
 (** One connection, the schema applied, and the same three issues under [tt] every case starts from:
     [first] and [third] normal, [second] high. *)
 let fixture () =
-  let conn = ok "connect" (Store.connect "sqlite3::memory:") in
-  ok "initialise" (Store.initialise conn);
+  let conn = ok "connect" (Db.connect "sqlite3::memory:") in
+  ok "initialise" (Db.apply_ddl conn Schema.ddl);
   let tt =
-    ok "create tt" (Store.create_project { slug = "tt"; title = "tracker"; body = "" } conn)
+    ok "create tt" (Project.Services.create { slug = "tt"; title = "tracker"; body = "" } conn)
   in
   let other =
-    ok "create other" (Store.create_project { slug = "other"; title = ""; body = "" } conn)
+    ok "create other" (Project.Services.create { slug = "other"; title = ""; body = "" } conn)
   in
   let issue title priority =
     ok ("create " ^ title)
-      (Store.create_issue { project_id = tt.id; title; body = ""; priority } conn)
+      (Issue.Services.create { project_id = tt.id; title; body = ""; priority } conn)
   in
   let first = issue "first" Issue.Priority.Normal in
   let second = issue "second" Issue.Priority.High in
@@ -63,21 +66,21 @@ let reading =
         let conn, _, _, _, _, _ = fixture () in
         Alcotest.(check (list string))
           "" [ "second"; "first"; "third" ]
-          (titles (ok "issues" (Store.issues ~project_slug:"tt" conn))));
+          (titles (ok "issues" (Issue.Services.list ~project_slug:"tt" conn))));
     case "an issue round-trips through create and read" (fun () ->
         let conn, _, _, first, _, _ = fixture () in
-        check_bool "" (ok "issue" (Store.issue ~id:first.id conn) = Some first));
+        check_bool "" (ok "issue" (Issue.Services.find ~id:first.id conn) = Some first));
     case "reading an absent id is None" (fun () ->
         let conn, _, _, _, _, _ = fixture () in
-        check_bool "" (ok "issue" (Store.issue ~id:9999 conn) = None));
+        check_bool "" (ok "issue" (Issue.Services.find ~id:9999 conn) = None));
     case "issues are per project" (fun () ->
         let conn, _, _, _, _, _ = fixture () in
         Alcotest.(check (list string))
           "" []
-          (titles (ok "issues" (Store.issues ~project_slug:"other" conn))));
+          (titles (ok "issues" (Issue.Services.list ~project_slug:"other" conn))));
     case "projects come back in creation order, carrying the counts their refusals read" (fun () ->
         let conn, _, _, _, _, _ = fixture () in
-        let projects = ok "projects" (Store.projects conn) in
+        let projects = ok "projects" (Project.Services.list conn) in
         Alcotest.(check (list string)) "" [ "tt"; "other" ] (slugs projects);
         check_bool ""
           (match projects with p :: _ -> p.todo = 3 && p.doing = 0 && p.done_ = 0 | [] -> false));
@@ -89,14 +92,14 @@ let writing =
         let conn, _, _, first, _, _ = fixture () in
         let updated =
           match
-            Action.run first Issue_actions.Edit_status.action
+            Action.run first Issue.Actions.Edit_status.action
               { status = Issue.Status.Doing; note = Some "started" }
           with
           | Ok updated -> updated
           | Error e -> Alcotest.failf "editStatus refused: %s" (Error.to_string e)
         in
-        ok "update" (Store.update_issue updated conn);
-        match ok "issue" (Store.issue ~id:first.id conn) with
+        ok "update" (Issue.Services.update updated conn);
+        match ok "issue" (Issue.Services.find ~id:first.id conn) with
         | None -> Alcotest.fail "the issue is gone"
         | Some (i : Issue.t) ->
             check_bool "the write landed"
@@ -106,28 +109,28 @@ let writing =
         let conn, _, _, first, _, _ = fixture () in
         let updated =
           Result.get_ok
-            (Action.run first Issue_actions.Edit_status.action
+            (Action.run first Issue.Actions.Edit_status.action
                { status = Issue.Status.Doing; note = None })
         in
-        ok "update" (Store.update_issue updated conn);
-        match ok "project" (Store.project ~slug:"tt" conn) with
+        ok "update" (Issue.Services.update updated conn);
+        match ok "project" (Project.Services.find ~slug:"tt" conn) with
         | None -> Alcotest.fail "the project is gone"
         | Some (p : Project.t) -> check_bool "" (p.todo = 2 && p.doing = 1));
     case "clearing an optional column writes NULL rather than an empty string" (fun () ->
         let conn, _, _, first, _, _ = fixture () in
         let noted =
           Result.get_ok
-            (Action.run first Issue_actions.Edit_status.action
+            (Action.run first Issue.Actions.Edit_status.action
                { status = Issue.Status.Doing; note = Some "started" })
         in
-        ok "update" (Store.update_issue noted conn);
+        ok "update" (Issue.Services.update noted conn);
         let cleared =
           Result.get_ok
-            (Action.run noted Issue_actions.Edit_status.action
+            (Action.run noted Issue.Actions.Edit_status.action
                { status = Issue.Status.Done; note = None })
         in
-        ok "update" (Store.update_issue cleared conn);
-        match ok "issue" (Store.issue ~id:first.id conn) with
+        ok "update" (Issue.Services.update cleared conn);
+        match ok "issue" (Issue.Services.find ~id:first.id conn) with
         | Some (i : Issue.t) -> check_bool "" (i.status_note = None)
         | None -> Alcotest.fail "the issue is gone");
   ]
@@ -136,12 +139,13 @@ let deleting =
   [
     case "a deleted issue leaves the list and lands in the trash, stamped" (fun () ->
         let conn, _, _, _, _, third = fixture () in
-        ok "delete" (Store.delete_issue third conn);
+        ok "delete" (Issue.Services.delete third conn);
         Alcotest.(check (list string))
           "" [ "second"; "first" ]
-          (titles (ok "issues" (Store.issues ~project_slug:"tt" conn)));
-        check_bool "and cannot be read by id" (ok "issue" (Store.issue ~id:third.id conn) = None);
-        let trashed = ok "trash" (Store.trashed_issues conn) in
+          (titles (ok "issues" (Issue.Services.list ~project_slug:"tt" conn)));
+        check_bool "and cannot be read by id"
+          (ok "issue" (Issue.Services.find ~id:third.id conn) = None);
+        let trashed = ok "trash" (Issue.Services.trashed conn) in
         Alcotest.(check (list string))
           "" [ "third" ]
           (List.map (fun (d : Issue.t Deleted.t) -> d.inner.title) trashed);
@@ -149,29 +153,31 @@ let deleting =
           (List.for_all (fun (d : Issue.t Deleted.t) -> d.deleted_at <> "") trashed));
     case "soft-deleting a project hides its issues, with one row written" (fun () ->
         let conn, tt, _, first, _, third = fixture () in
-        ok "delete issue" (Store.delete_issue third conn);
-        ok "delete project" (Store.delete_project tt conn);
+        ok "delete issue" (Issue.Services.delete third conn);
+        ok "delete project" (Project.Services.delete tt conn);
         Alcotest.(check (list string))
           "" []
-          (titles (ok "issues" (Store.issues ~project_slug:"tt" conn)));
+          (titles (ok "issues" (Issue.Services.list ~project_slug:"tt" conn)));
         check_bool "and they cannot be read by id either"
-          (ok "issue" (Store.issue ~id:first.id conn) = None);
-        Alcotest.(check (list string)) "" [ "other" ] (slugs (ok "projects" (Store.projects conn)));
+          (ok "issue" (Issue.Services.find ~id:first.id conn) = None);
+        Alcotest.(check (list string))
+          "" [ "other" ]
+          (slugs (ok "projects" (Project.Services.list conn)));
         Alcotest.(check (list string))
           "hiding an issue is not deleting it" [ "third" ]
           (List.map
              (fun (d : Issue.t Deleted.t) -> d.inner.title)
-             (ok "trash" (Store.trashed_issues conn))));
+             (ok "trash" (Issue.Services.trashed conn))));
     case "the partial unique index covers live rows only, so the slug is reusable" (fun () ->
         let conn, tt, _, _, _, _ = fixture () in
-        ok "delete" (Store.delete_project tt conn);
+        ok "delete" (Project.Services.delete tt conn);
         let reused =
           ok "recreate"
-            (Store.create_project { slug = "tt"; title = "the second tt"; body = "" } conn)
+            (Project.Services.create { slug = "tt"; title = "the second tt"; body = "" } conn)
         in
         check_bool "a new row" (reused.id <> tt.id);
         check_bool "and the name now resolves to it"
-          (match ok "project" (Store.project ~slug:"tt" conn) with
+          (match ok "project" (Project.Services.find ~slug:"tt" conn) with
           | Some (p : Project.t) -> p.id = reused.id
           | None -> false));
   ]
@@ -181,25 +187,25 @@ let restoring =
     case "restoring a project brings back exactly the issues not deleted in their own right"
       (fun () ->
         let conn, tt, _, _, _, third = fixture () in
-        ok "delete issue" (Store.delete_issue third conn);
-        ok "delete project" (Store.delete_project tt conn);
-        let trashed = ok "trash" (Store.trashed_projects conn) in
+        ok "delete issue" (Issue.Services.delete third conn);
+        ok "delete project" (Project.Services.delete tt conn);
+        let trashed = ok "trash" (Project.Services.trashed conn) in
         (match List.find_opt (fun (d : Project.t Deleted.t) -> d.inner.id = tt.id) trashed with
-        | Some deleted -> ok "restore" (Store.restore_project deleted conn)
+        | Some deleted -> ok "restore" (Project.Services.restore deleted conn)
         | None -> Alcotest.fail "the deleted project is not in the trash");
         Alcotest.(check (list string))
           "" [ "second"; "first" ]
-          (titles (ok "issues" (Store.issues ~project_slug:"tt" conn))));
+          (titles (ok "issues" (Issue.Services.list ~project_slug:"tt" conn))));
     case "restoring the issue itself is the second row" (fun () ->
         let conn, _, _, _, _, third = fixture () in
-        ok "delete" (Store.delete_issue third conn);
-        (match ok "trash" (Store.trashed_issues conn) with
-        | deleted :: _ -> ok "restore" (Store.restore_issue deleted conn)
+        ok "delete" (Issue.Services.delete third conn);
+        (match ok "trash" (Issue.Services.trashed conn) with
+        | deleted :: _ -> ok "restore" (Issue.Services.restore deleted conn)
         | [] -> Alcotest.fail "the deleted issue is not in the trash");
         Alcotest.(check (list string))
           "" [ "second"; "first"; "third" ]
-          (titles (ok "issues" (Store.issues ~project_slug:"tt" conn)));
-        check_bool "and the trash is empty" (ok "trash" (Store.trashed_issues conn) = []));
+          (titles (ok "issues" (Issue.Services.list ~project_slug:"tt" conn)));
+        check_bool "and the trash is empty" (ok "trash" (Issue.Services.trashed conn) = []));
   ]
 
 (** What the database actually holds, so the schema this spike designed is asserted rather than
@@ -209,7 +215,7 @@ let emitted =
   [
     case "the emitted schema is the designed one" (fun () ->
         let conn, _, _, _, _, _ = fixture () in
-        let ddl = String.concat "\n" (ok "ddl" (Store.emitted_ddl conn)) in
+        let ddl = String.concat "\n" (ok "ddl" (Db.emitted_ddl conn)) in
         let has what =
           let n = String.length what and h = String.length ddl in
           check_bool what
@@ -230,14 +236,14 @@ let emitted =
            only turns into a sentence. *)
         check_bool ""
           (Result.is_error
-             (Store.create_project { slug = "tt"; title = "another"; body = "" } conn)));
+             (Project.Services.create { slug = "tt"; title = "another"; body = "" } conn)));
     case "a status the CHECK constraint forbids cannot be written" (fun () ->
         let conn, _, _, first, _, _ = fixture () in
         (* Nothing in OCaml can produce one — [Issue.Status] is a closed variant
            — so this is asserted the only way it can be: the column accepts the
            three names and the database is what says so. *)
         List.iter
-          (fun status -> ok "update" (Store.update_issue { first with status } conn))
+          (fun status -> ok "update" (Issue.Services.update { first with status } conn))
           [ Issue.Status.Todo; Issue.Status.Doing; Issue.Status.Done ]);
   ]
 

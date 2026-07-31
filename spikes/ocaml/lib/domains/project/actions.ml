@@ -9,16 +9,17 @@
     project and returns an {!Issue.draft}. Nothing about the declaration marks it as special, and
     nothing has to — the group it is registered in is what INSERTs the result.
 
-    See [issue_actions.ml] for why each [Spec] is named. *)
+    See [../issue/actions.ml] for why each [Spec] is named. *)
 
+open Platform
 open Ppx_yojson_conv_lib.Yojson_conv.Primitives
 
 module Edit_title = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Project.t
-    type out = Project.t
+    type obj = Models.t
+    type out = Models.t
 
     type payload = { title : string  (** What to call the project. *) }
     [@@deriving yojson, jsonschema ~ocaml_doc]
@@ -37,8 +38,8 @@ module Edit_body = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Project.t
-    type out = Project.t
+    type obj = Models.t
+    type out = Models.t
 
     type payload = { body : string  (** What the project is for. Blank clears it. *) }
     [@@deriving yojson, jsonschema ~ocaml_doc]
@@ -56,11 +57,11 @@ module Edit_status = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Project.t
-    type out = Project.t
+    type obj = Models.t
+    type out = Models.t
 
     type payload = {
-      status : Project.Status.t;  (** Whether the project is still being worked on. *)
+      status : Models.Status.t;  (** Whether the project is still being worked on. *)
     }
     [@@deriving yojson, jsonschema ~ocaml_doc]
 
@@ -87,15 +88,15 @@ module Delete = struct
     include Action.Defaults
     include Wire.No_payload
 
-    type obj = Project.t
-    type out = Project.t
+    type obj = Models.t
+    type out = Models.t
 
     let key = "delete"
 
     let is_disabled (project : obj) =
       match project.status with
-      | Project.Status.Active -> Some "archive it first"
-      | Project.Status.Archived -> None
+      | Models.Status.Active -> Some "archive it first"
+      | Models.Status.Archived -> None
 
     let execute project () = Ok project
   end
@@ -108,8 +109,8 @@ module Restore = struct
     include Action.Defaults
     include Wire.No_payload
 
-    type obj = Project.restorable
-    type out = Project.t Deleted.t
+    type obj = Models.restorable
+    type out = Models.t Deleted.t
 
     let key = "restore"
 
@@ -130,7 +131,7 @@ module Add_issue = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Project.t
+    type obj = Models.t
     type out = Issue.draft
 
     type payload = {
@@ -145,8 +146,8 @@ module Add_issue = struct
 
     let is_disabled (project : obj) =
       match project.status with
-      | Project.Status.Archived -> Some "project is archived"
-      | Project.Status.Active -> None
+      | Models.Status.Archived -> Some "project is archived"
+      | Models.Status.Active -> None
 
     let execute (project : obj) p =
       let title = String.trim p.title in
@@ -168,8 +169,8 @@ module Create_project = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Project.t list
-    type out = Project.draft
+    type obj = Models.t list
+    type out = Models.draft
 
     type payload = {
       slug : string;  (** The short name the project is addressed by. *)
@@ -189,12 +190,12 @@ module Create_project = struct
     let execute projects p =
       let slug = String.trim p.slug in
       if slug = "" then Error (Error.Invalid "slug is required")
-      else if List.exists (fun (project : Project.t) -> project.slug = slug) projects then
+      else if List.exists (fun (project : Models.t) -> project.slug = slug) projects then
         Error (Error.Conflict (Printf.sprintf "project %S already exists" slug))
       else
         Ok
           {
-            Project.slug;
+            Models.slug;
             title = Option.value p.title ~default:"";
             body = Option.value p.body ~default:"";
           }
@@ -204,54 +205,54 @@ module Create_project = struct
 end
 
 (** The edits, in the order they are offered. *)
-let group : (Project.t, Project.t, Store.conn) Wire.group =
+let group : (Models.t, Models.t, Db.conn) Wire.group =
   {
     entries = [ Edit_title.entry; Edit_body.entry; Edit_status.entry ];
     persist =
       (fun conn project ->
-        Store.broken (Store.update_project project conn)
-        |> Result.map (fun () -> Project.subject project ^ ": saved"));
+        Db.broken (Services.update project conn)
+        |> Result.map (fun () -> Models.subject project ^ ": saved"));
   }
 
 (** Leaving. Separate from {!group} only because the write that follows is. *)
-let trash : (Project.t, Project.t, Store.conn) Wire.group =
+let trash : (Models.t, Models.t, Db.conn) Wire.group =
   {
     entries = [ Delete.entry ];
     persist =
       (fun conn project ->
-        Store.broken (Store.delete_project project conn)
-        |> Result.map (fun () -> Project.subject project ^ ": deleted"));
+        Db.broken (Services.delete project conn)
+        |> Result.map (fun () -> Models.subject project ^ ": deleted"));
   }
 
 (** What a row in the trash offers, which is coming back and nothing else. *)
-let deleted_group : (Project.restorable, Project.t Deleted.t, Store.conn) Wire.group =
+let deleted_group : (Models.restorable, Models.t Deleted.t, Db.conn) Wire.group =
   {
     entries = [ Restore.entry ];
     persist =
       (fun conn deleted ->
-        Store.broken (Store.restore_project deleted conn)
-        |> Result.map (fun () -> Project.subject deleted.inner ^ ": restored"));
+        Db.broken (Services.restore deleted conn)
+        |> Result.map (fun () -> Models.subject deleted.inner ^ ": restored"));
   }
 
 (** What a project can make. The result is a draft rather than an issue: an action produces a value
     and the store assigns the id, so the type of what [execute] returns is the type of what has not
     been written yet. *)
-let creators : (Project.t, Issue.draft, Store.conn) Wire.group =
+let creators : (Models.t, Issue.draft, Db.conn) Wire.group =
   {
     entries = [ Add_issue.entry ];
     persist =
       (fun conn draft ->
-        Store.broken (Store.create_issue draft conn)
+        Db.broken (Issue.Services.create draft conn)
         |> Result.map (fun (issue : Issue.t) -> Issue.subject issue ^ ": created"));
   }
 
 (** The one action with no object to address. Its parent is the list of live projects, which is what
     a uniqueness refusal has to read. *)
-let root : (Project.t list, Project.draft, Store.conn) Wire.group =
+let root : (Models.t list, Models.draft, Db.conn) Wire.group =
   {
     entries = [ Create_project.entry ];
     persist =
       (fun conn draft ->
-        Store.broken (Store.create_project draft conn)
-        |> Result.map (fun (project : Project.t) -> Project.subject project ^ ": created"));
+        Db.broken (Services.create draft conn)
+        |> Result.map (fun (project : Models.t) -> Models.subject project ^ ": created"));
   }

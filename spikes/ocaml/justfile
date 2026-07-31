@@ -65,12 +65,12 @@ verify: lint build test
 
 # The db-* recipes shell out to the Atlas CLI, which has to be installed
 # separately — the same arrangement, and the same reason, as the root justfile's.
-# `verify` does not depend on them: lib/schema.sql is what the store applies, and
+# `verify` does not depend on them: lib/domains/schema.sql is what the store applies, and
 # migrations/ is what a real deployment would replay.
 #
 #     brew install ariga/tap/atlas
 
-# Generate a new versioned migration from lib/schema.sql.
+# Generate a new versioned migration from lib/domains/schema.sql.
 db-migrate name:
     atlas migrate diff --env local {{ name }}
 
@@ -82,7 +82,7 @@ db-upgrade:
 db-status:
     atlas migrate status --env local --url "sqlite://{{ db }}"
 
-# Fail if lib/schema.sql has drifted from migrations/.
+# Fail if lib/domains/schema.sql has drifted from migrations/.
 db-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -92,6 +92,6 @@ db-check:
     if (( ${#drift[@]} )); then
         rm -f "${drift[@]}"
         atlas migrate hash --env local
-        echo "lib/schema.sql has drifted from migrations/ — run 'just db-migrate <name>'" >&2
+        echo "lib/domains/schema.sql has drifted from migrations/ — run 'just db-migrate <name>'" >&2
         exit 1
     fi

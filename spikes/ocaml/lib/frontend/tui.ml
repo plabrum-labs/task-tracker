@@ -21,6 +21,8 @@
     is written out. What that buys is that a test asserts what a key {e means} separately from what
     it {e does}, which no incremental toolkit allows. *)
 
+open Platform
+open Domains
 module A = Notty.A
 module I = Notty.I
 
@@ -92,13 +94,13 @@ type intent =
 let ( let* ) = Result.bind
 
 let live_project conn slug =
-  let* found = Store.broken (Store.project ~slug conn) in
+  let* found = Db.broken (Project.Services.find ~slug conn) in
   match found with
   | Some project -> Ok project
   | None -> Error (Error.Invalid (Printf.sprintf "no project %S" slug))
 
 let live_issue conn id =
-  let* found = Store.broken (Store.issue ~id conn) in
+  let* found = Db.broken (Issue.Services.find ~id conn) in
   match found with
   | Some issue -> Ok issue
   | None -> Error (Error.Invalid (Printf.sprintf "no issue %d" id))
@@ -114,10 +116,10 @@ let do_rows obj group =
 let load conn screen : (string * row list, Error.t) result =
   match screen with
   | Projects ->
-      let* projects = Store.broken (Store.projects conn) in
+      let* projects = Db.broken (Project.Services.list conn) in
       Ok
         ( "projects",
-          do_rows projects Project_actions.root
+          do_rows projects Project.Actions.root
           @ List.map
               (fun (p : Project.t) ->
                 Go
@@ -131,12 +133,12 @@ let load conn screen : (string * row list, Error.t) result =
               projects )
   | Issues slug ->
       let* project = live_project conn slug in
-      let* issues = Store.broken (Store.issues ~project_slug:slug conn) in
+      let* issues = Db.broken (Issue.Services.list ~project_slug:slug conn) in
       Ok
         ( Printf.sprintf "%s: %s" (Project.subject project) project.title,
-          do_rows project Project_actions.group
-          @ do_rows project Project_actions.trash
-          @ do_rows project Project_actions.creators
+          do_rows project Project.Actions.group
+          @ do_rows project Project.Actions.trash
+          @ do_rows project Project.Actions.creators
           @ List.map
               (fun (i : Issue.t) ->
                 Go
@@ -152,7 +154,7 @@ let load conn screen : (string * row list, Error.t) result =
       let* issue = live_issue conn id in
       Ok
         ( Printf.sprintf "%s: %s" (Issue.subject issue) issue.title,
-          do_rows issue Issue_actions.group @ do_rows issue Issue_actions.trash )
+          do_rows issue Issue.Actions.group @ do_rows issue Issue.Actions.trash )
 
 (* --- the write ----------------------------------------------------------- *)
 
@@ -168,18 +170,18 @@ let write conn screen ~key ~payload : (string, Error.t) result =
   let attempts =
     match screen with
     | Projects ->
-        let projects () = Store.broken (Store.projects conn) in
-        [ attempt Project_actions.root projects ]
+        let projects () = Db.broken (Project.Services.list conn) in
+        [ attempt Project.Actions.root projects ]
     | Issues slug ->
         let project () = live_project conn slug in
         [
-          attempt Project_actions.group project;
-          attempt Project_actions.trash project;
-          attempt Project_actions.creators project;
+          attempt Project.Actions.group project;
+          attempt Project.Actions.trash project;
+          attempt Project.Actions.creators project;
         ]
     | Detail { id; _ } ->
         let issue () = live_issue conn id in
-        [ attempt Issue_actions.group issue; attempt Issue_actions.trash issue ]
+        [ attempt Issue.Actions.group issue; attempt Issue.Actions.trash issue ]
   in
   match List.find_map (fun attempt -> attempt ()) attempts with
   | Some outcome -> outcome

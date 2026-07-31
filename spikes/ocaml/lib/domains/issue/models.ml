@@ -4,6 +4,8 @@
     what makes a list row printable without a second query per row. It is on the domain type because
     the join puts it there: {!Store.issues} selects it alongside the issue's own columns. *)
 
+open Platform
+
 (* An enum is three declarations and no functor. [to_string] is a match, so
    adding a constructor is a compile error here rather than a value the encoder
    raises on the first time anything reaches it — the one thing a table of

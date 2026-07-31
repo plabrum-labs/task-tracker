@@ -20,14 +20,15 @@
     rule, and nothing else about an issue constrains what may be done to it — so both hooks are the
     default in every case and the refusals are all [execute]'s. *)
 
+open Platform
 open Ppx_yojson_conv_lib.Yojson_conv.Primitives
 
 module Edit_title = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Issue.t
-    type out = Issue.t
+    type obj = Models.t
+    type out = Models.t
 
     type payload = { title : string  (** What to call the issue. *) }
     [@@deriving yojson, jsonschema ~ocaml_doc]
@@ -50,8 +51,8 @@ module Edit_body = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Issue.t
-    type out = Issue.t
+    type obj = Models.t
+    type out = Models.t
 
     type payload = { body : string  (** What the issue is about. Blank clears it. *) }
     [@@deriving yojson, jsonschema ~ocaml_doc]
@@ -71,11 +72,11 @@ module Edit_status = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Issue.t
-    type out = Issue.t
+    type obj = Models.t
+    type out = Models.t
 
     type payload = {
-      status : Issue.Status.t;  (** Where the issue is up to. *)
+      status : Models.Status.t;  (** Where the issue is up to. *)
       note : string option; [@yojson.option] [@jsonschema.option]
           (** Why it moved. Left out, whatever described the old status goes with it. *)
     }
@@ -96,10 +97,10 @@ module Edit_priority = struct
   module Spec = struct
     include Action.Defaults
 
-    type obj = Issue.t
-    type out = Issue.t
+    type obj = Models.t
+    type out = Models.t
 
-    type payload = { priority : Issue.Priority.t  (** How far up the list it sorts. *) }
+    type payload = { priority : Models.Priority.t  (** How far up the list it sorts. *) }
     [@@deriving yojson, jsonschema ~ocaml_doc]
 
     let key = "editPriority"
@@ -114,13 +115,13 @@ module Delete = struct
     include Action.Defaults
     include Wire.No_payload
 
-    type obj = Issue.t
-    type out = Issue.t
+    type obj = Models.t
+    type out = Models.t
 
     let key = "delete"
 
     (* The identity. What the write is lives entirely in the group's [persist],
-       because the column it sets is not on {!Issue.t} at all — a live issue has
+       because the column it sets is not on {!Models.t} at all — a live issue has
        no [deleted_at] to assign. *)
     let execute issue () = Ok issue
   end
@@ -133,8 +134,8 @@ module Restore = struct
     include Action.Defaults
     include Wire.No_payload
 
-    type obj = Issue.t Deleted.t
-    type out = Issue.t Deleted.t
+    type obj = Models.t Deleted.t
+    type out = Models.t Deleted.t
 
     let key = "restore"
     let execute deleted () = Ok deleted
@@ -144,31 +145,31 @@ module Restore = struct
 end
 
 (** The edits, in the order they are offered. *)
-let group : (Issue.t, Issue.t, Store.conn) Wire.group =
+let group : (Models.t, Models.t, Db.conn) Wire.group =
   {
     entries = [ Edit_title.entry; Edit_body.entry; Edit_status.entry; Edit_priority.entry ];
     persist =
       (fun conn issue ->
-        Store.broken (Store.update_issue issue conn)
-        |> Result.map (fun () -> Issue.subject issue ^ ": saved"));
+        Db.broken (Services.update issue conn)
+        |> Result.map (fun () -> Models.subject issue ^ ": saved"));
   }
 
 (** Leaving. Separate from {!group} only because the write that follows is. *)
-let trash : (Issue.t, Issue.t, Store.conn) Wire.group =
+let trash : (Models.t, Models.t, Db.conn) Wire.group =
   {
     entries = [ Delete.entry ];
     persist =
       (fun conn issue ->
-        Store.broken (Store.delete_issue issue conn)
-        |> Result.map (fun () -> Issue.subject issue ^ ": deleted"));
+        Db.broken (Services.delete issue conn)
+        |> Result.map (fun () -> Models.subject issue ^ ": deleted"));
   }
 
 (** What a row in the trash offers, which is coming back and nothing else. *)
-let deleted_group : (Issue.t Deleted.t, Issue.t Deleted.t, Store.conn) Wire.group =
+let deleted_group : (Models.t Deleted.t, Models.t Deleted.t, Db.conn) Wire.group =
   {
     entries = [ Restore.entry ];
     persist =
       (fun conn deleted ->
-        Store.broken (Store.restore_issue deleted conn)
-        |> Result.map (fun () -> Issue.subject deleted.inner ^ ": restored"));
+        Db.broken (Services.restore deleted conn)
+        |> Result.map (fun () -> Models.subject deleted.inner ^ ": restored"));
   }

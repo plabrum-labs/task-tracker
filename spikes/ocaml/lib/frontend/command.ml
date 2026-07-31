@@ -20,6 +20,8 @@
     what to print or the refusal to report, and [bin/cli.ml] is left with the printing and the exit
     code. *)
 
+open Platform
+open Domains
 open Cmdliner
 
 type outcome = (string, Error.t) result
@@ -89,7 +91,7 @@ let offers obj group =
 (* --- resolution ---------------------------------------------------------- *)
 
 let live_project slug conn =
-  let* found = Store.broken (Store.project ~slug conn) in
+  let* found = Db.broken (Project.Services.find ~slug conn) in
   match found with
   | Some project -> Ok project
   | None -> Error (Error.Invalid (Printf.sprintf "no project %S" slug))
@@ -97,21 +99,21 @@ let live_project slug conn =
 (** A trash row is loaded with the one thing [restore]'s refusal reads: whether the slug it wants
     back has been taken by a live project since. *)
 let restorable_project slug conn =
-  let* trashed = Store.broken (Store.trashed_projects conn) in
-  let* live = Store.broken (Store.projects conn) in
+  let* trashed = Db.broken (Project.Services.trashed conn) in
+  let* live = Db.broken (Project.Services.list conn) in
   match List.find_opt (fun (d : Project.t Deleted.t) -> d.inner.slug = slug) trashed with
   | None -> Error (Error.Invalid (Printf.sprintf "no deleted project %S" slug))
   | Some deleted ->
       Ok { Project.deleted; slug_taken = List.exists (fun (p : Project.t) -> p.slug = slug) live }
 
 let live_issue id conn =
-  let* found = Store.broken (Store.issue ~id conn) in
+  let* found = Db.broken (Issue.Services.find ~id conn) in
   match found with
   | Some issue -> Ok issue
   | None -> Error (Error.Invalid (Printf.sprintf "no issue %d" id))
 
 let trashed_issue id conn =
-  let* trashed = Store.broken (Store.trashed_issues conn) in
+  let* trashed = Db.broken (Issue.Services.trashed conn) in
   match List.find_opt (fun (d : Issue.t Deleted.t) -> d.inner.id = id) trashed with
   | Some deleted -> Ok deleted
   | None -> Error (Error.Invalid (Printf.sprintf "no deleted issue %d" id))
@@ -121,7 +123,7 @@ let trashed_issue id conn =
 type 'address route = {
   key : string;
   schema : Yojson.Safe.t;
-  write : 'address -> payload:Yojson.Safe.t -> Store.conn -> (string, Error.t) result;
+  write : 'address -> payload:Yojson.Safe.t -> Db.conn -> (string, Error.t) result;
 }
 (** One registered action as this frontend needs it: the key it answers to, the schema its
     subcommand renders, and the write.
@@ -145,20 +147,20 @@ let routes ~load group =
     group.Wire.entries
 
 let project_routes =
-  routes ~load:live_project Project_actions.group
-  @ routes ~load:live_project Project_actions.trash
-  @ routes ~load:live_project Project_actions.creators
-  @ routes ~load:restorable_project Project_actions.deleted_group
+  routes ~load:live_project Project.Actions.group
+  @ routes ~load:live_project Project.Actions.trash
+  @ routes ~load:live_project Project.Actions.creators
+  @ routes ~load:restorable_project Project.Actions.deleted_group
 
 let issue_routes =
-  routes ~load:live_issue Issue_actions.group
-  @ routes ~load:live_issue Issue_actions.trash
-  @ routes ~load:trashed_issue Issue_actions.deleted_group
+  routes ~load:live_issue Issue.Actions.group
+  @ routes ~load:live_issue Issue.Actions.trash
+  @ routes ~load:trashed_issue Issue.Actions.deleted_group
 
 (** The root creator has no object to address, so its parent is the list of live projects — which is
     exactly what its uniqueness refusal has to read. *)
 let root_routes =
-  routes ~load:(fun () conn -> Store.broken (Store.projects conn)) Project_actions.root
+  routes ~load:(fun () conn -> Db.broken (Project.Services.list conn)) Project.Actions.root
 
 let run_route routes address ~key ~payload conn =
   match List.find_opt (fun route -> route.key = key) routes with
@@ -168,7 +170,7 @@ let run_route routes address ~key ~payload conn =
 (* --- the reads ----------------------------------------------------------- *)
 
 let project_ls conn =
-  let* projects = Store.broken (Store.projects conn) in
+  let* projects = Db.broken (Project.Services.list conn) in
   Ok (String.concat "\n" (List.map project_line projects))
 
 let issue_ls ~project_slug conn =
@@ -178,14 +180,14 @@ let issue_ls ~project_slug conn =
         let* project = live_project slug conn in
         Ok [ project.slug ]
     | None ->
-        let* projects = Store.broken (Store.projects conn) in
+        let* projects = Db.broken (Project.Services.list conn) in
         Ok (List.map (fun (p : Project.t) -> p.slug) projects)
   in
   let* rows =
     List.fold_left
       (fun acc slug ->
         let* rows = acc in
-        let* found = Store.broken (Store.issues ~project_slug:slug conn) in
+        let* found = Db.broken (Issue.Services.list ~project_slug:slug conn) in
         Ok (rows @ found))
       (Ok []) slugs
   in
@@ -194,9 +196,9 @@ let issue_ls ~project_slug conn =
 let project_show slug conn =
   let* project = live_project slug conn in
   let actions =
-    offers project Project_actions.group
-    @ offers project Project_actions.trash
-    @ offers project Project_actions.creators
+    offers project Project.Actions.group
+    @ offers project Project.Actions.trash
+    @ offers project Project.Actions.creators
   in
   Ok
     (Yojson.Safe.pretty_to_string
@@ -204,7 +206,7 @@ let project_show slug conn =
 
 let issue_show id conn =
   let* issue = live_issue id conn in
-  let actions = offers issue Issue_actions.group @ offers issue Issue_actions.trash in
+  let actions = offers issue Issue.Actions.group @ offers issue Issue.Actions.trash in
   Ok
     (Yojson.Safe.pretty_to_string
        (`Assoc [ ("issue", issue_json issue); ("actions", `List actions) ]))
@@ -212,9 +214,9 @@ let issue_show id conn =
 (** The trash, with what each row offers — which is [restore] and nothing else, because that is the
     only action registered against the deleted types. *)
 let trash conn =
-  let* projects = Store.broken (Store.trashed_projects conn) in
-  let* issues = Store.broken (Store.trashed_issues conn) in
-  let* live = Store.broken (Store.projects conn) in
+  let* projects = Db.broken (Project.Services.trashed conn) in
+  let* issues = Db.broken (Issue.Services.trashed conn) in
+  let* live = Db.broken (Project.Services.list conn) in
   let project (d : Project.t Deleted.t) =
     let restorable =
       {
@@ -226,7 +228,7 @@ let trash conn =
       [
         ("project", `String d.inner.slug);
         ("deleted_at", `String d.deleted_at);
-        ("actions", `List (offers restorable Project_actions.deleted_group));
+        ("actions", `List (offers restorable Project.Actions.deleted_group));
       ]
   in
   let issue (d : Issue.t Deleted.t) =
@@ -235,7 +237,7 @@ let trash conn =
         ("issue", `Int d.inner.id);
         ("title", `String d.inner.title);
         ("deleted_at", `String d.deleted_at);
-        ("actions", `List (offers d Issue_actions.deleted_group));
+        ("actions", `List (offers d Issue.Actions.deleted_group));
       ]
   in
   Ok
@@ -254,8 +256,8 @@ let db =
 
 (** Every leaf opens the database, initialises it and runs one thing. *)
 let against uri f : outcome =
-  let* conn = Store.broken (Store.connect uri) in
-  let* () = Store.broken (Store.initialise conn) in
+  let* conn = Db.broken (Db.connect uri) in
+  let* () = Db.broken (Db.apply_ddl conn Schema.ddl) in
   f conn
 
 let simple name ~doc term = Cmd.make (Cmd.info name ~doc) term

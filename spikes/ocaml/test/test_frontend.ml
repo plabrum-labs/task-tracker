@@ -2,20 +2,23 @@
     schema, the TUI that renders it, and the command line that renders the same thing as options.
 
     The TUI is exercised the way a person exercises it, by keystroke, and asserted against the drawn
-    frame. That needs no terminal and no synchronisation: {!Tt.Tui.render} returns a {!Notty.image}
-    and [Notty.Cap.dumb] turns it into plain text with the attributes stripped. What a key {e means}
-    is asserted separately from what it {e does}, because {!Tt.Tui.on_key} is a function of the
-    state alone.
+    frame. That needs no terminal and no synchronisation: {!Tt.Frontend.Tui.render} returns a
+    {!Notty.image} and [Notty.Cap.dumb] turns it into plain text with the attributes stripped. What
+    a key {e means} is asserted separately from what it {e does}, because {!Tt.Frontend.Tui.on_key}
+    is a function of the state alone.
 
     The CLI is exercised the way a shell exercises it, by [argv]. It gets a temporary file rather
     than an in-memory database, because each of its invocations opens the database again and an
     in-memory one would be a new database each time. *)
 
 open Tt
+open Tt.Platform
+open Tt.Domains
+open Tt.Frontend
 
 let ok what = function
   | Ok value -> value
-  | Error e -> Alcotest.failf "%s: %s" what (Store.show_error e)
+  | Error e -> Alcotest.failf "%s: %s" what (Db.show_error e)
 
 let case name f = Alcotest.test_case name `Quick f
 let check_bool name value = Alcotest.(check bool) name true value
@@ -79,11 +82,11 @@ let forms =
     case "a required field is marked required, and carries its description" (fun () ->
         Alcotest.(check (result (list field) string))
           "" (Ok [ title ])
-          (fields "editTitle" Issue_actions.group));
+          (fields "editTitle" Issue.Actions.group));
     case "an action with no arguments yields an empty form" (fun () ->
         Alcotest.(check (result (list field) string))
           "" (Ok [])
-          (fields "delete" Issue_actions.trash));
+          (fields "delete" Issue.Actions.trash));
     case "a type with no form field fails the whole form" (fun () ->
         Alcotest.(check (result (list field) string))
           "" (Error {|n: no form field for type "integer"|})
@@ -95,7 +98,7 @@ let forms =
         Alcotest.(check (result (list field) string))
           ""
           (Ok [ note; issue_status ])
-          (fields "editStatus" Issue_actions.group));
+          (fields "editStatus" Issue.Actions.group));
     case "an optional enum is the same field wrapped in anyOf, and not required" (fun () ->
         Alcotest.(check (result (list field) string))
           ""
@@ -110,7 +113,7 @@ let forms =
                };
                title;
              ])
-          (fields "addIssue" Project_actions.creators));
+          (fields "addIssue" Project.Actions.creators));
     (* The schema says [note] may be null and the decoder refuses null, so the
        form has to omit the field instead. Both halves of that are checked in
        [test_actions.ml]; this is the encoding that survives them. *)
@@ -131,12 +134,14 @@ let forms =
 (* --- the TUI -------------------------------------------------------------- *)
 
 let seeded () =
-  let conn = ok "connect" (Store.connect "sqlite3::memory:") in
-  ok "initialise" (Store.initialise conn);
-  let tt = ok "project" (Store.create_project { slug = "tt"; title = "tracker"; body = "" } conn) in
+  let conn = ok "connect" (Db.connect "sqlite3::memory:") in
+  ok "initialise" (Db.apply_ddl conn Schema.ddl);
+  let tt =
+    ok "project" (Project.Services.create { slug = "tt"; title = "tracker"; body = "" } conn)
+  in
   let issue title priority =
     ignore
-      (ok "issue" (Store.create_issue { project_id = tt.id; title; body = ""; priority } conn)
+      (ok "issue" (Issue.Services.create { project_id = tt.id; title; body = ""; priority } conn)
         : Issue.t)
   in
   issue "ship" Issue.Priority.High;
@@ -501,7 +506,7 @@ let cascade =
                  |> List.exists (fun offer ->
                      Yojson.Safe.Util.member "key" offer = `String "editStatus"
                      && Yojson.Safe.Util.member "arguments" offer
-                        = schema "editStatus" Project_actions.group)
+                        = schema "editStatus" Project.Actions.group)
              | Refused _ | Rejected -> false)));
   ]
 

@@ -1,3 +1,9 @@
+; The tree is grouped rather than flat: platform/ is the framework, domains/
+; holds one directory per persisted object, frontend/ is what a person or an
+; agent drives. Qualified so that two domains can each have a models.ml.
+
+(include_subdirs qualified)
+
 (library
  (name tt)
  (libraries
@@ -19,18 +25,3 @@
  ; whole reason for using a closed variant.
  (flags
   (:standard -warn-error +8)))
-
-; The schema is one file, read by two things: dune embeds it here so the store
-; can apply it, and Atlas diffs migrations/ against it. Neither has a copy.
-
-(rule
- (target schema.ml)
- (deps schema.sql)
- (action
-  (with-stdout-to
-   %{target}
-   (progn
-    (echo
-     "(** The text of [schema.sql], embedded at build time. *)\n\nlet ddl = {sql|")
-    (cat %{deps})
-    (echo "|sql}\n")))))

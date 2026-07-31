@@ -5,6 +5,8 @@
     of the object, so anything a hook reads has to be in the object — computing the counts per row
     is what stops a list from offering a menu it cannot justify. *)
 
+open Platform
+
 (* The same three declarations as {!Issue.Status}, and the same reason they are
    not derived. See issue.ml. *)
 module Status = struct
