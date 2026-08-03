@@ -1,15 +1,17 @@
-//! The action layer, with no database in sight.
+//! The action layer, over a real in-memory SQLite database.
 //!
-//! Every `execute` is a pure function of its object and its payload, so all of
-//! this runs against literals. The first half is the typed path — payload
-//! structs, no JSON. The second is the wire, where JSON is the point.
+//! Availability is a pure function of the object, so the menu cases run against
+//! literals with no database in sight. `execute` is not pure any more — it holds
+//! the transaction and writes for itself — so the cases that `run` an action
+//! seed a row, run, and assert both the message that comes back and the row's
+//! new state.
 //!
-//! Per the root `CLAUDE.md`, every action key gets two cases: the menu
-//! withholds it, and the write refuses it. **No issue action refuses
-//! anything** — there is no WIP rule and nothing else about an issue constrains
-//! what may be done to it — so for those the honest pair is "always offered"
-//! and the refusal `execute` states. Saying so in the test names is better than
-//! inventing a rule to satisfy the shape.
+//! Per the root `CLAUDE.md`, every action key gets two cases: the menu withholds
+//! it, and the write refuses it. **No issue action refuses anything** — there is
+//! no WIP rule and nothing else about an issue constrains what may be done to
+//! it — so for those the honest pair is "always offered" and the refusal
+//! `execute` states. Saying so in the test names is better than inventing a rule
+//! to satisfy the shape.
 
 use std::borrow::Cow;
 
@@ -18,13 +20,76 @@ use serde_json::{Value, json};
 use tt_spike::Error;
 use tt_spike::domains::issue::actions as issue_actions;
 use tt_spike::domains::issue::schemas as issue_schemas;
+use tt_spike::domains::issue::services as issue_services;
 use tt_spike::domains::issue::{self, Issue, Priority, Status};
 use tt_spike::domains::project::actions as project_actions;
 use tt_spike::domains::project::schemas as project_schemas;
+use tt_spike::domains::project::services as project_services;
 use tt_spike::domains::project::{self, Project, Restorable};
-use tt_spike::platform::action::{Action, Creator, Offered};
+use tt_spike::domains::schema;
+use tt_spike::platform::action::{Action, Offered};
+use tt_spike::platform::db::{self, Db};
 use tt_spike::platform::deleted::Deleted;
 use tt_spike::platform::wire;
+
+// --- fixtures -------------------------------------------------------------
+
+async fn fixture() -> Db {
+    let db = db::connect("sqlite::memory:").await.expect("connect");
+    schema::initialise(&db).await.expect("DDL");
+    db
+}
+
+async fn a_project(db: &Db, slug: &str) -> Project {
+    project_services::create_project(
+        db,
+        project::Draft {
+            slug: slug.into(),
+            title: slug.into(),
+            body: String::new(),
+        },
+    )
+    .await
+    .expect("create_project")
+}
+
+async fn an_issue(db: &Db, project: &Project, title: &str) -> Issue {
+    issue_services::create_issue(
+        db,
+        issue::Draft {
+            project_id: project.id,
+            title: title.into(),
+            body: String::new(),
+            priority: Priority::Normal,
+        },
+    )
+    .await
+    .expect("create_issue")
+}
+
+/// Run a typed action inside one transaction, committing on success so a later
+/// read sees what it wrote. This is `Action::run` with the transaction the
+/// frontends open around it.
+async fn run<A: Action>(db: &Db, obj: A::Obj, payload: A::Payload) -> Result<String, Error> {
+    db::transaction(db, async move |tx| A::run(obj, payload, tx).await).await
+}
+
+/// The same, through the erased wire path: decode the blob against the group,
+/// then run.
+async fn dispatch<O>(
+    db: &Db,
+    group: &[wire::Entry<O>],
+    obj: O,
+    key: &str,
+    payload: &Value,
+) -> Result<String, Error> {
+    db::transaction(db, async move |tx| {
+        wire::dispatch(group, obj, key, payload, tx).await
+    })
+    .await
+}
+
+// --- literals, for the availability cases ---------------------------------
 
 fn issue() -> Issue {
     Issue {
@@ -95,105 +160,170 @@ fn every_issue_edit_is_always_offered() {
     }
 }
 
-#[test]
-fn edit_title_trims_and_refuses_a_blank_title() {
-    let got = issue_actions::EditTitle::run(
-        issue(),
+#[tokio::test]
+async fn edit_title_trims_saves_and_refuses_a_blank_title() {
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
+    let seeded = an_issue(&db, &tt, "old").await;
+
+    let message = run::<issue_actions::EditTitle>(
+        &db,
+        seeded.clone(),
         issue_schemas::EditTitlePayload {
             title: " new ".into(),
         },
     )
+    .await
     .expect("editTitle should run");
-    assert_eq!(got.title, "new");
+    assert_eq!(message, "issue 1: saved");
+    let read = issue_services::issue(&db, seeded.id)
+        .await
+        .expect("load")
+        .expect("issue is there");
+    assert_eq!(read.title, "new");
 
     assert!(matches!(
-        issue_actions::EditTitle::run(
-            issue(),
+        run::<issue_actions::EditTitle>(
+            &db,
+            seeded,
             issue_schemas::EditTitlePayload {
                 title: "   ".into()
             }
-        ),
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
 }
 
-#[test]
-fn edit_body_accepts_the_blank_that_edit_title_refuses() {
-    // The same payload shape and a different rule, which is what an action
-    // still earns over a form generated from the schema.
-    let got = issue_actions::EditBody::run(
-        issue(),
+#[tokio::test]
+async fn edit_body_accepts_the_blank_that_edit_title_refuses() {
+    // The same payload shape and a different rule, which is what an action still
+    // earns over a form generated from the schema.
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
+    let seeded = an_issue(&db, &tt, "one").await;
+
+    run::<issue_actions::EditBody>(
+        &db,
+        seeded.clone(),
         issue_schemas::EditBodyPayload {
             body: String::new(),
         },
     )
+    .await
     .expect("editBody should run");
-    assert_eq!(got.body, "");
+    let read = issue_services::issue(&db, seeded.id)
+        .await
+        .expect("load")
+        .expect("issue is there");
+    assert_eq!(read.body, "");
 }
 
-#[test]
-fn edit_status_replaces_the_note_it_arrived_with() {
-    let noted = issue_actions::EditStatus::run(
-        issue(),
+#[tokio::test]
+async fn edit_status_replaces_the_note_it_arrived_with() {
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
+    let seeded = an_issue(&db, &tt, "one").await;
+
+    run::<issue_actions::EditStatus>(
+        &db,
+        seeded.clone(),
         issue_schemas::EditStatusPayload {
             status: Status::Doing,
             note: Some("started".into()),
         },
     )
+    .await
     .expect("editStatus should run");
+    let noted = issue_services::issue(&db, seeded.id)
+        .await
+        .expect("load")
+        .expect("issue is there");
     assert_eq!(noted.status, Status::Doing);
     assert_eq!(noted.status_note, Some("started".into()));
 
     // Moving without one clears the old note rather than leaving it to describe
     // a state the issue is no longer in.
-    let cleared = issue_actions::EditStatus::run(
+    run::<issue_actions::EditStatus>(
+        &db,
         noted,
         issue_schemas::EditStatusPayload {
             status: Status::Done,
             note: None,
         },
     )
+    .await
     .expect("editStatus should run");
+    let cleared = issue_services::issue(&db, seeded.id)
+        .await
+        .expect("load")
+        .expect("issue is there");
     assert_eq!(cleared.status_note, None);
 }
 
-#[test]
-fn edit_priority_sets_the_priority() {
-    let got = issue_actions::EditPriority::run(
-        issue(),
+#[tokio::test]
+async fn edit_priority_sets_the_priority() {
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
+    let seeded = an_issue(&db, &tt, "one").await;
+
+    run::<issue_actions::EditPriority>(
+        &db,
+        seeded.clone(),
         issue_schemas::EditPriorityPayload {
             priority: Priority::High,
         },
     )
+    .await
     .expect("editPriority should run");
-    assert_eq!(got.priority, Priority::High);
+    let read = issue_services::issue(&db, seeded.id)
+        .await
+        .expect("load")
+        .expect("issue is there");
+    assert_eq!(read.priority, Priority::High);
 }
 
-#[test]
-fn issue_delete_and_restore_are_the_identity() {
-    // What the write is lives entirely in the store call the group is paired
-    // with, because the column it sets is not on `Issue` at all.
-    let got = issue_actions::Delete::run(issue(), Default::default()).expect("delete should run");
-    assert_eq!(got, issue());
+#[tokio::test]
+async fn delete_hides_an_issue_and_restore_brings_it_back() {
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
+    let seeded = an_issue(&db, &tt, "here").await;
 
-    let deleted = Deleted {
-        inner: issue(),
-        deleted_at: "2026-01-02T00:00:00Z".into(),
-    };
+    let message = run::<issue_actions::Delete>(&db, seeded.clone(), Default::default())
+        .await
+        .expect("delete should run");
+    assert_eq!(message, "issue 1: deleted");
+    assert!(
+        issue_services::issue(&db, seeded.id)
+            .await
+            .expect("load")
+            .is_none()
+    );
+
+    let deleted = issue_services::trashed_issues(&db)
+        .await
+        .expect("trash")
+        .remove(0);
     assert_eq!(
         issue_actions::Restore::availability(&deleted),
         Some(Offered::Runnable)
     );
-    assert_eq!(
-        issue_actions::Restore::run(deleted.clone(), Default::default()),
-        Ok(deleted)
+    let message = run::<issue_actions::Restore>(&db, deleted, Default::default())
+        .await
+        .expect("restore should run");
+    assert_eq!(message, "issue 1: restored");
+    assert!(
+        issue_services::issue(&db, seeded.id)
+            .await
+            .expect("load")
+            .is_some()
     );
 }
 
 // --- projects: the half with preconditions --------------------------------
 
-#[test]
-fn edit_status_is_refused_while_anything_is_doing() {
+#[tokio::test]
+async fn edit_status_is_refused_while_anything_is_doing() {
     let busy = Project {
         doing: 1,
         ..project()
@@ -212,63 +342,97 @@ fn edit_status_is_refused_while_anything_is_doing() {
         Some(refused("finish or drop 3 issues first"))
     );
     // Stated against the object rather than the payload, so asking to stay
-    // active is refused too.
+    // active is refused too. The refusal is `run`'s, before any write.
+    let db = fixture().await;
     assert!(matches!(
-        project_actions::EditStatus::run(
+        run::<project_actions::EditStatus>(
+            &db,
             busy,
             project_schemas::EditStatusPayload {
                 status: project::Status::Active
             }
-        ),
+        )
+        .await,
         Err(Error::Conflict(_))
     ));
 }
 
-#[test]
-fn edit_status_is_runnable_once_nothing_is_doing() {
-    let quiet = Project {
-        todo: 2,
-        done: 1,
-        ..project()
-    };
+#[tokio::test]
+async fn edit_status_is_runnable_once_nothing_is_doing() {
+    let db = fixture().await;
+    let seeded = a_project(&db, "tt").await;
     assert_eq!(
-        project_actions::EditStatus::availability(&quiet),
+        project_actions::EditStatus::availability(&seeded),
         Some(Offered::Runnable)
     );
-    let archived = project_actions::EditStatus::run(
-        quiet,
+    let message = run::<project_actions::EditStatus>(
+        &db,
+        seeded,
         project_schemas::EditStatusPayload {
             status: project::Status::Archived,
         },
     )
+    .await
     .expect("editStatus should run");
-    assert_eq!(archived.status, project::Status::Archived);
+    assert_eq!(message, "project tt: saved");
+    assert_eq!(
+        project_services::project(&db, "tt")
+            .await
+            .expect("load")
+            .expect("project is there")
+            .status,
+        project::Status::Archived
+    );
 }
 
-#[test]
-fn delete_is_refused_while_the_project_is_active() {
+#[tokio::test]
+async fn delete_is_refused_while_the_project_is_active() {
     assert_eq!(
         project_actions::Delete::availability(&project()),
         Some(refused("archive it first"))
     );
+    let db = fixture().await;
+    let seeded = a_project(&db, "tt").await;
     assert!(matches!(
-        project_actions::Delete::run(project(), Default::default()),
+        run::<project_actions::Delete>(&db, seeded, Default::default()).await,
         Err(Error::Conflict(_))
     ));
 
-    let archived = Project {
-        status: project::Status::Archived,
-        ..project()
-    };
+    // Archive it, and it goes.
+    project_services::update_project(
+        &db,
+        &Project {
+            status: project::Status::Archived,
+            ..project_services::project(&db, "tt")
+                .await
+                .expect("load")
+                .expect("project is there")
+        },
+    )
+    .await
+    .expect("archive");
+    let archived = project_services::project(&db, "tt")
+        .await
+        .expect("load")
+        .expect("project is there");
     assert_eq!(
         project_actions::Delete::availability(&archived),
         Some(Offered::Runnable)
     );
-    assert!(project_actions::Delete::run(archived, Default::default()).is_ok());
+    let message = run::<project_actions::Delete>(&db, archived, Default::default())
+        .await
+        .expect("delete should run");
+    assert_eq!(message, "project tt: deleted");
+    assert!(
+        project_services::project(&db, "tt")
+            .await
+            .expect("load")
+            .is_none()
+    );
 }
 
-#[test]
-fn add_issue_is_refused_while_the_project_is_archived() {
+#[tokio::test]
+async fn add_issue_is_refused_while_the_project_is_archived() {
     let archived = Project {
         status: project::Status::Archived,
         ..project()
@@ -277,102 +441,122 @@ fn add_issue_is_refused_while_the_project_is_archived() {
         project_actions::AddIssue::availability(&archived),
         Some(refused("project is archived"))
     );
+    let db = fixture().await;
     assert!(matches!(
-        project_actions::AddIssue::run(
-            &archived,
+        run::<project_actions::AddIssue>(
+            &db,
+            archived,
             project_schemas::AddIssuePayload {
                 title: "nope".into(),
                 body: None,
                 priority: None,
             }
-        ),
+        )
+        .await,
         Err(Error::Conflict(_))
     ));
 }
 
-#[test]
-fn add_issue_defaults_what_the_payload_leaves_out() {
-    let draft = project_actions::AddIssue::run(
-        &project(),
+#[tokio::test]
+async fn add_issue_defaults_what_the_payload_leaves_out() {
+    let db = fixture().await;
+    let seeded = a_project(&db, "tt").await;
+    let message = run::<project_actions::AddIssue>(
+        &db,
+        seeded,
         project_schemas::AddIssuePayload {
             title: " ship it ".into(),
             body: None,
             priority: None,
         },
     )
+    .await
     .expect("addIssue should run");
-    assert_eq!(
-        draft,
-        issue::Draft {
-            project_id: 1,
-            title: "ship it".into(),
-            body: String::new(),
-            priority: Priority::Normal,
-        }
-    );
+    assert_eq!(message, "issue 1: created");
+    let issue = &issue_services::issues(&db, "tt").await.expect("issues")[0];
+    assert_eq!(issue.title, "ship it");
+    assert_eq!(issue.body, "");
+    assert_eq!(issue.priority, Priority::Normal);
+
     assert!(matches!(
-        project_actions::AddIssue::run(
-            &project(),
+        run::<project_actions::AddIssue>(
+            &db,
+            project_services::project(&db, "tt")
+                .await
+                .expect("load")
+                .expect("project is there"),
             project_schemas::AddIssuePayload {
                 title: "  ".into(),
                 body: None,
                 priority: None,
             }
-        ),
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
 }
 
-#[test]
-fn create_project_refuses_a_slug_the_list_already_holds() {
-    // A hook is given the parent and not the payload, so this cannot be an
-    // availability hook — the creator is always offered, and `create` is what
+#[tokio::test]
+async fn create_project_refuses_a_slug_the_list_already_holds() {
+    // A hook is given the object and not the payload, so this cannot be an
+    // availability hook — the creator is always offered, and `execute` is what
     // refuses.
     assert_eq!(
         project_actions::CreateProject::availability(&vec![project()]),
         Some(Offered::Runnable)
     );
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
     assert!(matches!(
-        project_actions::CreateProject::run(
-            &vec![project()],
+        run::<project_actions::CreateProject>(
+            &db,
+            vec![tt],
             project_schemas::CreateProjectPayload {
                 slug: "tt".into(),
                 title: None,
                 body: None,
             }
-        ),
+        )
+        .await,
         Err(Error::Conflict(_))
     ));
     assert!(matches!(
-        project_actions::CreateProject::run(
-            &vec![],
+        run::<project_actions::CreateProject>(
+            &db,
+            vec![],
             project_schemas::CreateProjectPayload {
                 slug: "  ".into(),
                 title: None,
                 body: None,
             }
-        ),
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
-    assert_eq!(
-        project_actions::CreateProject::run(
-            &vec![project()],
-            project_schemas::CreateProjectPayload {
-                slug: "other".into(),
-                title: Some("another".into()),
-                body: None,
-            }
-        ),
-        Ok(project::Draft {
+    let message = run::<project_actions::CreateProject>(
+        &db,
+        vec![],
+        project_schemas::CreateProjectPayload {
             slug: "other".into(),
-            title: "another".into(),
-            body: String::new(),
-        })
+            title: Some("another".into()),
+            body: None,
+        },
+    )
+    .await
+    .expect("createProject should run");
+    assert_eq!(message, "project other: created");
+    assert_eq!(
+        project_services::project(&db, "other")
+            .await
+            .expect("load")
+            .expect("project is there")
+            .title,
+        "another"
     );
 }
 
-#[test]
-fn restore_is_refused_once_the_slug_is_taken_again() {
+#[tokio::test]
+async fn restore_is_refused_once_the_slug_is_taken_again() {
     // The trash row alone cannot answer this, which is why the object `restore`
     // is offered against carries the live list as well.
     let restorable = |live: Vec<Project>| Restorable {
@@ -390,8 +574,9 @@ fn restore_is_refused_once_the_slug_is_taken_again() {
         project_actions::Restore::availability(&restorable(vec![project()])),
         Some(refused("project \"tt\" exists again"))
     );
+    let db = fixture().await;
     assert!(matches!(
-        project_actions::Restore::run(restorable(vec![project()]), Default::default()),
+        run::<project_actions::Restore>(&db, restorable(vec![project()]), Default::default()).await,
         Err(Error::Conflict(_))
     ));
 }
@@ -417,12 +602,21 @@ fn schema_of<O>(group: &[wire::Entry<O>], key: &str) -> Value {
 #[test]
 fn a_group_keeps_refused_actions_and_drops_absent_ones() {
     // Nothing in this spike is ever absent, so what is being shown is that a
-    // refusal survives to the menu with its reason attached — which is the
-    // whole of what availability buys a frontend.
+    // refusal survives to the menu with its reason attached — which is the whole
+    // of what availability buys a frontend.
     assert_eq!(
         keys(&issue_actions::group(), &issue()),
-        vec!["editTitle", "editBody", "editStatus", "editPriority"]
+        vec![
+            "editTitle",
+            "editBody",
+            "editStatus",
+            "editPriority",
+            "delete"
+        ]
     );
+    // An active project with two issues doing: the edits are offered, editStatus
+    // and delete come back refused, and addIssue is runnable — one group, told
+    // apart by what each `execute` writes rather than by which list it sat in.
     let busy = Project {
         doing: 2,
         ..project()
@@ -436,100 +630,155 @@ fn a_group_keeps_refused_actions_and_drops_absent_ones() {
             ("editTitle", Offered::Runnable),
             ("editBody", Offered::Runnable),
             ("editStatus", refused("finish or drop 2 issues first")),
+            ("delete", refused("archive it first")),
+            ("addIssue", Offered::Runnable),
         ]
     );
 }
 
-#[test]
-fn dispatch_refuses_what_availability_refused() {
+#[tokio::test]
+async fn dispatch_refuses_what_availability_refused() {
+    let db = fixture().await;
     assert!(matches!(
-        wire::dispatch(&project_actions::trash(), project(), "delete", &json!({})),
+        dispatch(
+            &db,
+            &project_actions::group(),
+            project(),
+            "delete",
+            &json!({})
+        )
+        .await,
         Err(Error::Conflict(_))
     ));
 }
 
-#[test]
-fn the_wire_agrees_with_the_typed_path() {
-    assert_eq!(
-        wire::dispatch(
-            &issue_actions::group(),
-            issue(),
-            "editTitle",
-            &json!({ "title": " new " })
-        ),
-        issue_actions::EditTitle::run(
-            issue(),
-            issue_schemas::EditTitlePayload {
-                title: " new ".into()
-            }
-        )
-    );
-    assert_eq!(
-        wire::create(
-            &project_actions::creators(),
-            &project(),
-            "addIssue",
-            &json!({ "title": "one" })
-        ),
-        project_actions::AddIssue::run(
-            &project(),
-            project_schemas::AddIssuePayload {
-                title: "one".into(),
-                body: None,
-                priority: None,
-            }
-        )
-    );
+#[tokio::test]
+async fn the_wire_agrees_with_the_typed_path() {
+    // Two fresh databases, each seeded the same way, so the erased path and the
+    // typed one produce the same message and the same row.
+    let erased = fixture().await;
+    let tt = a_project(&erased, "tt").await;
+    let seeded = an_issue(&erased, &tt, "old").await;
+    let via_wire = dispatch(
+        &erased,
+        &issue_actions::group(),
+        seeded,
+        "editTitle",
+        &json!({ "title": " new " }),
+    )
+    .await;
+
+    let typed = fixture().await;
+    let tt = a_project(&typed, "tt").await;
+    let seeded = an_issue(&typed, &tt, "old").await;
+    let via_typed = run::<issue_actions::EditTitle>(
+        &typed,
+        seeded,
+        issue_schemas::EditTitlePayload {
+            title: " new ".into(),
+        },
+    )
+    .await;
+
+    assert_eq!(via_wire, via_typed);
+    assert_eq!(via_wire, Ok("issue 1: saved".to_string()));
+
+    // The same for a creator, whose `execute` writes a different table. Each
+    // fresh database assigns the created issue id 1, so the messages match.
+    let erased = fixture().await;
+    let tt = a_project(&erased, "tt").await;
+    let via_wire = dispatch(
+        &erased,
+        &project_actions::group(),
+        tt,
+        "addIssue",
+        &json!({ "title": "one" }),
+    )
+    .await;
+
+    let typed = fixture().await;
+    let tt = a_project(&typed, "tt").await;
+    let via_typed = run::<project_actions::AddIssue>(
+        &typed,
+        tt,
+        project_schemas::AddIssuePayload {
+            title: "one".into(),
+            body: None,
+            priority: None,
+        },
+    )
+    .await;
+
+    assert_eq!(via_wire, via_typed);
+    assert_eq!(via_wire, Ok("issue 1: created".to_string()));
 }
 
-#[test]
-fn a_malformed_payload_is_invalid() {
+#[tokio::test]
+async fn a_malformed_payload_is_invalid() {
+    let db = fixture().await;
     for payload in [
         json!({}),                           // missing a required field
         json!({ "title": 5 }),               // wrong type
         json!({ "title": "x", "bogus": 1 }), // not advertised
     ] {
         assert!(matches!(
-            wire::dispatch(&issue_actions::group(), issue(), "editTitle", &payload),
+            dispatch(&db, &issue_actions::group(), issue(), "editTitle", &payload).await,
             Err(Error::Invalid(_))
         ));
     }
     // A value outside the enum, which is the one the schema could have told the
     // caller about in advance.
     assert!(matches!(
-        wire::dispatch(
+        dispatch(
+            &db,
             &issue_actions::group(),
             issue(),
             "editStatus",
             &json!({ "status": "shipped" })
-        ),
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
 }
 
-#[test]
-fn an_action_with_no_arguments_takes_an_empty_object_and_not_null() {
-    assert!(wire::dispatch(&issue_actions::trash(), issue(), "delete", &json!({})).is_ok());
+#[tokio::test]
+async fn an_action_with_no_arguments_takes_an_empty_object_and_not_null() {
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
+    let seeded = an_issue(&db, &tt, "here").await;
+    assert!(
+        dispatch(&db, &issue_actions::group(), seeded, "delete", &json!({}))
+            .await
+            .is_ok()
+    );
     assert!(matches!(
-        wire::dispatch(&issue_actions::trash(), issue(), "delete", &Value::Null),
+        dispatch(
+            &db,
+            &issue_actions::group(),
+            issue(),
+            "delete",
+            &Value::Null
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
 }
 
-#[test]
-fn an_unknown_key_is_invalid() {
+#[tokio::test]
+async fn an_unknown_key_is_invalid() {
+    let db = fixture().await;
     assert!(matches!(
-        wire::dispatch(&issue_actions::group(), issue(), "explode", &json!({})),
+        dispatch(&db, &issue_actions::group(), issue(), "explode", &json!({})).await,
         Err(Error::Invalid(_))
     ));
     assert!(matches!(
-        wire::create(&project_actions::root(), &vec![], "explode", &json!({})),
+        dispatch(&db, &project_actions::root(), vec![], "explode", &json!({})).await,
         Err(Error::Invalid(_))
     ));
 }
 
-#[test]
-fn one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on() {
+#[tokio::test]
+async fn one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on() {
     // `editTitle`, `editBody` and `editStatus` are registered against both
     // objects. In Rust these are distinct structs in distinct modules, so there
     // is nothing to collide; what is being asserted is that a dispatcher which
@@ -541,33 +790,40 @@ fn one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on() {
         assert!(issue_keys.contains(&key) && project_keys.contains(&key));
     }
 
+    let db = fixture().await;
     // A project status through the issue's `editStatus`.
     assert!(matches!(
-        wire::dispatch(
+        dispatch(
+            &db,
             &issue_actions::group(),
             issue(),
             "editStatus",
             &json!({ "status": "archived" })
-        ),
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
     // An issue status, and an issue-only field, through the project's.
     assert!(matches!(
-        wire::dispatch(
+        dispatch(
+            &db,
             &project_actions::group(),
             project(),
             "editStatus",
             &json!({ "status": "doing" })
-        ),
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
     assert!(matches!(
-        wire::dispatch(
+        dispatch(
+            &db,
             &project_actions::group(),
             project(),
             "editStatus",
             &json!({ "status": "active", "note": "why" })
-        ),
+        )
+        .await,
         Err(Error::Invalid(_))
     ));
 }
@@ -627,11 +883,7 @@ fn an_enum_field_is_a_ref_into_defs() {
 
 #[test]
 fn an_optional_enum_is_an_any_of_with_a_null_arm() {
-    let schema = project_actions::creators()
-        .into_iter()
-        .find(|entry| entry.key == "addIssue")
-        .expect("addIssue should be registered")
-        .schema;
+    let schema = schema_of(&project_actions::group(), "addIssue");
     assert_eq!(
         schema["properties"]["priority"],
         json!({
@@ -644,34 +896,41 @@ fn an_optional_enum_is_an_any_of_with_a_null_arm() {
 
 #[test]
 fn an_action_with_no_arguments_advertises_no_properties() {
-    let schema = schema_of(&issue_actions::trash(), "delete");
+    let schema = schema_of(&issue_actions::group(), "delete");
     assert_eq!(schema["type"], json!("object"));
     assert_eq!(schema["additionalProperties"], json!(false));
     assert!(schema.get("properties").is_none());
     assert!(schema.get("required").is_none());
 }
 
-#[test]
-fn the_advertised_schema_accepts_what_the_decoder_accepts() {
+#[tokio::test]
+async fn the_advertised_schema_accepts_what_the_decoder_accepts() {
     // `serde` and `schemars` read the same attributes, so the schema saying
     // `note` may be null and the decoder accepting null are one decision. The
     // OCaml side asserts the opposite, because its two ppxes are two programs.
+    let db = fixture().await;
+    let tt = a_project(&db, "tt").await;
+    let seeded = an_issue(&db, &tt, "one").await;
     assert!(
-        wire::dispatch(
+        dispatch(
+            &db,
             &issue_actions::group(),
-            issue(),
+            seeded.clone(),
             "editStatus",
             &json!({ "status": "doing", "note": null })
         )
+        .await
         .is_ok()
     );
     assert!(
-        wire::dispatch(
+        dispatch(
+            &db,
             &issue_actions::group(),
-            issue(),
+            seeded,
             "editStatus",
             &json!({ "status": "doing" })
         )
+        .await
         .is_ok()
     );
 }

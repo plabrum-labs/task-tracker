@@ -19,14 +19,14 @@ use std::collections::HashMap;
 use sea_orm::ActiveValue::{Set, Unchanged};
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, FromQueryResult, JoinType, QueryFilter, QueryOrder,
-    QuerySelect, RelationTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, JoinType,
+    QueryFilter, QueryOrder, QuerySelect, RelationTrait,
 };
 
 use crate::domains::issue::{self, Issue};
 use crate::domains::schema::{issues, projects};
 use crate::platform::clock;
-use crate::platform::db::{Db, StoreError};
+use crate::platform::db::StoreError;
 use crate::platform::deleted::Deleted;
 
 // --- reading --------------------------------------------------------------
@@ -86,8 +86,8 @@ struct CountRow {
 /// the caller. `COUNT(…) FILTER (…)` is reachable only through `Expr::cust`,
 /// which is dropping to raw SQL — the same position petrol leaves OCaml in, so
 /// the fold is kept and the equivalence recorded.
-pub(in crate::domains) async fn counts(
-    db: &Db,
+pub(in crate::domains) async fn counts<C: ConnectionTrait>(
+    db: &C,
 ) -> Result<HashMap<i64, (i64, i64, i64)>, StoreError> {
     let rows = issues::Entity::find()
         .select_only()
@@ -128,8 +128,8 @@ fn ordered_issues() -> sea_orm::Select<issues::Entity> {
         .order_by_asc(issues::Column::CreatedAt)
 }
 
-async fn load_issues(
-    db: &Db,
+async fn load_issues<C: ConnectionTrait>(
+    db: &C,
     query: sea_orm::Select<issues::Entity>,
 ) -> Result<Vec<(Issue, Option<String>)>, StoreError> {
     Ok(query
@@ -148,7 +148,10 @@ async fn load_issues(
 /// the project's `deleted_at` to be null, so soft-deleting a project hides its
 /// issues with one row written and restoring it brings back exactly the issues
 /// that were not deleted in their own right.
-pub async fn issues(db: &Db, project_slug: &str) -> Result<Vec<Issue>, StoreError> {
+pub async fn issues<C: ConnectionTrait>(
+    db: &C,
+    project_slug: &str,
+) -> Result<Vec<Issue>, StoreError> {
     let rows = load_issues(
         db,
         ordered_issues()
@@ -162,7 +165,7 @@ pub async fn issues(db: &Db, project_slug: &str) -> Result<Vec<Issue>, StoreErro
 
 /// The same liveness rule as [`issues`]: an issue of a deleted project is not
 /// found here either.
-pub async fn issue(db: &Db, id: i64) -> Result<Option<Issue>, StoreError> {
+pub async fn issue<C: ConnectionTrait>(db: &C, id: i64) -> Result<Option<Issue>, StoreError> {
     let rows = load_issues(
         db,
         ordered_issues()
@@ -174,7 +177,7 @@ pub async fn issue(db: &Db, id: i64) -> Result<Option<Issue>, StoreError> {
     Ok(rows.into_iter().next().map(|(issue, _)| issue))
 }
 
-async fn issue_by_id(db: &Db, id: i64) -> Result<Option<Issue>, StoreError> {
+async fn issue_by_id<C: ConnectionTrait>(db: &C, id: i64) -> Result<Option<Issue>, StoreError> {
     let rows = load_issues(
         db,
         ordered_issues()
@@ -187,7 +190,7 @@ async fn issue_by_id(db: &Db, id: i64) -> Result<Option<Issue>, StoreError> {
 
 /// An issue in the trash whose project also went is still worth printing, so
 /// this is the one read that asks nothing of the project but its slug.
-pub async fn trashed_issues(db: &Db) -> Result<Vec<Deleted<Issue>>, StoreError> {
+pub async fn trashed_issues<C: ConnectionTrait>(db: &C) -> Result<Vec<Deleted<Issue>>, StoreError> {
     let rows = load_issues(
         db,
         ordered_issues().filter(issues::Column::DeletedAt.is_not_null()),
@@ -208,10 +211,9 @@ pub async fn trashed_issues(db: &Db) -> Result<Vec<Deleted<Issue>>, StoreError> 
 
 /// `project_id` is not written: an issue does not move between projects.
 ///
-/// `updated_at` is stamped here rather than by the action, which keeps every
-/// `execute` a pure function of the object and its payload — the thing that
-/// lets the whole action layer be tested with no clock and no database.
-pub async fn update_issue(db: &Db, issue: &Issue) -> Result<(), StoreError> {
+/// `updated_at` is stamped here rather than by the action, so an `execute`
+/// states only the columns it changed and the clock stays in one place.
+pub async fn update_issue<C: ConnectionTrait>(db: &C, issue: &Issue) -> Result<(), StoreError> {
     issues::ActiveModel {
         id: Unchanged(issue.id),
         title: Set(issue.title.clone()),
@@ -229,7 +231,7 @@ pub async fn update_issue(db: &Db, issue: &Issue) -> Result<(), StoreError> {
 
 /// The soft delete, which is an update like any other — which is exactly why
 /// the type of what an action returned cannot say which of these to call.
-pub async fn delete_issue(db: &Db, issue: &Issue) -> Result<(), StoreError> {
+pub async fn delete_issue<C: ConnectionTrait>(db: &C, issue: &Issue) -> Result<(), StoreError> {
     let stamp = clock::now();
     issues::ActiveModel {
         id: Unchanged(issue.id),
@@ -244,7 +246,10 @@ pub async fn delete_issue(db: &Db, issue: &Issue) -> Result<(), StoreError> {
 
 /// Writing NULL is `Set(None)` — the same constructor an assignment uses, so a
 /// nullable column has one write path rather than petrol's two.
-pub async fn restore_issue(db: &Db, deleted: &Deleted<Issue>) -> Result<(), StoreError> {
+pub async fn restore_issue<C: ConnectionTrait>(
+    db: &C,
+    deleted: &Deleted<Issue>,
+) -> Result<(), StoreError> {
     issues::ActiveModel {
         id: Unchanged(deleted.inner.id),
         deleted_at: Set(None),
@@ -265,7 +270,10 @@ pub async fn restore_issue(db: &Db, deleted: &Deleted<Issue>) -> Result<(), Stor
 /// just written. Reading it back through the same projection every other read
 /// uses is what makes the returned value the stored object rather than a hopeful
 /// copy of the draft.
-pub async fn create_issue(db: &Db, draft: issue::Draft) -> Result<Issue, StoreError> {
+pub async fn create_issue<C: ConnectionTrait>(
+    db: &C,
+    draft: issue::Draft,
+) -> Result<Issue, StoreError> {
     let stamp = clock::now();
     let model = issues::ActiveModel {
         project_id: Set(draft.project_id),

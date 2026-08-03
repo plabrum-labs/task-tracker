@@ -1,7 +1,7 @@
 //! The erased path with a shell or an agent on the end of it.
 //!
-//! Same three calls as [`crate::tui`]: [`wire::available`] for what is on
-//! offer, [`form::of_schema`] for the arguments, [`wire::dispatch`] for the
+//! Same three calls as [`crate::frontend::tui`]: [`wire::available`] for what is
+//! on offer, [`form::of_schema`] for the arguments, [`wire::dispatch`] for the
 //! write. Nothing here names an action key — an action gets a subcommand
 //! because it is registered, and that subcommand's options are the fields its
 //! payload type derived. Adding a fifth issue action changes no line of this
@@ -14,12 +14,12 @@
 //! a person at a prompt. Both end at [`wire::dispatch`], so neither can reach
 //! an action the other cannot.
 //!
-//! What this file does name is which store call persists which group. That
-//! pairing is the one thing the framework's types do not decide: a creator is a
-//! different type from an action, so an `INSERT` cannot be reached from an
-//! edit, but a soft delete is an update like any other and
-//! [`project_services::delete_project`] has the same type as [`project_services::update_project`].
-//! [`project_write`] and [`issue_write`] are where that is settled, once each.
+//! What this file still states is how an address becomes an object. An action
+//! writes for itself; it does not know that a project is found by slug and a
+//! trash row by slug among the deleted. That pairing — a live object loaded one
+//! way, a deleted one the other — is the two arms each of [`project_write`] and
+//! [`issue_write`], inside one transaction so a refusal rolls the whole call
+//! back.
 //!
 //! `clap`'s **builder** API, not `derive`. The subcommands are generated from
 //! the registry at run time; a derived `enum Command` would name every action
@@ -33,6 +33,7 @@
 //! printing and the exit code.
 
 use clap::{Arg, ArgMatches, Command, builder::PossibleValuesParser};
+use sea_orm::ConnectionTrait;
 use serde_json::{Value, json};
 
 use crate::domains::issue::Issue;
@@ -42,11 +43,11 @@ use crate::domains::project::actions as project_actions;
 use crate::domains::project::services as project_services;
 use crate::domains::project::{Project, Restorable};
 use crate::platform::action::Offered;
-use crate::platform::db::Db;
+use crate::platform::db::{self, Db};
 use crate::platform::deleted::Deleted;
 use crate::platform::error::Error;
 use crate::platform::form::{self, Field, Kind};
-use crate::platform::wire::{self, CreatorEntry, Entry};
+use crate::platform::wire::{self, Entry};
 
 pub type Outcome = Result<String, Error>;
 
@@ -134,16 +135,12 @@ fn offers<O>(group: &[Entry<O>], obj: &O) -> Vec<Value> {
         .collect()
 }
 
-fn creator_offers<P, C>(group: &[CreatorEntry<P, C>], parent: &P) -> Vec<Value> {
-    wire::creators_available(group, parent)
-        .iter()
-        .map(|(entry, offered)| offer(entry.key, &entry.schema, offered))
-        .collect()
-}
-
 // --- resolution -----------------------------------------------------------
+//
+// Generic over the connection, so the same load runs against the live database
+// for a read and against an open transaction for a write.
 
-async fn live_project(db: &Db, slug: &str) -> Result<Project, Error> {
+async fn live_project<C: ConnectionTrait>(db: &C, slug: &str) -> Result<Project, Error> {
     project_services::project(db, slug)
         .await?
         .ok_or_else(|| Error::Invalid(format!("no project {slug:?}")))
@@ -151,7 +148,7 @@ async fn live_project(db: &Db, slug: &str) -> Result<Project, Error> {
 
 /// A trash row is loaded together with the live projects, because that is what
 /// `restore`'s refusal reads.
-async fn restorable_project(db: &Db, slug: &str) -> Result<Restorable, Error> {
+async fn restorable_project<C: ConnectionTrait>(db: &C, slug: &str) -> Result<Restorable, Error> {
     let deleted = project_services::trashed_projects(db)
         .await?
         .into_iter()
@@ -163,13 +160,13 @@ async fn restorable_project(db: &Db, slug: &str) -> Result<Restorable, Error> {
     })
 }
 
-async fn live_issue(db: &Db, id: i64) -> Result<Issue, Error> {
+async fn live_issue<C: ConnectionTrait>(db: &C, id: i64) -> Result<Issue, Error> {
     issue_services::issue(db, id)
         .await?
         .ok_or_else(|| Error::Invalid(format!("no issue {id}")))
 }
 
-async fn trashed_issue(db: &Db, id: i64) -> Result<Deleted<Issue>, Error> {
+async fn trashed_issue<C: ConnectionTrait>(db: &C, id: i64) -> Result<Deleted<Issue>, Error> {
     issue_services::trashed_issues(db)
         .await?
         .into_iter()
@@ -181,35 +178,36 @@ fn holds<O>(key: &str, group: &[Entry<O>]) -> bool {
     group.iter().any(|entry| entry.key == key)
 }
 
-fn creates<P, C>(key: &str, group: &[CreatorEntry<P, C>]) -> bool {
-    group.iter().any(|entry| entry.key == key)
-}
-
 // --- the writes -----------------------------------------------------------
+//
+// Load then dispatch, inside one transaction — so `Action::run` stays the only
+// path to a write, the hooks are checked against the row as it is now rather
+// than as some earlier `show` reported it, and a refusal after rows are written
+// rolls the whole call back. The store call each action ends in is the action's
+// own, done by its `execute`, so all that is left here is choosing which loader
+// an address becomes an object through: a live row for a `group` key, a
+// restorable one for a `deleted_group` key.
 
-/// Load, dispatch, persist — in that order, so `Action::run` stays the only
-/// path to a write and availability is checked against the row as it is now
-/// rather than as some earlier `show` reported it.
 async fn project_write(db: &Db, slug: &str, key: &str, payload: &Value) -> Outcome {
     if holds(key, &project_actions::group()) {
-        let project = live_project(db, slug).await?;
-        let updated = wire::dispatch(&project_actions::group(), project, key, payload)?;
-        project_services::update_project(db, &updated).await?;
-        Ok(project_line(&updated))
-    } else if holds(key, &project_actions::trash()) {
-        let project = live_project(db, slug).await?;
-        let deleted = wire::dispatch(&project_actions::trash(), project, key, payload)?;
-        project_services::delete_project(db, &deleted).await?;
-        Ok(format!("{}: deleted", deleted.subject()))
-    } else if creates(key, &project_actions::creators()) {
-        let project = live_project(db, slug).await?;
-        let draft = wire::create(&project_actions::creators(), &project, key, payload)?;
-        Ok(issue_line(&issue_services::create_issue(db, draft).await?))
+        db::transaction(db, async |tx| {
+            let project = live_project(tx, slug).await?;
+            wire::dispatch(&project_actions::group(), project, key, payload, tx).await
+        })
+        .await
     } else if holds(key, &project_actions::deleted_group()) {
-        let restorable = restorable_project(db, slug).await?;
-        let restored = wire::dispatch(&project_actions::deleted_group(), restorable, key, payload)?;
-        project_services::restore_project(db, &restored.deleted).await?;
-        Ok(format!("{}: restored", restored.deleted.inner.subject()))
+        db::transaction(db, async |tx| {
+            let restorable = restorable_project(tx, slug).await?;
+            wire::dispatch(
+                &project_actions::deleted_group(),
+                restorable,
+                key,
+                payload,
+                tx,
+            )
+            .await
+        })
+        .await
     } else {
         Err(Error::Invalid(format!("no action {key:?}")))
     }
@@ -217,33 +215,30 @@ async fn project_write(db: &Db, slug: &str, key: &str, payload: &Value) -> Outco
 
 async fn issue_write(db: &Db, id: i64, key: &str, payload: &Value) -> Outcome {
     if holds(key, &issue_actions::group()) {
-        let issue = live_issue(db, id).await?;
-        let updated = wire::dispatch(&issue_actions::group(), issue, key, payload)?;
-        issue_services::update_issue(db, &updated).await?;
-        Ok(issue_line(&updated))
-    } else if holds(key, &issue_actions::trash()) {
-        let issue = live_issue(db, id).await?;
-        let deleted = wire::dispatch(&issue_actions::trash(), issue, key, payload)?;
-        issue_services::delete_issue(db, &deleted).await?;
-        Ok(format!("{}: deleted", deleted.subject()))
+        db::transaction(db, async |tx| {
+            let issue = live_issue(tx, id).await?;
+            wire::dispatch(&issue_actions::group(), issue, key, payload, tx).await
+        })
+        .await
     } else if holds(key, &issue_actions::deleted_group()) {
-        let deleted = trashed_issue(db, id).await?;
-        let restored = wire::dispatch(&issue_actions::deleted_group(), deleted, key, payload)?;
-        issue_services::restore_issue(db, &restored).await?;
-        Ok(format!("{}: restored", restored.inner.subject()))
+        db::transaction(db, async |tx| {
+            let deleted = trashed_issue(tx, id).await?;
+            wire::dispatch(&issue_actions::deleted_group(), deleted, key, payload, tx).await
+        })
+        .await
     } else {
         Err(Error::Invalid(format!("no action {key:?}")))
     }
 }
 
-/// The root creator has no object to address, so its parent is the list of live
+/// The root creator has no object to address, so its object is the list of live
 /// projects — which is exactly what its uniqueness refusal has to read.
 async fn root_write(db: &Db, key: &str, payload: &Value) -> Outcome {
-    let projects = project_services::projects(db).await?;
-    let draft = wire::create(&project_actions::root(), &projects, key, payload)?;
-    Ok(project_line(
-        &project_services::create_project(db, draft).await?,
-    ))
+    db::transaction(db, async |tx| {
+        let projects = project_services::projects(tx).await?;
+        wire::dispatch(&project_actions::root(), projects, key, payload, tx).await
+    })
+    .await
 }
 
 // --- the reads ------------------------------------------------------------
@@ -277,9 +272,7 @@ async fn issue_ls(db: &Db, project_slug: Option<&str>) -> Outcome {
 
 async fn project_show(db: &Db, slug: &str) -> Outcome {
     let project = live_project(db, slug).await?;
-    let mut actions = offers(&project_actions::group(), &project);
-    actions.extend(offers(&project_actions::trash(), &project));
-    actions.extend(creator_offers(&project_actions::creators(), &project));
+    let actions = offers(&project_actions::group(), &project);
     Ok(pretty(
         &json!({ "project": project_json(&project), "actions": actions }),
     ))
@@ -287,8 +280,7 @@ async fn project_show(db: &Db, slug: &str) -> Outcome {
 
 async fn issue_show(db: &Db, id: i64) -> Outcome {
     let issue = live_issue(db, id).await?;
-    let mut actions = offers(&issue_actions::group(), &issue);
-    actions.extend(offers(&issue_actions::trash(), &issue));
+    let actions = offers(&issue_actions::group(), &issue);
     Ok(pretty(
         &json!({ "issue": issue_json(&issue), "actions": actions }),
     ))
@@ -338,18 +330,12 @@ fn pretty(value: &Value) -> String {
 
 /// Every key one kind of object answers to, with the schema it advertises.
 ///
-/// Four groups flattened into one list, because a subcommand is a subcommand
+/// Two groups flattened into one list, because a subcommand is a subcommand
 /// whether the write behind it is an `UPDATE`, an `INSERT` or a soft delete.
-/// Which of those it is stays [`project_write`]'s business.
+/// Which of those it is stays the action's `execute`'s business.
 fn project_keys() -> Vec<(&'static str, Value)> {
     let mut keys: Vec<(&'static str, Value)> = Vec::new();
     for entry in project_actions::group() {
-        keys.push((entry.key, entry.schema));
-    }
-    for entry in project_actions::trash() {
-        keys.push((entry.key, entry.schema));
-    }
-    for entry in project_actions::creators() {
         keys.push((entry.key, entry.schema));
     }
     for entry in project_actions::deleted_group() {
@@ -361,9 +347,6 @@ fn project_keys() -> Vec<(&'static str, Value)> {
 fn issue_keys() -> Vec<(&'static str, Value)> {
     let mut keys: Vec<(&'static str, Value)> = Vec::new();
     for entry in issue_actions::group() {
-        keys.push((entry.key, entry.schema));
-    }
-    for entry in issue_actions::trash() {
         keys.push((entry.key, entry.schema));
     }
     for entry in issue_actions::deleted_group() {

@@ -1,6 +1,6 @@
 //! The erased path with a person on the end of it.
 //!
-//! Same three calls as [`crate::cli`]: [`wire::available`] for the menu,
+//! Same three calls as [`crate::frontend::cli`]: [`wire::available`] for the menu,
 //! [`form::of_schema`] for the arguments, [`wire::dispatch`] for the write.
 //! Nothing here names an action key — a row appears in a menu because the
 //! action is registered, and its form has the fields its payload type derived.
@@ -41,10 +41,10 @@ use crate::domains::issue::services as issue_services;
 use crate::domains::project::actions as project_actions;
 use crate::domains::project::services as project_services;
 use crate::platform::action::Offered;
-use crate::platform::db::Db;
+use crate::platform::db::{self, Db};
 use crate::platform::error::Error;
 use crate::platform::form::{self, Kind};
-use crate::platform::wire::{self, CreatorEntry, Entry};
+use crate::platform::wire::{self, Entry};
 
 pub const BROWSING: &str = "up/down to move, enter to pick, esc to go back, q to quit";
 pub const FILLING: &str = "tab to move, left/right to choose, enter to submit, esc to go back";
@@ -69,28 +69,15 @@ impl Screen {
     }
 }
 
-/// Which store call persists what the dispatch returned.
-///
-/// This is the one thing the framework's types do not decide — a creator is a
-/// different type from an action, so an `INSERT` cannot be reached from an
-/// edit, but a soft delete is an update like any other. Carrying it as a tag
-/// rather than as a closure is what keeps [`Row`] a type this file can name:
-/// an async closure per row would have to be a boxed future, where the OCaml
-/// side closes over an Lwt promise for nothing. The tag is matched
-/// exhaustively in [`persist`], which is the compensation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Persist {
-    CreateProject,
-    UpdateProject,
-    DeleteProject,
-    CreateIssue,
-    UpdateIssue,
-    DeleteIssue,
-}
-
 /// A row is either somewhere to go or something to do. A refused `Do` stays in
 /// the list with its reason rather than being dropped, which is the whole of
 /// what availability buys a person over a fixed set of commands.
+///
+/// A `Do` carries the key it would run and nothing else — no object, no closure
+/// and no tag for which store call to make. Each screen is about one object,
+/// and that object is the whole of what determines its group, so [`write`]
+/// loads the row again and dispatches against the group the screen already
+/// implies. What each action then writes is the action's own business.
 #[derive(Debug, Clone)]
 pub enum Row {
     Go {
@@ -101,7 +88,6 @@ pub enum Row {
         key: String,
         offered: Offered,
         schema: Value,
-        persist: Persist,
     },
 }
 
@@ -152,7 +138,6 @@ pub struct Form {
     pub key: String,
     pub entries: Vec<Entered>,
     pub focus: usize,
-    pub persist: Persist,
 }
 
 #[derive(Debug, Clone)]
@@ -204,26 +189,13 @@ pub enum Intent {
 
 // --- rows -----------------------------------------------------------------
 
-fn action_rows<O>(group: &[Entry<O>], obj: &O, persist: Persist) -> Vec<Row> {
+fn action_rows<O>(group: &[Entry<O>], obj: &O) -> Vec<Row> {
     wire::available(group, obj)
         .into_iter()
         .map(|(entry, offered)| Row::Do {
             key: entry.key.to_string(),
             offered,
             schema: entry.schema.clone(),
-            persist,
-        })
-        .collect()
-}
-
-fn creator_rows<P, C>(group: &[CreatorEntry<P, C>], parent: &P, persist: Persist) -> Vec<Row> {
-    wire::creators_available(group, parent)
-        .into_iter()
-        .map(|(entry, offered)| Row::Do {
-            key: entry.key.to_string(),
-            offered,
-            schema: entry.schema.clone(),
-            persist,
         })
         .collect()
 }
@@ -234,8 +206,7 @@ pub async fn load(db: &Db, screen: &Screen) -> Result<(String, Vec<Row>), Error>
     match screen {
         Screen::Projects => {
             let projects = project_services::projects(db).await?;
-            let mut rows =
-                creator_rows(&project_actions::root(), &projects, Persist::CreateProject);
+            let mut rows = action_rows(&project_actions::root(), &projects);
             rows.extend(projects.iter().map(|p| Row::Go {
                 label: format!(
                     "{:<12} {:<24} {:<8} {}/{}/{}",
@@ -255,17 +226,7 @@ pub async fn load(db: &Db, screen: &Screen) -> Result<(String, Vec<Row>), Error>
                 .await?
                 .ok_or_else(|| Error::Invalid(format!("no project {slug:?}")))?;
             let issues = issue_services::issues(db, slug).await?;
-            let mut rows = action_rows(&project_actions::group(), &project, Persist::UpdateProject);
-            rows.extend(action_rows(
-                &project_actions::trash(),
-                &project,
-                Persist::DeleteProject,
-            ));
-            rows.extend(creator_rows(
-                &project_actions::creators(),
-                &project,
-                Persist::CreateIssue,
-            ));
+            let mut rows = action_rows(&project_actions::group(), &project);
             rows.extend(issues.iter().map(|i| Row::Go {
                 label: format!(
                     "{:<4} {:<8} {:<6} {}",
@@ -285,12 +246,7 @@ pub async fn load(db: &Db, screen: &Screen) -> Result<(String, Vec<Row>), Error>
             let issue = issue_services::issue(db, *id)
                 .await?
                 .ok_or_else(|| Error::Invalid(format!("no issue {id}")))?;
-            let mut rows = action_rows(&issue_actions::group(), &issue, Persist::UpdateIssue);
-            rows.extend(action_rows(
-                &issue_actions::trash(),
-                &issue,
-                Persist::DeleteIssue,
-            ));
+            let rows = action_rows(&issue_actions::group(), &issue);
             Ok((format!("{}: {}", issue.subject(), issue.title), rows))
         }
     }
@@ -298,77 +254,38 @@ pub async fn load(db: &Db, screen: &Screen) -> Result<(String, Vec<Row>), Error>
 
 // --- the write ------------------------------------------------------------
 
-/// Dispatch, then persist. The object is loaded here rather than carried on the
-/// row, so what was drawn stays a snapshot and availability is checked against
-/// the row as it is now.
-///
-/// The `match` is exhaustive over [`Persist`], which is what a tag buys back
-/// over a closure: adding a seventh store call is a compile error here rather
-/// than a row that quietly persists nothing.
-async fn persist(
-    db: &Db,
-    screen: &Screen,
-    persist: Persist,
-    key: &str,
-    payload: &Value,
-) -> Result<String, Error> {
-    match persist {
-        Persist::CreateProject => {
-            let projects = project_services::projects(db).await?;
-            let draft = wire::create(&project_actions::root(), &projects, key, payload)?;
-            let project = project_services::create_project(db, draft).await?;
-            Ok(format!("{}: created", project.subject()))
-        }
-        Persist::UpdateProject => {
-            let project = live_project(db, screen).await?;
-            let updated = wire::dispatch(&project_actions::group(), project, key, payload)?;
-            project_services::update_project(db, &updated).await?;
-            Ok(format!("{key}: saved"))
-        }
-        Persist::DeleteProject => {
-            let project = live_project(db, screen).await?;
-            let deleted = wire::dispatch(&project_actions::trash(), project, key, payload)?;
-            project_services::delete_project(db, &deleted).await?;
-            Ok(format!("{}: deleted", deleted.subject()))
-        }
-        Persist::CreateIssue => {
-            let project = live_project(db, screen).await?;
-            let draft = wire::create(&project_actions::creators(), &project, key, payload)?;
-            let issue = issue_services::create_issue(db, draft).await?;
-            Ok(format!("{}: created", issue.subject()))
-        }
-        Persist::UpdateIssue => {
-            let issue = live_issue(db, screen).await?;
-            let updated = wire::dispatch(&issue_actions::group(), issue, key, payload)?;
-            issue_services::update_issue(db, &updated).await?;
-            Ok(format!("{key}: saved"))
-        }
-        Persist::DeleteIssue => {
-            let issue = live_issue(db, screen).await?;
-            let deleted = wire::dispatch(&issue_actions::trash(), issue, key, payload)?;
-            issue_services::delete_issue(db, &deleted).await?;
-            Ok(format!("{}: deleted", deleted.subject()))
-        }
-    }
-}
-
-async fn live_project(db: &Db, screen: &Screen) -> Result<crate::domains::project::Project, Error> {
-    let slug = match screen {
-        Screen::Issues(slug) => slug.clone(),
-        Screen::Detail { project, .. } => project.clone(),
-        Screen::Projects => return Err(Error::Invalid("no project here".into())),
-    };
-    project_services::project(db, &slug)
-        .await?
-        .ok_or_else(|| Error::Invalid(format!("no project {slug:?}")))
-}
-
-async fn live_issue(db: &Db, screen: &Screen) -> Result<crate::domains::issue::Issue, Error> {
+/// Load, then dispatch, inside one transaction. The store call each action ends
+/// in is the action's own, done by its `execute`; each screen is about one
+/// object, and that object is the whole of what determines its group — so there
+/// is no group-by-group pairing left to write here, only which object the
+/// screen loads. A refusal rolls the call back.
+async fn write(db: &Db, screen: &Screen, key: &str, payload: &Value) -> Result<String, Error> {
     match screen {
-        Screen::Detail { id, .. } => issue_services::issue(db, *id)
-            .await?
-            .ok_or_else(|| Error::Invalid(format!("no issue {id}"))),
-        _ => Err(Error::Invalid("no issue here".into())),
+        Screen::Projects => {
+            db::transaction(db, async |tx| {
+                let projects = project_services::projects(tx).await?;
+                wire::dispatch(&project_actions::root(), projects, key, payload, tx).await
+            })
+            .await
+        }
+        Screen::Issues(slug) => {
+            db::transaction(db, async |tx| {
+                let project = project_services::project(tx, slug)
+                    .await?
+                    .ok_or_else(|| Error::Invalid(format!("no project {slug:?}")))?;
+                wire::dispatch(&project_actions::group(), project, key, payload, tx).await
+            })
+            .await
+        }
+        Screen::Detail { id, .. } => {
+            db::transaction(db, async |tx| {
+                let issue = issue_services::issue(tx, *id)
+                    .await?
+                    .ok_or_else(|| Error::Invalid(format!("no issue {id}")))?;
+                wire::dispatch(&issue_actions::group(), issue, key, payload, tx).await
+            })
+            .await
+        }
     }
 }
 
@@ -480,12 +397,7 @@ pub async fn apply(db: &Db, mut state: State, intent: Intent) -> State {
                 state.status = format!("{key}: {reason}");
                 state
             }
-            Some(Row::Do {
-                key,
-                schema,
-                persist,
-                ..
-            }) => {
+            Some(Row::Do { key, schema, .. }) => {
                 // A schema the form cannot render is reported rather than
                 // approximated, so an action is never handed a payload missing
                 // half of what it asked for.
@@ -505,7 +417,6 @@ pub async fn apply(db: &Db, mut state: State, intent: Intent) -> State {
                                 })
                                 .collect(),
                             focus: 0,
-                            persist,
                         });
                         state.status = FILLING.to_string();
                         state
@@ -557,7 +468,7 @@ pub async fn apply(db: &Db, mut state: State, intent: Intent) -> State {
                 .map(|e| (e.field.clone(), e.control.value()))
                 .collect();
             let payload = form::payload(&values);
-            match persist(db, &state.screen, form.persist, &form.key, &payload).await {
+            match write(db, &state.screen, &form.key, &payload).await {
                 // A refusal leaves the form up with its values intact, because
                 // that is where the fix usually is.
                 Err(e) => {

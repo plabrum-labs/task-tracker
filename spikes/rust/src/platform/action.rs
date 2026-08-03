@@ -2,10 +2,17 @@
 //!
 //! Nothing in this file mentions `serde` or `serde_json`. `Payload` carries no
 //! bounds — an action is free to have a payload that is not serialisable at
-//! all. The JSON edge both frontends talk to is [`crate::platform::wire`], which adds the
-//! bounds where they belong.
+//! all. The JSON edge both frontends talk to is [`crate::platform::wire`],
+//! which adds the bounds where they belong.
+//!
+//! `execute` is handed the open transaction and writes for itself. There is no
+//! second trait for creation: an `INSERT` and an `UPDATE` are both just things
+//! an `execute` body does with the connection it holds, so what tells them
+//! apart is the write each one issues, not the type each one returns.
 
 use std::borrow::Cow;
+
+use sea_orm::DatabaseTransaction;
 
 use crate::platform::error::Error;
 
@@ -27,19 +34,19 @@ pub enum Offered {
 /// Whether one action applies to one object, and if so whether it can run.
 ///
 /// `None` is "does not apply to this object at all — not offered". Naming it
-/// `Option` is what lets [`crate::platform::wire::available`] return `Offered`, so a
-/// caller of that function cannot be handed an absent action.
+/// `Option` is what lets [`crate::platform::wire::available`] return `Offered`,
+/// so a caller of that function cannot be handed an absent action.
 pub type Availability = Option<Offered>;
 
 /// Proof that availability was checked. Its field is private, so no module but
 /// this one can build one — which is what makes [`Action::run`] the only way to
-/// reach [`Action::execute`], and [`Creator::run`] the only way to reach
-/// [`Creator::create`].
+/// reach [`Action::execute`].
+///
+/// It is the Rust half of the enforcement guarantee: a token that only
+/// [`enforce`] mints, threaded into a body that cannot be reached without it.
 pub struct Checked(());
 
-/// The decision both traits make out of their two hooks. Extracted so that what
-/// [`Action`] and [`Creator`] duplicate is two signatures rather than two
-/// copies of the rule.
+/// The decision an action makes out of its two hooks.
 fn decide(available: bool, disabled: Option<Cow<'static, str>>) -> Availability {
     if !available {
         None
@@ -78,7 +85,23 @@ pub trait Action {
         None
     }
 
-    fn execute(obj: Self::Obj, payload: Self::Payload, _: Checked) -> Result<Self::Obj, Error>;
+    /// Do the thing, on the open transaction, and return the message a frontend
+    /// reports. An edit is an `UPDATE`, a delete stamps `deleted_at`, a creator
+    /// `INSERT`s a different table — and nothing outside the body says which.
+    ///
+    /// This is the one place a concrete [`DatabaseTransaction`] is named rather
+    /// than a connection type parameter. OCaml keeps the connection opaque and
+    /// threads it through, but Rust's boxed-future erasure (see
+    /// [`crate::platform::wire`]) makes the generic form costly for no gain
+    /// here, so the transaction is spelled out. A service query stays generic
+    /// over the connection, so the body still runs the same read against the
+    /// live database or against this transaction.
+    fn execute(
+        obj: Self::Obj,
+        payload: Self::Payload,
+        tx: &DatabaseTransaction,
+        _: Checked,
+    ) -> impl std::future::Future<Output = Result<String, Error>>;
 
     fn availability(obj: &Self::Obj) -> Availability {
         decide(Self::is_available(obj), Self::is_disabled(obj))
@@ -87,52 +110,14 @@ pub trait Action {
     /// Availability is enforced here rather than at the edge, so a caller that
     /// already holds a payload cannot skip it. [`crate::platform::wire::dispatch`]
     /// decodes and then comes through this.
-    fn run(obj: Self::Obj, payload: Self::Payload) -> Result<Self::Obj, Error> {
-        let checked = enforce(Self::KEY, Self::availability(&obj))?;
-        Self::execute(obj, payload, checked)
-    }
-}
-
-/// One action over a parent, producing a child that does not exist yet.
-///
-/// Deliberately not [`Action`] at `Obj = Parent = Child`. The store `INSERT`s
-/// what one returns and `UPDATE`s what the other returns, and no field of
-/// either says which — so a single type covering both would make the store's
-/// dispatch unsound. Rust's traits are nominal, so keeping the two apart costs
-/// nothing at the use site; the cost is the duplicated default-method bodies
-/// below, which is what [`decide`] and [`enforce`] hold down to two signatures.
-pub trait Creator {
-    type Parent;
-    type Payload;
-    type Child;
-
-    const KEY: &str;
-
-    fn is_available(_parent: &Self::Parent) -> bool {
-        true
-    }
-
-    fn is_disabled(_parent: &Self::Parent) -> Option<Cow<'static, str>> {
-        None
-    }
-
-    /// The parent is borrowed rather than consumed: making a child leaves it
-    /// where it was, which is the other half of what stops this being an
-    /// [`Action`].
-    fn create(
-        parent: &Self::Parent,
+    fn run(
+        obj: Self::Obj,
         payload: Self::Payload,
-        _: Checked,
-    ) -> Result<Self::Child, Error>;
-
-    fn availability(parent: &Self::Parent) -> Availability {
-        decide(Self::is_available(parent), Self::is_disabled(parent))
-    }
-
-    /// The enforcement point for a creator, exactly as [`Action::run`] is for
-    /// an action, and private for the same reason.
-    fn run(parent: &Self::Parent, payload: Self::Payload) -> Result<Self::Child, Error> {
-        let checked = enforce(Self::KEY, Self::availability(parent))?;
-        Self::create(parent, payload, checked)
+        tx: &DatabaseTransaction,
+    ) -> impl std::future::Future<Output = Result<String, Error>> {
+        async move {
+            let checked = enforce(Self::KEY, Self::availability(&obj))?;
+            Self::execute(obj, payload, tx, checked).await
+        }
     }
 }

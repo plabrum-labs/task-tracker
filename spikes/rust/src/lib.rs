@@ -25,7 +25,7 @@ pub mod platform;
 
 pub use domains::issue::Issue;
 pub use domains::project::Project;
-pub use platform::action::{Action, Creator, Offered};
+pub use platform::action::{Action, Offered};
 pub use platform::deleted::Deleted;
 pub use platform::error::Error;
-pub use platform::wire::{CreatorEntry, CreatorGroup, Entry, Group};
+pub use platform::wire::{Entry, Group};

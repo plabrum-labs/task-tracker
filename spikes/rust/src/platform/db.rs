@@ -18,7 +18,12 @@
 
 use std::fmt;
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
+use sea_orm::{
+    ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction, DbBackend, DbErr,
+    Statement, TransactionTrait,
+};
+
+use crate::platform::error::Error;
 
 pub type Db = DatabaseConnection;
 
@@ -61,6 +66,38 @@ impl From<DbErr> for StoreError {
 /// test fixture is one `connect`.
 pub async fn connect(url: &str) -> Result<Db, StoreError> {
     Ok(Database::connect(url).await?)
+}
+
+/// One public call is one transaction. `f` runs inside `BEGIN`…`COMMIT`; any
+/// [`Error`] it returns — including one after rows are written — rolls the whole
+/// thing back. The frontends open this at their edge and hand the transaction
+/// down to an action's `execute`, so what an action does is undone in full if
+/// it, or anything after it, says no.
+///
+/// OCaml's `Db.transaction` takes a `unit -> result` because its connection is
+/// ambient; Rust's is not, so `f` is an async closure handed the open
+/// transaction to borrow. That borrow living across the `await` is exactly what
+/// the async-closure traits were added to express, and it is why this stays one
+/// helper rather than a begin/commit dance repeated at every write.
+///
+/// A driver-level failure — `begin`, `commit` or `rollback` — is the machine
+/// saying no rather than the row, so it reaches a caller as [`Error::Broken`]
+/// through [`StoreError`].
+pub async fn transaction<T, F>(db: &Db, f: F) -> Result<T, Error>
+where
+    F: AsyncFnOnce(&DatabaseTransaction) -> Result<T, Error>,
+{
+    let tx = db.begin().await.map_err(StoreError::from)?;
+    match f(&tx).await {
+        Ok(value) => {
+            tx.commit().await.map_err(StoreError::from)?;
+            Ok(value)
+        }
+        Err(e) => {
+            tx.rollback().await.map_err(StoreError::from)?;
+            Err(e)
+        }
+    }
 }
 
 /// Applies a DDL text, which is safe on a database that already has the tables.

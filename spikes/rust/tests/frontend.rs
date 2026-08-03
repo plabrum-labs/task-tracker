@@ -25,7 +25,6 @@ use tt_spike::platform::form::{self, Field, Kind};
 fn schema(key: &str) -> Value {
     issue_actions::group()
         .into_iter()
-        .chain(issue_actions::trash())
         .find(|entry| entry.key == key)
         .expect("action should be registered")
         .schema
@@ -59,7 +58,7 @@ fn an_enum_field_becomes_a_selector_over_the_values_the_schema_advertises() {
 fn the_fields_are_in_the_order_the_payload_type_declares_them() {
     // Alphabetically this would be body, priority, title. It is not, because
     // `serde_json` is built with `preserve_order`.
-    let schema = project_actions::creators()
+    let schema = project_actions::group()
         .into_iter()
         .find(|entry| entry.key == "addIssue")
         .expect("addIssue should be registered")
@@ -91,8 +90,8 @@ fn a_schema_the_form_cannot_render_fails_the_whole_form() {
     assert!(form::of_schema(&json!({ "type": "null" })).is_err());
 }
 
-#[test]
-fn a_blank_optional_field_submits_the_null_its_schema_advertises() {
+#[tokio::test]
+async fn a_blank_optional_field_submits_the_null_its_schema_advertises() {
     let fields = form::of_schema(&schema("editStatus")).expect("editStatus should render");
     let values = vec![
         (fields[0].clone(), "doing".to_string()),
@@ -104,51 +103,41 @@ fn a_blank_optional_field_submits_the_null_its_schema_advertises() {
     // And the decoder accepts exactly that, which is the assertion the OCaml
     // side cannot make: there, `[@jsonschema.option]` advertises the null that
     // `[@yojson.option]` refuses, so the only encoding both halves accept is to
-    // omit the field.
-    let issue = tt_spike::platform::wire::dispatch(
-        &issue_actions::group(),
-        an_issue(),
-        "editStatus",
-        &payload,
-    )
-    .expect("the schema's own null should decode");
+    // omit the field. The dispatch writes, so reading the issue back shows the
+    // null cleared the note.
+    let db = seeded().await;
+    dispatch_issue(&db, "editStatus", &payload)
+        .await
+        .expect("the schema's own null should decode");
+    let issue = issue_services::issue(&db, 1)
+        .await
+        .expect("load")
+        .expect("issue is there");
     assert_eq!(issue.status_note, None);
 }
 
-#[test]
-fn a_blank_required_text_field_is_submitted_and_refused_by_the_action() {
+#[tokio::test]
+async fn a_blank_required_text_field_is_submitted_and_refused_by_the_action() {
     // The form does not second-guess `execute`; a form that did would be a
     // second place that has to agree.
     let fields = form::of_schema(&schema("editTitle")).expect("editTitle should render");
     let payload = form::payload(&[(fields[0].clone(), String::new())]);
     assert_eq!(payload, json!({ "title": "" }));
-    assert!(
-        tt_spike::platform::wire::dispatch(
-            &issue_actions::group(),
-            an_issue(),
-            "editTitle",
-            &payload
-        )
-        .is_err()
-    );
-}
-
-fn an_issue() -> issue::Issue {
-    issue::Issue {
-        id: 1,
-        project_id: 1,
-        project_slug: "tt".into(),
-        title: "a title".into(),
-        body: String::new(),
-        status: issue::Status::Todo,
-        priority: Priority::Normal,
-        status_note: None,
-        created_at: "2026-01-01T00:00:00Z".into(),
-        updated_at: "2026-01-01T00:00:00Z".into(),
-    }
+    let db = seeded().await;
+    assert!(dispatch_issue(&db, "editTitle", &payload).await.is_err());
 }
 
 // --- the TUI --------------------------------------------------------------
+
+/// Dispatch one issue action against issue 1 inside a transaction, the way a
+/// frontend's write does.
+async fn dispatch_issue(db: &Db, key: &str, payload: &Value) -> Result<String, tt_spike::Error> {
+    db::transaction(db, async |tx| {
+        let issue = issue_services::issue(tx, 1).await?.expect("issue is there");
+        tt_spike::platform::wire::dispatch(&issue_actions::group(), issue, key, payload, tx).await
+    })
+    .await
+}
 
 async fn seeded() -> Db {
     let db = db::connect("sqlite::memory:").await.expect("connect");
