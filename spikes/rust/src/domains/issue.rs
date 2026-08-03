@@ -16,6 +16,7 @@ use sea_orm::entity::prelude::{DeriveActiveEnum, EnumIter};
 use serde::{Deserialize, Serialize};
 
 pub mod actions;
+pub mod schemas;
 pub mod services;
 
 // One `#[serde(rename_all)]` gives the decoder, the encoder and the schema,

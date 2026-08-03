@@ -19,31 +19,25 @@
 //! sees: it becomes the `--help` text of a CLI option and the label beside a
 //! TUI field, neither of which the OCaml side has anything to fill.
 
-use schemars::JsonSchema;
-use serde::Deserialize;
-
-use crate::domains::issue::{Issue, Priority, Status};
+use crate::domains::issue::{Issue, schemas};
 use crate::platform::action::{Action, Checked};
 use crate::platform::deleted::Deleted;
 use crate::platform::error::Error;
 use crate::platform::wire::{Empty, Entry, Group};
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditTitlePayload {
-    /// What to call the issue.
-    pub title: String,
-}
-
 pub struct EditTitle;
 
 impl Action for EditTitle {
     type Obj = Issue;
-    type Payload = EditTitlePayload;
+    type Payload = schemas::EditTitlePayload;
 
     const KEY: &str = "editTitle";
 
-    fn execute(issue: Issue, payload: EditTitlePayload, _: Checked) -> Result<Issue, Error> {
+    fn execute(
+        issue: Issue,
+        payload: schemas::EditTitlePayload,
+        _: Checked,
+    ) -> Result<Issue, Error> {
         let title = payload.title.trim();
         if title.is_empty() {
             return Err(Error::Invalid("title is required".into()));
@@ -55,13 +49,6 @@ impl Action for EditTitle {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditBodyPayload {
-    /// The issue's description. Blank clears it.
-    pub body: String,
-}
-
 pub struct EditBody;
 
 // The same payload shape as `editTitle` and a different rule: a blank body is
@@ -69,25 +56,20 @@ pub struct EditBody;
 // an action still earns its keep over a generated form.
 impl Action for EditBody {
     type Obj = Issue;
-    type Payload = EditBodyPayload;
+    type Payload = schemas::EditBodyPayload;
 
     const KEY: &str = "editBody";
 
-    fn execute(issue: Issue, payload: EditBodyPayload, _: Checked) -> Result<Issue, Error> {
+    fn execute(
+        issue: Issue,
+        payload: schemas::EditBodyPayload,
+        _: Checked,
+    ) -> Result<Issue, Error> {
         Ok(Issue {
             body: payload.body,
             ..issue
         })
     }
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditStatusPayload {
-    /// Where the issue is up to.
-    pub status: Status,
-    /// What to record about the move.
-    pub note: Option<String>,
 }
 
 pub struct EditStatus;
@@ -97,11 +79,15 @@ pub struct EditStatus;
 // longer in.
 impl Action for EditStatus {
     type Obj = Issue;
-    type Payload = EditStatusPayload;
+    type Payload = schemas::EditStatusPayload;
 
     const KEY: &str = "editStatus";
 
-    fn execute(issue: Issue, payload: EditStatusPayload, _: Checked) -> Result<Issue, Error> {
+    fn execute(
+        issue: Issue,
+        payload: schemas::EditStatusPayload,
+        _: Checked,
+    ) -> Result<Issue, Error> {
         Ok(Issue {
             status: payload.status,
             status_note: payload.note,
@@ -110,22 +96,19 @@ impl Action for EditStatus {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditPriorityPayload {
-    /// How far up the list the issue sorts.
-    pub priority: Priority,
-}
-
 pub struct EditPriority;
 
 impl Action for EditPriority {
     type Obj = Issue;
-    type Payload = EditPriorityPayload;
+    type Payload = schemas::EditPriorityPayload;
 
     const KEY: &str = "editPriority";
 
-    fn execute(issue: Issue, payload: EditPriorityPayload, _: Checked) -> Result<Issue, Error> {
+    fn execute(
+        issue: Issue,
+        payload: schemas::EditPriorityPayload,
+        _: Checked,
+    ) -> Result<Issue, Error> {
         Ok(Issue {
             priority: payload.priority,
             ..issue

@@ -8,31 +8,25 @@
 
 use std::borrow::Cow;
 
-use schemars::JsonSchema;
-use serde::Deserialize;
-
 use crate::domains::issue;
-use crate::domains::project::{Draft, Project, Restorable, Status};
+use crate::domains::project::{Draft, Project, Restorable, Status, schemas};
 use crate::platform::action::{Action, Checked, Creator};
 use crate::platform::error::Error;
 use crate::platform::wire::{CreatorEntry, CreatorGroup, Empty, Entry, Group};
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditTitlePayload {
-    /// What to call the project.
-    pub title: String,
-}
 
 pub struct EditTitle;
 
 impl Action for EditTitle {
     type Obj = Project;
-    type Payload = EditTitlePayload;
+    type Payload = schemas::EditTitlePayload;
 
     const KEY: &str = "editTitle";
 
-    fn execute(project: Project, payload: EditTitlePayload, _: Checked) -> Result<Project, Error> {
+    fn execute(
+        project: Project,
+        payload: schemas::EditTitlePayload,
+        _: Checked,
+    ) -> Result<Project, Error> {
         let title = payload.title.trim();
         if title.is_empty() {
             return Err(Error::Invalid("title is required".into()));
@@ -44,34 +38,24 @@ impl Action for EditTitle {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditBodyPayload {
-    /// The project's description. Blank clears it.
-    pub body: String,
-}
-
 pub struct EditBody;
 
 impl Action for EditBody {
     type Obj = Project;
-    type Payload = EditBodyPayload;
+    type Payload = schemas::EditBodyPayload;
 
     const KEY: &str = "editBody";
 
-    fn execute(project: Project, payload: EditBodyPayload, _: Checked) -> Result<Project, Error> {
+    fn execute(
+        project: Project,
+        payload: schemas::EditBodyPayload,
+        _: Checked,
+    ) -> Result<Project, Error> {
         Ok(Project {
             body: payload.body,
             ..project
         })
     }
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditStatusPayload {
-    /// Whether the project is still being worked on.
-    pub status: Status,
 }
 
 pub struct EditStatus;
@@ -91,7 +75,7 @@ fn issues(n: i64) -> String {
 // `is_disabled` and `execute`.
 impl Action for EditStatus {
     type Obj = Project;
-    type Payload = EditStatusPayload;
+    type Payload = schemas::EditStatusPayload;
 
     const KEY: &str = "editStatus";
 
@@ -100,7 +84,11 @@ impl Action for EditStatus {
             .then(|| format!("finish or drop {} first", issues(project.doing)).into())
     }
 
-    fn execute(project: Project, payload: EditStatusPayload, _: Checked) -> Result<Project, Error> {
+    fn execute(
+        project: Project,
+        payload: schemas::EditStatusPayload,
+        _: Checked,
+    ) -> Result<Project, Error> {
         Ok(Project {
             status: payload.status,
             ..project
@@ -153,22 +141,11 @@ impl Action for Restore {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AddIssuePayload {
-    /// What to call the issue.
-    pub title: String,
-    /// What the issue is about.
-    pub body: Option<String>,
-    /// How far up the list it sorts. Defaults to normal.
-    pub priority: Option<issue::Priority>,
-}
-
 pub struct AddIssue;
 
 impl Creator for AddIssue {
     type Parent = Project;
-    type Payload = AddIssuePayload;
+    type Payload = schemas::AddIssuePayload;
     type Child = issue::Draft;
 
     const KEY: &str = "addIssue";
@@ -182,7 +159,7 @@ impl Creator for AddIssue {
 
     fn create(
         project: &Project,
-        payload: AddIssuePayload,
+        payload: schemas::AddIssuePayload,
         _: Checked,
     ) -> Result<issue::Draft, Error> {
         let title = payload.title.trim();
@@ -198,17 +175,6 @@ impl Creator for AddIssue {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CreateProjectPayload {
-    /// The short name the project is addressed by.
-    pub slug: String,
-    /// What to call the project.
-    pub title: Option<String>,
-    /// What the project is about.
-    pub body: Option<String>,
-}
-
 pub struct CreateProject;
 
 // The duplicate check cannot be an availability hook, because a hook is given
@@ -219,14 +185,14 @@ pub struct CreateProject;
 // sentence, and `tests/store.rs` asserts both halves.
 impl Creator for CreateProject {
     type Parent = Vec<Project>;
-    type Payload = CreateProjectPayload;
+    type Payload = schemas::CreateProjectPayload;
     type Child = Draft;
 
     const KEY: &str = "createProject";
 
     fn create(
         projects: &Vec<Project>,
-        payload: CreateProjectPayload,
+        payload: schemas::CreateProjectPayload,
         _: Checked,
     ) -> Result<Draft, Error> {
         let slug = payload.slug.trim();

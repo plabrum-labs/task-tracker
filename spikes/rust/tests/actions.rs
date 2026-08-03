@@ -17,8 +17,10 @@ use serde_json::{Value, json};
 
 use tt_spike::Error;
 use tt_spike::domains::issue::actions as issue_actions;
+use tt_spike::domains::issue::schemas as issue_schemas;
 use tt_spike::domains::issue::{self, Issue, Priority, Status};
 use tt_spike::domains::project::actions as project_actions;
+use tt_spike::domains::project::schemas as project_schemas;
 use tt_spike::domains::project::{self, Project, Restorable};
 use tt_spike::platform::action::{Action, Creator, Offered};
 use tt_spike::platform::deleted::Deleted;
@@ -97,7 +99,7 @@ fn every_issue_edit_is_always_offered() {
 fn edit_title_trims_and_refuses_a_blank_title() {
     let got = issue_actions::EditTitle::run(
         issue(),
-        issue_actions::EditTitlePayload {
+        issue_schemas::EditTitlePayload {
             title: " new ".into(),
         },
     )
@@ -107,7 +109,7 @@ fn edit_title_trims_and_refuses_a_blank_title() {
     assert!(matches!(
         issue_actions::EditTitle::run(
             issue(),
-            issue_actions::EditTitlePayload {
+            issue_schemas::EditTitlePayload {
                 title: "   ".into()
             }
         ),
@@ -121,7 +123,7 @@ fn edit_body_accepts_the_blank_that_edit_title_refuses() {
     // still earns over a form generated from the schema.
     let got = issue_actions::EditBody::run(
         issue(),
-        issue_actions::EditBodyPayload {
+        issue_schemas::EditBodyPayload {
             body: String::new(),
         },
     )
@@ -133,7 +135,7 @@ fn edit_body_accepts_the_blank_that_edit_title_refuses() {
 fn edit_status_replaces_the_note_it_arrived_with() {
     let noted = issue_actions::EditStatus::run(
         issue(),
-        issue_actions::EditStatusPayload {
+        issue_schemas::EditStatusPayload {
             status: Status::Doing,
             note: Some("started".into()),
         },
@@ -146,7 +148,7 @@ fn edit_status_replaces_the_note_it_arrived_with() {
     // a state the issue is no longer in.
     let cleared = issue_actions::EditStatus::run(
         noted,
-        issue_actions::EditStatusPayload {
+        issue_schemas::EditStatusPayload {
             status: Status::Done,
             note: None,
         },
@@ -159,7 +161,7 @@ fn edit_status_replaces_the_note_it_arrived_with() {
 fn edit_priority_sets_the_priority() {
     let got = issue_actions::EditPriority::run(
         issue(),
-        issue_actions::EditPriorityPayload {
+        issue_schemas::EditPriorityPayload {
             priority: Priority::High,
         },
     )
@@ -214,7 +216,7 @@ fn edit_status_is_refused_while_anything_is_doing() {
     assert!(matches!(
         project_actions::EditStatus::run(
             busy,
-            project_actions::EditStatusPayload {
+            project_schemas::EditStatusPayload {
                 status: project::Status::Active
             }
         ),
@@ -235,7 +237,7 @@ fn edit_status_is_runnable_once_nothing_is_doing() {
     );
     let archived = project_actions::EditStatus::run(
         quiet,
-        project_actions::EditStatusPayload {
+        project_schemas::EditStatusPayload {
             status: project::Status::Archived,
         },
     )
@@ -278,7 +280,7 @@ fn add_issue_is_refused_while_the_project_is_archived() {
     assert!(matches!(
         project_actions::AddIssue::run(
             &archived,
-            project_actions::AddIssuePayload {
+            project_schemas::AddIssuePayload {
                 title: "nope".into(),
                 body: None,
                 priority: None,
@@ -292,7 +294,7 @@ fn add_issue_is_refused_while_the_project_is_archived() {
 fn add_issue_defaults_what_the_payload_leaves_out() {
     let draft = project_actions::AddIssue::run(
         &project(),
-        project_actions::AddIssuePayload {
+        project_schemas::AddIssuePayload {
             title: " ship it ".into(),
             body: None,
             priority: None,
@@ -311,7 +313,7 @@ fn add_issue_defaults_what_the_payload_leaves_out() {
     assert!(matches!(
         project_actions::AddIssue::run(
             &project(),
-            project_actions::AddIssuePayload {
+            project_schemas::AddIssuePayload {
                 title: "  ".into(),
                 body: None,
                 priority: None,
@@ -333,7 +335,7 @@ fn create_project_refuses_a_slug_the_list_already_holds() {
     assert!(matches!(
         project_actions::CreateProject::run(
             &vec![project()],
-            project_actions::CreateProjectPayload {
+            project_schemas::CreateProjectPayload {
                 slug: "tt".into(),
                 title: None,
                 body: None,
@@ -344,7 +346,7 @@ fn create_project_refuses_a_slug_the_list_already_holds() {
     assert!(matches!(
         project_actions::CreateProject::run(
             &vec![],
-            project_actions::CreateProjectPayload {
+            project_schemas::CreateProjectPayload {
                 slug: "  ".into(),
                 title: None,
                 body: None,
@@ -355,7 +357,7 @@ fn create_project_refuses_a_slug_the_list_already_holds() {
     assert_eq!(
         project_actions::CreateProject::run(
             &vec![project()],
-            project_actions::CreateProjectPayload {
+            project_schemas::CreateProjectPayload {
                 slug: "other".into(),
                 title: Some("another".into()),
                 body: None,
@@ -457,7 +459,7 @@ fn the_wire_agrees_with_the_typed_path() {
         ),
         issue_actions::EditTitle::run(
             issue(),
-            issue_actions::EditTitlePayload {
+            issue_schemas::EditTitlePayload {
                 title: " new ".into()
             }
         )
@@ -471,7 +473,7 @@ fn the_wire_agrees_with_the_typed_path() {
         ),
         project_actions::AddIssue::run(
             &project(),
-            project_actions::AddIssuePayload {
+            project_schemas::AddIssuePayload {
                 title: "one".into(),
                 body: None,
                 priority: None,

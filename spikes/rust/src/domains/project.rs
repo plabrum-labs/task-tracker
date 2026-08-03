@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::platform::deleted::Deleted;
 
 pub mod actions;
+pub mod schemas;
 pub mod services;
 
 // The same one attribute, and the same second table beside it. See
