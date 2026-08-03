@@ -18,7 +18,7 @@
 //! pairing is the one thing the framework's types do not decide: a creator is a
 //! different type from an action, so an `INSERT` cannot be reached from an
 //! edit, but a soft delete is an update like any other and
-//! [`store::delete_project`] has the same type as [`store::update_project`].
+//! [`project_services::delete_project`] has the same type as [`project_services::update_project`].
 //! [`project_write`] and [`issue_write`] are where that is settled, once each.
 //!
 //! `clap`'s **builder** API, not `derive`. The subcommands are generated from
@@ -35,15 +35,18 @@
 use clap::{Arg, ArgMatches, Command, builder::PossibleValuesParser};
 use serde_json::{Value, json};
 
-use crate::action::Offered;
-use crate::deleted::Deleted;
-use crate::error::Error;
-use crate::form::{self, Field, Kind};
-use crate::issue::Issue;
-use crate::project::{Project, Restorable};
-use crate::store::{self, Db};
-use crate::wire::{self, CreatorEntry, Entry};
-use crate::{issue_actions, project_actions};
+use crate::domains::issue::Issue;
+use crate::domains::issue::actions as issue_actions;
+use crate::domains::issue::services as issue_services;
+use crate::domains::project::actions as project_actions;
+use crate::domains::project::services as project_services;
+use crate::domains::project::{Project, Restorable};
+use crate::platform::action::Offered;
+use crate::platform::db::Db;
+use crate::platform::deleted::Deleted;
+use crate::platform::error::Error;
+use crate::platform::form::{self, Field, Kind};
+use crate::platform::wire::{self, CreatorEntry, Entry};
 
 pub type Outcome = Result<String, Error>;
 
@@ -141,7 +144,7 @@ fn creator_offers<P, C>(group: &[CreatorEntry<P, C>], parent: &P) -> Vec<Value> 
 // --- resolution -----------------------------------------------------------
 
 async fn live_project(db: &Db, slug: &str) -> Result<Project, Error> {
-    store::project(db, slug)
+    project_services::project(db, slug)
         .await?
         .ok_or_else(|| Error::Invalid(format!("no project {slug:?}")))
 }
@@ -149,25 +152,25 @@ async fn live_project(db: &Db, slug: &str) -> Result<Project, Error> {
 /// A trash row is loaded together with the live projects, because that is what
 /// `restore`'s refusal reads.
 async fn restorable_project(db: &Db, slug: &str) -> Result<Restorable, Error> {
-    let deleted = store::trashed_projects(db)
+    let deleted = project_services::trashed_projects(db)
         .await?
         .into_iter()
         .find(|d| d.inner.slug == slug)
         .ok_or_else(|| Error::Invalid(format!("no deleted project {slug:?}")))?;
     Ok(Restorable {
         deleted,
-        live: store::projects(db).await?,
+        live: project_services::projects(db).await?,
     })
 }
 
 async fn live_issue(db: &Db, id: i64) -> Result<Issue, Error> {
-    store::issue(db, id)
+    issue_services::issue(db, id)
         .await?
         .ok_or_else(|| Error::Invalid(format!("no issue {id}")))
 }
 
 async fn trashed_issue(db: &Db, id: i64) -> Result<Deleted<Issue>, Error> {
-    store::trashed_issues(db)
+    issue_services::trashed_issues(db)
         .await?
         .into_iter()
         .find(|d| d.inner.id == id)
@@ -191,21 +194,21 @@ async fn project_write(db: &Db, slug: &str, key: &str, payload: &Value) -> Outco
     if holds(key, &project_actions::group()) {
         let project = live_project(db, slug).await?;
         let updated = wire::dispatch(&project_actions::group(), project, key, payload)?;
-        store::update_project(db, &updated).await?;
+        project_services::update_project(db, &updated).await?;
         Ok(project_line(&updated))
     } else if holds(key, &project_actions::trash()) {
         let project = live_project(db, slug).await?;
         let deleted = wire::dispatch(&project_actions::trash(), project, key, payload)?;
-        store::delete_project(db, &deleted).await?;
+        project_services::delete_project(db, &deleted).await?;
         Ok(format!("{}: deleted", deleted.subject()))
     } else if creates(key, &project_actions::creators()) {
         let project = live_project(db, slug).await?;
         let draft = wire::create(&project_actions::creators(), &project, key, payload)?;
-        Ok(issue_line(&store::create_issue(db, draft).await?))
+        Ok(issue_line(&issue_services::create_issue(db, draft).await?))
     } else if holds(key, &project_actions::deleted_group()) {
         let restorable = restorable_project(db, slug).await?;
         let restored = wire::dispatch(&project_actions::deleted_group(), restorable, key, payload)?;
-        store::restore_project(db, &restored.deleted).await?;
+        project_services::restore_project(db, &restored.deleted).await?;
         Ok(format!("{}: restored", restored.deleted.inner.subject()))
     } else {
         Err(Error::Invalid(format!("no action {key:?}")))
@@ -216,17 +219,17 @@ async fn issue_write(db: &Db, id: i64, key: &str, payload: &Value) -> Outcome {
     if holds(key, &issue_actions::group()) {
         let issue = live_issue(db, id).await?;
         let updated = wire::dispatch(&issue_actions::group(), issue, key, payload)?;
-        store::update_issue(db, &updated).await?;
+        issue_services::update_issue(db, &updated).await?;
         Ok(issue_line(&updated))
     } else if holds(key, &issue_actions::trash()) {
         let issue = live_issue(db, id).await?;
         let deleted = wire::dispatch(&issue_actions::trash(), issue, key, payload)?;
-        store::delete_issue(db, &deleted).await?;
+        issue_services::delete_issue(db, &deleted).await?;
         Ok(format!("{}: deleted", deleted.subject()))
     } else if holds(key, &issue_actions::deleted_group()) {
         let deleted = trashed_issue(db, id).await?;
         let restored = wire::dispatch(&issue_actions::deleted_group(), deleted, key, payload)?;
-        store::restore_issue(db, &restored).await?;
+        issue_services::restore_issue(db, &restored).await?;
         Ok(format!("{}: restored", restored.inner.subject()))
     } else {
         Err(Error::Invalid(format!("no action {key:?}")))
@@ -236,15 +239,17 @@ async fn issue_write(db: &Db, id: i64, key: &str, payload: &Value) -> Outcome {
 /// The root creator has no object to address, so its parent is the list of live
 /// projects — which is exactly what its uniqueness refusal has to read.
 async fn root_write(db: &Db, key: &str, payload: &Value) -> Outcome {
-    let projects = store::projects(db).await?;
+    let projects = project_services::projects(db).await?;
     let draft = wire::create(&project_actions::root(), &projects, key, payload)?;
-    Ok(project_line(&store::create_project(db, draft).await?))
+    Ok(project_line(
+        &project_services::create_project(db, draft).await?,
+    ))
 }
 
 // --- the reads ------------------------------------------------------------
 
 async fn project_ls(db: &Db) -> Outcome {
-    Ok(store::projects(db)
+    Ok(project_services::projects(db)
         .await?
         .iter()
         .map(project_line)
@@ -255,7 +260,7 @@ async fn project_ls(db: &Db) -> Outcome {
 async fn issue_ls(db: &Db, project_slug: Option<&str>) -> Outcome {
     let slugs = match project_slug {
         Some(slug) => vec![live_project(db, slug).await?.slug],
-        None => store::projects(db)
+        None => project_services::projects(db)
             .await?
             .into_iter()
             .map(|p| p.slug)
@@ -263,7 +268,7 @@ async fn issue_ls(db: &Db, project_slug: Option<&str>) -> Outcome {
     };
     let mut lines = Vec::new();
     for slug in slugs {
-        for issue in store::issues(db, &slug).await? {
+        for issue in issue_services::issues(db, &slug).await? {
             lines.push(issue_line(&issue));
         }
     }
@@ -292,8 +297,8 @@ async fn issue_show(db: &Db, id: i64) -> Outcome {
 /// The trash, with what each row offers — which is `restore` and nothing else,
 /// because that is the only action registered against the deleted types.
 async fn trash(db: &Db) -> Outcome {
-    let live = store::projects(db).await?;
-    let projects: Vec<Value> = store::trashed_projects(db)
+    let live = project_services::projects(db).await?;
+    let projects: Vec<Value> = project_services::trashed_projects(db)
         .await?
         .into_iter()
         .map(|deleted| {
@@ -310,7 +315,7 @@ async fn trash(db: &Db) -> Outcome {
             })
         })
         .collect();
-    let issues: Vec<Value> = store::trashed_issues(db)
+    let issues: Vec<Value> = issue_services::trashed_issues(db)
         .await?
         .into_iter()
         .map(|deleted| {

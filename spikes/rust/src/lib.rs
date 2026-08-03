@@ -1,38 +1,31 @@
 //! A small task tracker, in Rust, built to be compared against the OCaml spike
 //! beside it line for line.
 //!
-//! The layering is the one the root `CLAUDE.md` describes, and each layer is
-//! the only file that knows about the thing below it:
+//! The tree is grouped rather than flat, mirroring the OCaml side's `platform`
+//! / `domains` / `frontend`. Each layer is the only one that knows about the
+//! thing below it:
 //!
-//! - `action.rs` — what an action is. Typed, and free of any transport.
-//! - `wire.rs` — the JSON edge both frontends talk to.
-//! - `issue.rs`, `project.rs`, `deleted.rs` — the domain objects. No column and
-//!   no query anywhere in them.
-//! - `issue_actions.rs`, `project_actions.rs` — the declarations, and the
-//!   registration lists.
-//! - `store.rs` — the SQL edge. The tables are private to it.
-//! - `form.rs`, `cli.rs`, `tui.rs` — the two frontends, both built from what an
-//!   action advertises rather than from any action's name.
+//! - `platform/` — the framework, with no persisted object in it. `action.rs`
+//!   is what an action is, typed and free of any transport; `wire.rs` is the
+//!   JSON edge both frontends talk to; `form.rs` is the form built from a
+//!   schema; `db.rs` runs a query and names no table; `error.rs`, `clock.rs`
+//!   and `deleted.rs` are the small shared types.
+//! - `domains/` — one directory per persisted object. `schema.rs` names the
+//!   base tables, `pub(in crate::domains)` so the domains see them and the
+//!   frontends cannot. Each `issue` and `project` module holds its object, its
+//!   queries (`services.rs`) and its actions.
+//! - `frontend/` — the two frontends, `cli.rs` and `tui.rs`, both built from
+//!   what an action advertises rather than from any action's name.
 //!
 //! See `../README.md` for what this is comparing against.
 
-pub mod action;
-pub mod cli;
-pub mod clock;
-pub mod deleted;
-pub mod error;
-pub mod form;
-pub mod issue;
-pub mod issue_actions;
-pub mod project;
-pub mod project_actions;
-pub mod store;
-pub mod tui;
-pub mod wire;
+pub mod domains;
+pub mod frontend;
+pub mod platform;
 
-pub use action::{Action, Creator, Offered};
-pub use deleted::Deleted;
-pub use error::Error;
-pub use issue::Issue;
-pub use project::Project;
-pub use wire::{CreatorEntry, CreatorGroup, Entry, Group};
+pub use domains::issue::Issue;
+pub use domains::project::Project;
+pub use platform::action::{Action, Creator, Offered};
+pub use platform::deleted::Deleted;
+pub use platform::error::Error;
+pub use platform::wire::{CreatorEntry, CreatorGroup, Entry, Group};

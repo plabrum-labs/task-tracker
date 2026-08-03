@@ -1,0 +1,88 @@
+//! The database, with no table in it.
+//!
+//! Everything a query needs and nothing about what is being queried: a
+//! connection, the way to open one, the way to apply a DDL text, and the
+//! narrowing of sea-orm's error. A domain's `services.rs` names the tables;
+//! this file cannot.
+//!
+//! This is the same split [`crate::platform::wire`] makes for JSON. What keeps
+//! the base tables out of reach is that [`crate::domains::schema`] declares them
+//! `pub(in crate::domains)`, so the entity types, the raw DDL and the row
+//! structs can be named from a domain's services and from nowhere else — and
+//! every read is then guaranteed to carry its liveness predicate by
+//! construction, because a frontend cannot write the query that forgets it.
+//!
+//! That is what `store.mli` buys the OCaml spike, bought with one keyword
+//! instead of a second copy of every signature. It is also what stands in for
+//! the SQL views neither side declares.
+
+use std::fmt;
+
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
+
+pub type Db = DatabaseConnection;
+
+/// One error type for the whole edge, separate from [`crate::Error`].
+///
+/// [`crate::Error`] is the domain's refusals and stays free of anything
+/// transport- or storage-shaped; nothing a caller can do about a `DbErr` is
+/// anything an action refused.
+///
+/// `MissingAfterInsert` is the case with no row to blame: a create writes, then
+/// loads the row back through the same projection every other read uses, and
+/// that load can only come up empty if something removed the row in between.
+#[derive(Debug)]
+pub enum StoreError {
+    Db(DbErr),
+    MissingAfterInsert(&'static str),
+}
+
+impl fmt::Display for StoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StoreError::Db(e) => write!(f, "{e}"),
+            StoreError::MissingAfterInsert(what) => {
+                write!(f, "{what} vanished between the insert and the read")
+            }
+        }
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+impl From<DbErr> for StoreError {
+    fn from(e: DbErr) -> Self {
+        StoreError::Db(e)
+    }
+}
+
+/// `sqlite::memory:` is opened shared-cache by sqlx and sea-orm caps a SQLite
+/// pool at one connection, so a pooled in-memory database is one database and a
+/// test fixture is one `connect`.
+pub async fn connect(url: &str) -> Result<Db, StoreError> {
+    Ok(Database::connect(url).await?)
+}
+
+/// Applies a DDL text, which is safe on a database that already has the tables.
+/// The statements are the caller's: this file knows how to run them and not
+/// what is in them — see [`crate::domains::schema`].
+pub async fn apply_ddl(db: &Db, ddl: &[&str]) -> Result<(), StoreError> {
+    for sql in ddl {
+        db.execute_unprepared(sql).await?;
+    }
+    Ok(())
+}
+
+/// What the database actually holds, so a test can hold the emitted schema
+/// against the columns the entities declare.
+pub async fn emitted_ddl(db: &Db) -> Result<Vec<String>, StoreError> {
+    Ok(db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name",
+        ))
+        .await?
+        .iter()
+        .filter_map(|row| row.try_get_by_index::<String>(0).ok())
+        .collect())
+}

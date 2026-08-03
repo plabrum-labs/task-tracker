@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::store::StoreError;
+use crate::platform::db::StoreError;
 
 /// The refusals a caller can get back, mirroring `backend/errs`.
 #[derive(Debug, Clone, PartialEq, Eq)]

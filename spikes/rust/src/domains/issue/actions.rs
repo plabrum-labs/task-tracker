@@ -4,7 +4,7 @@
 //! means. [`group`] is persisted by an `UPDATE` of the editable columns,
 //! [`trash`] by an `UPDATE` that stamps `deleted_at`, [`deleted_group`] by one
 //! that clears it — and all three have the same shape, because a soft delete is
-//! an update. [`Creator`](crate::action::Creator) separates an `INSERT` from an
+//! an update. [`Creator`](crate::platform::action::Creator) separates an `INSERT` from an
 //! `UPDATE` and nothing separates these, so pairing the wrong group with the
 //! wrong store call compiles. Pairing them once, in one list, is all that
 //! stands in the way.
@@ -22,11 +22,11 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::action::{Action, Checked};
-use crate::deleted::Deleted;
-use crate::error::Error;
-use crate::issue::{Issue, Priority, Status};
-use crate::wire::{Empty, Entry, Group};
+use crate::domains::issue::{Issue, Priority, Status};
+use crate::platform::action::{Action, Checked};
+use crate::platform::deleted::Deleted;
+use crate::platform::error::Error;
+use crate::platform::wire::{Empty, Entry, Group};
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

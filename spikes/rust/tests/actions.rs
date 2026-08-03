@@ -15,11 +15,14 @@ use std::borrow::Cow;
 
 use serde_json::{Value, json};
 
-use tt_spike::action::{Action, Creator, Offered};
-use tt_spike::deleted::Deleted;
-use tt_spike::issue::{self, Issue, Priority, Status};
-use tt_spike::project::{self, Project, Restorable};
-use tt_spike::{Error, issue_actions, project_actions, wire};
+use tt_spike::Error;
+use tt_spike::domains::issue::actions as issue_actions;
+use tt_spike::domains::issue::{self, Issue, Priority, Status};
+use tt_spike::domains::project::actions as project_actions;
+use tt_spike::domains::project::{self, Project, Restorable};
+use tt_spike::platform::action::{Action, Creator, Offered};
+use tt_spike::platform::deleted::Deleted;
+use tt_spike::platform::wire;
 
 fn issue() -> Issue {
     Issue {

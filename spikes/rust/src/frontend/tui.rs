@@ -36,12 +36,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use serde_json::Value;
 
-use crate::action::Offered;
-use crate::error::Error;
-use crate::form::{self, Kind};
-use crate::store::{self, Db};
-use crate::wire::{self, CreatorEntry, Entry};
-use crate::{issue_actions, project_actions};
+use crate::domains::issue::actions as issue_actions;
+use crate::domains::issue::services as issue_services;
+use crate::domains::project::actions as project_actions;
+use crate::domains::project::services as project_services;
+use crate::platform::action::Offered;
+use crate::platform::db::Db;
+use crate::platform::error::Error;
+use crate::platform::form::{self, Kind};
+use crate::platform::wire::{self, CreatorEntry, Entry};
 
 pub const BROWSING: &str = "up/down to move, enter to pick, esc to go back, q to quit";
 pub const FILLING: &str = "tab to move, left/right to choose, enter to submit, esc to go back";
@@ -230,7 +233,7 @@ fn creator_rows<P, C>(group: &[CreatorEntry<P, C>], parent: &P, persist: Persist
 pub async fn load(db: &Db, screen: &Screen) -> Result<(String, Vec<Row>), Error> {
     match screen {
         Screen::Projects => {
-            let projects = store::projects(db).await?;
+            let projects = project_services::projects(db).await?;
             let mut rows =
                 creator_rows(&project_actions::root(), &projects, Persist::CreateProject);
             rows.extend(projects.iter().map(|p| Row::Go {
@@ -248,10 +251,10 @@ pub async fn load(db: &Db, screen: &Screen) -> Result<(String, Vec<Row>), Error>
             Ok(("projects".to_string(), rows))
         }
         Screen::Issues(slug) => {
-            let project = store::project(db, slug)
+            let project = project_services::project(db, slug)
                 .await?
                 .ok_or_else(|| Error::Invalid(format!("no project {slug:?}")))?;
-            let issues = store::issues(db, slug).await?;
+            let issues = issue_services::issues(db, slug).await?;
             let mut rows = action_rows(&project_actions::group(), &project, Persist::UpdateProject);
             rows.extend(action_rows(
                 &project_actions::trash(),
@@ -279,7 +282,7 @@ pub async fn load(db: &Db, screen: &Screen) -> Result<(String, Vec<Row>), Error>
             Ok((format!("{}: {}", project.subject(), project.title), rows))
         }
         Screen::Detail { id, .. } => {
-            let issue = store::issue(db, *id)
+            let issue = issue_services::issue(db, *id)
                 .await?
                 .ok_or_else(|| Error::Invalid(format!("no issue {id}")))?;
             let mut rows = action_rows(&issue_actions::group(), &issue, Persist::UpdateIssue);
@@ -311,58 +314,58 @@ async fn persist(
 ) -> Result<String, Error> {
     match persist {
         Persist::CreateProject => {
-            let projects = store::projects(db).await?;
+            let projects = project_services::projects(db).await?;
             let draft = wire::create(&project_actions::root(), &projects, key, payload)?;
-            let project = store::create_project(db, draft).await?;
+            let project = project_services::create_project(db, draft).await?;
             Ok(format!("{}: created", project.subject()))
         }
         Persist::UpdateProject => {
             let project = live_project(db, screen).await?;
             let updated = wire::dispatch(&project_actions::group(), project, key, payload)?;
-            store::update_project(db, &updated).await?;
+            project_services::update_project(db, &updated).await?;
             Ok(format!("{key}: saved"))
         }
         Persist::DeleteProject => {
             let project = live_project(db, screen).await?;
             let deleted = wire::dispatch(&project_actions::trash(), project, key, payload)?;
-            store::delete_project(db, &deleted).await?;
+            project_services::delete_project(db, &deleted).await?;
             Ok(format!("{}: deleted", deleted.subject()))
         }
         Persist::CreateIssue => {
             let project = live_project(db, screen).await?;
             let draft = wire::create(&project_actions::creators(), &project, key, payload)?;
-            let issue = store::create_issue(db, draft).await?;
+            let issue = issue_services::create_issue(db, draft).await?;
             Ok(format!("{}: created", issue.subject()))
         }
         Persist::UpdateIssue => {
             let issue = live_issue(db, screen).await?;
             let updated = wire::dispatch(&issue_actions::group(), issue, key, payload)?;
-            store::update_issue(db, &updated).await?;
+            issue_services::update_issue(db, &updated).await?;
             Ok(format!("{key}: saved"))
         }
         Persist::DeleteIssue => {
             let issue = live_issue(db, screen).await?;
             let deleted = wire::dispatch(&issue_actions::trash(), issue, key, payload)?;
-            store::delete_issue(db, &deleted).await?;
+            issue_services::delete_issue(db, &deleted).await?;
             Ok(format!("{}: deleted", deleted.subject()))
         }
     }
 }
 
-async fn live_project(db: &Db, screen: &Screen) -> Result<crate::project::Project, Error> {
+async fn live_project(db: &Db, screen: &Screen) -> Result<crate::domains::project::Project, Error> {
     let slug = match screen {
         Screen::Issues(slug) => slug.clone(),
         Screen::Detail { project, .. } => project.clone(),
         Screen::Projects => return Err(Error::Invalid("no project here".into())),
     };
-    store::project(db, &slug)
+    project_services::project(db, &slug)
         .await?
         .ok_or_else(|| Error::Invalid(format!("no project {slug:?}")))
 }
 
-async fn live_issue(db: &Db, screen: &Screen) -> Result<crate::issue::Issue, Error> {
+async fn live_issue(db: &Db, screen: &Screen) -> Result<crate::domains::issue::Issue, Error> {
     match screen {
-        Screen::Detail { id, .. } => store::issue(db, *id)
+        Screen::Detail { id, .. } => issue_services::issue(db, *id)
             .await?
             .ok_or_else(|| Error::Invalid(format!("no issue {id}"))),
         _ => Err(Error::Invalid("no issue here".into())),

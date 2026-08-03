@@ -15,8 +15,8 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::action::{Action, Availability, Creator, Offered};
-use crate::error::Error;
+use crate::platform::action::{Action, Availability, Creator, Offered};
+use crate::platform::error::Error;
 
 // One declaration, and both halves agree: the decoder accepts `{}` and refuses
 // `null`, the schema says `{"type": "object", "additionalProperties": false}`.

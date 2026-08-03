@@ -11,11 +11,11 @@ use std::borrow::Cow;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::action::{Action, Checked, Creator};
-use crate::error::Error;
-use crate::issue;
-use crate::project::{Draft, Project, Restorable, Status};
-use crate::wire::{CreatorEntry, CreatorGroup, Empty, Entry, Group};
+use crate::domains::issue;
+use crate::domains::project::{Draft, Project, Restorable, Status};
+use crate::platform::action::{Action, Checked, Creator};
+use crate::platform::error::Error;
+use crate::platform::wire::{CreatorEntry, CreatorGroup, Empty, Entry, Group};
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

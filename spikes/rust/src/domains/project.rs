@@ -10,7 +10,10 @@ use schemars::JsonSchema;
 use sea_orm::entity::prelude::{DeriveActiveEnum, EnumIter};
 use serde::{Deserialize, Serialize};
 
-use crate::deleted::Deleted;
+use crate::platform::deleted::Deleted;
+
+pub mod actions;
+pub mod services;
 
 // The same one attribute, and the same second table beside it. See
 // `issue.rs` for what the pair costs, and for why this comment is not a doc

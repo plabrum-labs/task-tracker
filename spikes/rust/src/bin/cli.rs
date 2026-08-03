@@ -6,7 +6,9 @@
 
 use std::process::ExitCode;
 
-use tt_spike::{cli, store};
+use tt_spike::domains::schema;
+use tt_spike::frontend::cli;
+use tt_spike::platform::db;
 
 /// A refusal is the object's answer, not a usage error, so it is neither clap's
 /// 2 nor a success. 123 is what cmdliner calls `Exit.some_error`, which is what
@@ -18,9 +20,9 @@ const REFUSED: u8 = 123;
 async fn main() -> ExitCode {
     let matches = cli::command().get_matches();
 
-    let outcome = match store::connect(&cli::database(&matches)).await {
+    let outcome = match db::connect(&cli::database(&matches)).await {
         Err(e) => Err(e.into()),
-        Ok(db) => match store::initialise(&db).await {
+        Ok(db) => match schema::initialise(&db).await {
             Err(e) => Err(e.into()),
             Ok(()) => cli::run(&db, &matches).await,
         },

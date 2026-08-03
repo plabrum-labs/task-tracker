@@ -10,20 +10,23 @@
 //! so what has to be shown is that one row written on the way out is one row
 //! cleared on the way back, and that nothing else changed in between.
 
-use tt_spike::issue::{self, Priority, Status};
-use tt_spike::project::{self, Project};
-use tt_spike::store::{self, Db};
+use tt_spike::domains::issue::services as issue_services;
+use tt_spike::domains::issue::{self, Priority, Status};
+use tt_spike::domains::project::services as project_services;
+use tt_spike::domains::project::{self, Project};
+use tt_spike::domains::schema;
+use tt_spike::platform::db::{self, Db};
 
 async fn fixture() -> Db {
-    let db = store::connect("sqlite::memory:")
+    let db = db::connect("sqlite::memory:")
         .await
         .expect("connect should succeed");
-    store::initialise(&db).await.expect("DDL should run");
+    schema::initialise(&db).await.expect("DDL should run");
     db
 }
 
 async fn a_project(db: &Db, slug: &str) -> Project {
-    store::create_project(
+    project_services::create_project(
         db,
         project::Draft {
             slug: slug.into(),
@@ -36,7 +39,7 @@ async fn a_project(db: &Db, slug: &str) -> Project {
 }
 
 async fn an_issue(db: &Db, project: &Project, title: &str, priority: Priority) -> issue::Issue {
-    store::create_issue(
+    issue_services::create_issue(
         db,
         issue::Draft {
             project_id: project.id,
@@ -84,14 +87,18 @@ async fn counts_are_part_of_the_projection() {
     for title in ["a", "b", "c"] {
         an_issue(&db, &tt, title, Priority::Normal).await;
     }
-    let issues = store::issues(&db, "tt").await.expect("issues should load");
+    let issues = issue_services::issues(&db, "tt")
+        .await
+        .expect("issues should load");
     let doing = issue::Issue {
         status: Status::Doing,
         ..issues[0].clone()
     };
-    store::update_issue(&db, &doing).await.expect("update");
+    issue_services::update_issue(&db, &doing)
+        .await
+        .expect("update");
 
-    let tt = store::project(&db, "tt")
+    let tt = project_services::project(&db, "tt")
         .await
         .expect("project should load")
         .expect("project should be there");
@@ -100,7 +107,7 @@ async fn counts_are_part_of_the_projection() {
 
     // A project with nothing under it still gets zeroes rather than nothing.
     let empty = a_project(&db, "empty").await;
-    let empty = store::project(&db, &empty.slug)
+    let empty = project_services::project(&db, &empty.slug)
         .await
         .expect("project should load")
         .expect("project should be there");
@@ -122,7 +129,9 @@ async fn issues_come_back_high_priority_first_then_oldest_first() {
     ] {
         an_issue(&db, &tt, title, priority).await;
     }
-    let issues = store::issues(&db, "tt").await.expect("issues should load");
+    let issues = issue_services::issues(&db, "tt")
+        .await
+        .expect("issues should load");
     assert_eq!(titles(&issues), vec!["second", "third", "first"]);
 }
 
@@ -142,9 +151,11 @@ async fn an_update_writes_the_editable_columns_and_leaves_the_rest() {
         status_note: Some("started".into()),
         ..issue.clone()
     };
-    store::update_issue(&db, &edited).await.expect("update");
+    issue_services::update_issue(&db, &edited)
+        .await
+        .expect("update");
 
-    let read = store::issue(&db, issue.id)
+    let read = issue_services::issue(&db, issue.id)
         .await
         .expect("issue should load")
         .expect("issue should be there");
@@ -158,9 +169,11 @@ async fn an_update_writes_the_editable_columns_and_leaves_the_rest() {
         status_note: None,
         ..read
     };
-    store::update_issue(&db, &cleared).await.expect("update");
+    issue_services::update_issue(&db, &cleared)
+        .await
+        .expect("update");
     assert_eq!(
-        store::issue(&db, issue.id)
+        issue_services::issue(&db, issue.id)
             .await
             .expect("issue should load")
             .expect("issue should be there")
@@ -179,24 +192,45 @@ async fn deleting_a_project_hides_its_issues_and_restoring_brings_them_back() {
     let doomed = an_issue(&db, &tt, "doomed", Priority::Normal).await;
 
     // One issue deleted in its own right, before the project goes.
-    store::delete_issue(&db, &doomed).await.expect("delete");
+    issue_services::delete_issue(&db, &doomed)
+        .await
+        .expect("delete");
     assert_eq!(
-        titles(&store::issues(&db, "tt").await.expect("issues")),
+        titles(&issue_services::issues(&db, "tt").await.expect("issues")),
         vec!["kept"]
     );
 
-    store::delete_project(&db, &tt).await.expect("delete");
-    assert!(store::project(&db, "tt").await.expect("project").is_none());
-    assert!(store::issues(&db, "tt").await.expect("issues").is_empty());
-    assert!(store::issue(&db, doomed.id).await.expect("issue").is_none());
+    project_services::delete_project(&db, &tt)
+        .await
+        .expect("delete");
+    assert!(
+        project_services::project(&db, "tt")
+            .await
+            .expect("project")
+            .is_none()
+    );
+    assert!(
+        issue_services::issues(&db, "tt")
+            .await
+            .expect("issues")
+            .is_empty()
+    );
+    assert!(
+        issue_services::issue(&db, doomed.id)
+            .await
+            .expect("issue")
+            .is_none()
+    );
 
     // The trash is by the row's own `deleted_at`, so the hidden issue is not in
     // it — one row was written on the way out, not two.
-    let trashed_projects = store::trashed_projects(&db).await.expect("trash");
+    let trashed_projects = project_services::trashed_projects(&db)
+        .await
+        .expect("trash");
     assert_eq!(trashed_projects.len(), 1);
     assert_eq!(trashed_projects[0].inner.slug, "tt");
     assert_eq!(
-        store::trashed_issues(&db)
+        issue_services::trashed_issues(&db)
             .await
             .expect("trash")
             .iter()
@@ -205,16 +239,22 @@ async fn deleting_a_project_hides_its_issues_and_restoring_brings_them_back() {
         vec!["doomed"]
     );
 
-    store::restore_project(&db, &trashed_projects[0])
+    project_services::restore_project(&db, &trashed_projects[0])
         .await
         .expect("restore");
 
     // Exactly the issues that were not deleted in their own right.
     assert_eq!(
-        titles(&store::issues(&db, "tt").await.expect("issues")),
+        titles(&issue_services::issues(&db, "tt").await.expect("issues")),
         vec!["kept"]
     );
-    assert_eq!(store::trashed_issues(&db).await.expect("trash").len(), 1);
+    assert_eq!(
+        issue_services::trashed_issues(&db)
+            .await
+            .expect("trash")
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -222,34 +262,43 @@ async fn an_issue_can_be_restored_on_its_own() {
     let db = fixture().await;
     let tt = a_project(&db, "tt").await;
     let issue = an_issue(&db, &tt, "back", Priority::Normal).await;
-    store::delete_issue(&db, &issue).await.expect("delete");
+    issue_services::delete_issue(&db, &issue)
+        .await
+        .expect("delete");
 
-    let trashed = store::trashed_issues(&db).await.expect("trash");
+    let trashed = issue_services::trashed_issues(&db).await.expect("trash");
     assert_eq!(trashed.len(), 1);
     // The trash row still knows its project, because that read asks nothing of
     // the project but its slug.
     assert_eq!(trashed[0].inner.project_slug, "tt");
 
-    store::restore_issue(&db, &trashed[0])
+    issue_services::restore_issue(&db, &trashed[0])
         .await
         .expect("restore");
     assert_eq!(
-        titles(&store::issues(&db, "tt").await.expect("issues")),
+        titles(&issue_services::issues(&db, "tt").await.expect("issues")),
         vec!["back"]
     );
-    assert!(store::trashed_issues(&db).await.expect("trash").is_empty());
+    assert!(
+        issue_services::trashed_issues(&db)
+            .await
+            .expect("trash")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
 async fn a_slug_is_reusable_once_its_project_is_deleted() {
     let db = fixture().await;
     let first = a_project(&db, "tt").await;
-    store::delete_project(&db, &first).await.expect("delete");
+    project_services::delete_project(&db, &first)
+        .await
+        .expect("delete");
 
     let second = a_project(&db, "tt").await;
     assert_ne!(second.id, first.id);
     assert_eq!(
-        store::projects(&db)
+        project_services::projects(&db)
             .await
             .expect("projects")
             .iter()
@@ -264,7 +313,7 @@ async fn a_slug_is_reusable_once_its_project_is_deleted() {
 #[tokio::test]
 async fn the_emitted_schema_is_the_designed_one() {
     let db = fixture().await;
-    let ddl = store::emitted_ddl(&db).await.expect("sqlite_master");
+    let ddl = db::emitted_ddl(&db).await.expect("sqlite_master");
     let all = ddl.join("\n");
 
     // `sqlite_master` keeps the statement as written apart from `IF NOT
@@ -288,7 +337,7 @@ async fn the_emitted_schema_is_the_designed_one() {
     // this is the assertion that the two describe one thing. `sea-orm`'s own
     // `Schema::create_table_from_entity` could emit none of the above, which is
     // why the DDL is written out rather than generated.
-    for (table, columns) in store::declared_columns() {
+    for (table, columns) in schema::declared_columns() {
         let statement = ddl
             .iter()
             .find(|sql| sql.contains(&format!("CREATE TABLE {table}")))
@@ -309,7 +358,7 @@ async fn a_duplicate_live_slug_is_refused_by_the_constraint() {
     // what answers is the database.
     let db = fixture().await;
     a_project(&db, "tt").await;
-    let again = store::create_project(
+    let again = project_services::create_project(
         &db,
         project::Draft {
             slug: "tt".into(),
@@ -337,8 +386,10 @@ async fn the_enum_round_trips_through_the_column_it_is_stored_in() {
     ] {
         let issue = an_issue(&db, &tt, title, priority).await;
         let moved = issue::Issue { status, ..issue };
-        store::update_issue(&db, &moved).await.expect("update");
-        let read = store::issue(&db, moved.id)
+        issue_services::update_issue(&db, &moved)
+            .await
+            .expect("update");
+        let read = issue_services::issue(&db, moved.id)
             .await
             .expect("issue should load")
             .expect("issue should be there");
@@ -348,14 +399,16 @@ async fn the_enum_round_trips_through_the_column_it_is_stored_in() {
 
     let archived = Project {
         status: project::Status::Archived,
-        ..store::project(&db, "tt")
+        ..project_services::project(&db, "tt")
             .await
             .expect("project")
             .expect("project should be there")
     };
-    store::update_project(&db, &archived).await.expect("update");
+    project_services::update_project(&db, &archived)
+        .await
+        .expect("update");
     assert_eq!(
-        store::project(&db, "tt")
+        project_services::project(&db, "tt")
             .await
             .expect("project")
             .expect("project should be there")

@@ -1,10 +1,10 @@
 //! The argument form a frontend builds from an action's advertised schema.
 //!
-//! This is the second half of the erased path. [`crate::wire::available`] says
+//! This is the second half of the erased path. [`crate::platform::wire::available`] says
 //! which actions apply; this says what each one wants typed in. Both come from
 //! the schema the payload type derived, so a frontend needs no knowledge of any
-//! particular action — [`crate::cli`] turns what [`of_schema`] returns into
-//! options and [`crate::tui`] turns it into controls.
+//! particular action — [`crate::frontend::cli`] turns what [`of_schema`] returns into
+//! options and [`crate::frontend::tui`] turns it into controls.
 //!
 //! Pure, and separate from the rendering for that reason: the shape of a form
 //! is decided here and asserted in `tests/frontend.rs`, and the two frontends
@@ -132,7 +132,7 @@ pub fn of_schema(schema: &Value) -> Result<Vec<Field>, String> {
         .collect()
 }
 
-/// What the typed-in values make, ready for [`crate::wire::dispatch`].
+/// What the typed-in values make, ready for [`crate::platform::wire::dispatch`].
 ///
 /// A blank [`Kind::OptionalText`] is sent as `null`, which is exactly what the
 /// schema advertises. The OCaml side has to omit it instead:

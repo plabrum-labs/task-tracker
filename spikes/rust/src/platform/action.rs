@@ -2,12 +2,12 @@
 //!
 //! Nothing in this file mentions `serde` or `serde_json`. `Payload` carries no
 //! bounds — an action is free to have a payload that is not serialisable at
-//! all. The JSON edge both frontends talk to is [`crate::wire`], which adds the
+//! all. The JSON edge both frontends talk to is [`crate::platform::wire`], which adds the
 //! bounds where they belong.
 
 use std::borrow::Cow;
 
-use crate::error::Error;
+use crate::platform::error::Error;
 
 /// An action that applies to the object. `Runnable` cannot carry a reason and
 /// `Refused` cannot lack one.
@@ -27,7 +27,7 @@ pub enum Offered {
 /// Whether one action applies to one object, and if so whether it can run.
 ///
 /// `None` is "does not apply to this object at all — not offered". Naming it
-/// `Option` is what lets [`crate::wire::available`] return `Offered`, so a
+/// `Option` is what lets [`crate::platform::wire::available`] return `Offered`, so a
 /// caller of that function cannot be handed an absent action.
 pub type Availability = Option<Offered>;
 
@@ -85,7 +85,7 @@ pub trait Action {
     }
 
     /// Availability is enforced here rather than at the edge, so a caller that
-    /// already holds a payload cannot skip it. [`crate::wire::dispatch`]
+    /// already holds a payload cannot skip it. [`crate::platform::wire::dispatch`]
     /// decodes and then comes through this.
     fn run(obj: Self::Obj, payload: Self::Payload) -> Result<Self::Obj, Error> {
         let checked = enforce(Self::KEY, Self::availability(&obj))?;

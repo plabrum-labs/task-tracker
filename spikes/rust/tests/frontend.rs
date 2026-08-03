@@ -10,12 +10,17 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
 
-use tt_spike::form::{self, Field, Kind};
-use tt_spike::issue::{self, Priority};
-use tt_spike::project;
-use tt_spike::store::{self, Db};
-use tt_spike::tui::{Control, Intent, Row, Screen, State};
-use tt_spike::{cli, issue_actions, project_actions, tui};
+use tt_spike::domains::issue::actions as issue_actions;
+use tt_spike::domains::issue::services as issue_services;
+use tt_spike::domains::issue::{self, Priority};
+use tt_spike::domains::project;
+use tt_spike::domains::project::actions as project_actions;
+use tt_spike::domains::project::services as project_services;
+use tt_spike::domains::schema;
+use tt_spike::frontend::tui::{Control, Intent, Row, Screen, State};
+use tt_spike::frontend::{cli, tui};
+use tt_spike::platform::db::{self, Db};
+use tt_spike::platform::form::{self, Field, Kind};
 
 fn schema(key: &str) -> Value {
     issue_actions::group()
@@ -100,9 +105,13 @@ fn a_blank_optional_field_submits_the_null_its_schema_advertises() {
     // side cannot make: there, `[@jsonschema.option]` advertises the null that
     // `[@yojson.option]` refuses, so the only encoding both halves accept is to
     // omit the field.
-    let issue =
-        tt_spike::wire::dispatch(&issue_actions::group(), an_issue(), "editStatus", &payload)
-            .expect("the schema's own null should decode");
+    let issue = tt_spike::platform::wire::dispatch(
+        &issue_actions::group(),
+        an_issue(),
+        "editStatus",
+        &payload,
+    )
+    .expect("the schema's own null should decode");
     assert_eq!(issue.status_note, None);
 }
 
@@ -114,8 +123,13 @@ fn a_blank_required_text_field_is_submitted_and_refused_by_the_action() {
     let payload = form::payload(&[(fields[0].clone(), String::new())]);
     assert_eq!(payload, json!({ "title": "" }));
     assert!(
-        tt_spike::wire::dispatch(&issue_actions::group(), an_issue(), "editTitle", &payload)
-            .is_err()
+        tt_spike::platform::wire::dispatch(
+            &issue_actions::group(),
+            an_issue(),
+            "editTitle",
+            &payload
+        )
+        .is_err()
     );
 }
 
@@ -137,9 +151,9 @@ fn an_issue() -> issue::Issue {
 // --- the TUI --------------------------------------------------------------
 
 async fn seeded() -> Db {
-    let db = store::connect("sqlite::memory:").await.expect("connect");
-    store::initialise(&db).await.expect("DDL");
-    let tt = store::create_project(
+    let db = db::connect("sqlite::memory:").await.expect("connect");
+    schema::initialise(&db).await.expect("DDL");
+    let tt = project_services::create_project(
         &db,
         project::Draft {
             slug: "tt".into(),
@@ -149,7 +163,7 @@ async fn seeded() -> Db {
     )
     .await
     .expect("create_project");
-    store::create_issue(
+    issue_services::create_issue(
         &db,
         issue::Draft {
             project_id: tt.id,
@@ -362,7 +376,7 @@ async fn an_enum_field_is_a_cycling_selector_and_a_text_field_is_typed_into() {
 
     state = press(&db, state, KeyCode::Enter).await;
     assert!(state.form.is_none(), "a successful write closes the form");
-    let issue = store::issue(&db, 1)
+    let issue = issue_services::issue(&db, 1)
         .await
         .expect("issue should load")
         .expect("issue should be there");
@@ -396,13 +410,15 @@ async fn deleting_what_the_screen_is_about_falls_out_to_the_parent() {
     // Nothing here names `delete`. The screen is reloaded after every write and
     // the fall-out is what happens when the object it was about has gone.
     let db = seeded().await;
-    let tt = store::project(&db, "tt")
+    let tt = project_services::project(&db, "tt")
         .await
         .expect("project")
         .expect("project should be there");
-    let issue = store::issues(&db, "tt").await.expect("issues")[0].clone();
-    store::delete_issue(&db, &issue).await.expect("delete");
-    store::update_project(
+    let issue = issue_services::issues(&db, "tt").await.expect("issues")[0].clone();
+    issue_services::delete_issue(&db, &issue)
+        .await
+        .expect("delete");
+    project_services::update_project(
         &db,
         &project::Project {
             status: project::Status::Archived,
@@ -429,7 +445,12 @@ async fn deleting_what_the_screen_is_about_falls_out_to_the_parent() {
     state = press(&db, state, KeyCode::Enter).await; // submit it
 
     assert_eq!(state.screen, Screen::Projects);
-    assert!(store::project(&db, "tt").await.expect("project").is_none());
+    assert!(
+        project_services::project(&db, "tt")
+            .await
+            .expect("project")
+            .is_none()
+    );
 }
 
 // --- the CLI --------------------------------------------------------------

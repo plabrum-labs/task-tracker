@@ -9,19 +9,21 @@
 use std::io;
 
 use crossterm::event::{self, Event, KeyEventKind};
-use tt_spike::{store, tui};
+use tt_spike::domains::schema;
+use tt_spike::frontend::tui;
+use tt_spike::platform::db;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let url = std::env::var("TT_DB").unwrap_or_else(|_| "sqlite:tt.db?mode=rwc".to_string());
-    let db = match store::connect(&url).await {
+    let db = match db::connect(&url).await {
         Ok(db) => db,
         Err(e) => {
             eprintln!("{e}");
             return Ok(());
         }
     };
-    if let Err(e) = store::initialise(&db).await {
+    if let Err(e) = schema::initialise(&db).await {
         eprintln!("{e}");
         return Ok(());
     }

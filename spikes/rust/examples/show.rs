@@ -8,10 +8,12 @@
 
 use serde_json::json;
 
-use tt_spike::action::Offered;
-use tt_spike::issue::{self, Issue};
-use tt_spike::project::{self, Project};
-use tt_spike::{issue_actions, project_actions, wire};
+use tt_spike::domains::issue::actions as issue_actions;
+use tt_spike::domains::issue::{self, Issue};
+use tt_spike::domains::project::actions as project_actions;
+use tt_spike::domains::project::{self, Project};
+use tt_spike::platform::action::Offered;
+use tt_spike::platform::wire;
 
 fn print<O>(title: &str, group: &[wire::Entry<O>], obj: &O) {
     println!("--- {title}");

@@ -3,12 +3,20 @@
 //! `project_slug` comes from the read rather than from a column — it is never
 //! written, and it is what makes a list row printable without a second query
 //! per row. It is on the domain type because the join puts it there:
-//! `store::issues` selects it alongside the issue's own columns, so unlike the
-//! OCaml side it is not a pairing done afterwards in the host language.
+//! [`services::issues`] selects it alongside the issue's own columns, so unlike
+//! the OCaml side it is not a pairing done afterwards in the host language.
+//!
+//! The file is named after its own directory, so it is the domain's interface:
+//! the object lives here, and `services` and `actions` hang off it as
+//! submodules — the queries that name the table, and the actions offered over
+//! the object.
 
 use schemars::JsonSchema;
 use sea_orm::entity::prelude::{DeriveActiveEnum, EnumIter};
 use serde::{Deserialize, Serialize};
+
+pub mod actions;
+pub mod services;
 
 // One `#[serde(rename_all)]` gives the decoder, the encoder and the schema,
 // because `serde` and `schemars` share `serde_derive_internals` and read the
