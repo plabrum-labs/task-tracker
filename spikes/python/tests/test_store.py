@@ -1,21 +1,20 @@
 """The SQL edge, against a real in-memory SQLite database.
 
-No mocks and no seam invented for one: ``initialise`` runs the same DDL the
-binary runs and every query below goes to sqlite. One ``connect`` is one database
-held open by a ``StaticPool``, so the tests cannot see each other's rows.
+No mocks and no seam invented for one: ``create_all`` builds the same schema the
+migration does and every query below goes to sqlite. One ``connect`` is one
+database held open by a ``StaticPool``, so the tests cannot see each other's rows.
 
 The soft-delete cases are the point. Liveness is derived rather than stored, so
 what has to be shown is that one row written on the way out is one row cleared on
-the way back, and that nothing else changed in between.
+the way back, and that nothing else changed in between. A write loads its row in
+the transaction it writes, the way a frontend does, so an edit is a mutation the
+session flushes.
 """
-
-from dataclasses import replace
 
 import pytest
 from sqlalchemy import Engine
 
 from conftest import a_project, an_issue
-from tt.domains import schema
 from tt.domains.issue import Issue, Priority, Status
 from tt.domains.issue import services as issue_services
 from tt.domains.project import Draft as ProjectDraft
@@ -37,7 +36,8 @@ def test_create_returns_the_stored_row_with_its_assigned_id(db: Engine) -> None:
     assert tt.id > 0
     assert tt.status == ProjectStatus.ACTIVE
     assert (tt.todo, tt.doing, tt.done) == (0, 0, 0)
-    # One instant in both stamps, because a write takes the clock once.
+    # One instant in both stamps, because the row's two defaults resolve to one
+    # ``CURRENT_TIMESTAMP`` in the insert.
     assert tt.created_at == tt.updated_at
 
     other = a_project(db, "other")
@@ -46,7 +46,7 @@ def test_create_returns_the_stored_row_with_its_assigned_id(db: Engine) -> None:
     made = an_issue(db, tt, "first", Priority.HIGH)
     assert made.id > 0
     assert made.status == Status.TODO
-    # The projection, not the draft: project_slug comes from the join.
+    # The projection, not the draft: project_slug comes from the loaded project.
     assert made.project_slug == "tt"
     assert made.created_at == made.updated_at
 
@@ -56,12 +56,14 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
     for title in ["a", "b", "c"]:
         an_issue(db, tt, title)
     with platform_db.reading(db) as s:
-        first = issue_services.issues(s, "tt")[0]
+        first = issue_services.list_issues(s, "tt")[0]
     with platform_db.transaction(db) as tx:
-        issue_services.update_issue(tx, replace(first, status=Status.DOING))
+        issue = issue_services.get_issue(tx, first.id)
+        assert issue is not None
+        issue.status = Status.DOING
 
     with platform_db.reading(db) as s:
-        loaded = project_services.project(s, "tt")
+        loaded = project_services.get_project(s, "tt")
     assert loaded is not None
     assert (loaded.todo, loaded.doing, loaded.done) == (2, 1, 0)
     assert loaded.issue_count() == 3
@@ -69,7 +71,7 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
     # A project with nothing under it still gets zeroes rather than nothing.
     empty = a_project(db, "empty")
     with platform_db.reading(db) as s:
-        reloaded = project_services.project(s, empty.slug)
+        reloaded = project_services.get_project(s, empty.slug)
     assert reloaded is not None
     assert (reloaded.todo, reloaded.doing, reloaded.done) == (0, 0, 0)
 
@@ -88,7 +90,7 @@ def test_issues_come_back_high_priority_first_then_oldest_first(db: Engine) -> N
     ]:
         an_issue(db, tt, title, priority)
     with platform_db.reading(db) as s:
-        issues = issue_services.issues(s, "tt")
+        issues = issue_services.list_issues(s, "tt")
     assert _titles(issues) == ["second", "third", "first"]
 
 
@@ -99,19 +101,17 @@ def test_an_update_writes_the_editable_columns_and_leaves_the_rest(db: Engine) -
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "first")
 
-    edited = replace(
-        made,
-        title="renamed",
-        body="why",
-        status=Status.DOING,
-        priority=Priority.HIGH,
-        status_note="started",
-    )
     with platform_db.transaction(db) as tx:
-        issue_services.update_issue(tx, edited)
+        issue = issue_services.get_issue(tx, made.id)
+        assert issue is not None
+        issue.title = "renamed"
+        issue.body = "why"
+        issue.status = Status.DOING
+        issue.priority = Priority.HIGH
+        issue.status_note = "started"
 
     with platform_db.reading(db) as s:
-        read = issue_services.issue(s, made.id)
+        read = issue_services.get_issue(s, made.id)
     assert read is not None
     assert read.title == "renamed"
     assert read.status_note == "started"
@@ -120,9 +120,11 @@ def test_an_update_writes_the_editable_columns_and_leaves_the_rest(db: Engine) -
 
     # A nullable column has one write path: clearing it writes NULL.
     with platform_db.transaction(db) as tx:
-        issue_services.update_issue(tx, replace(read, status_note=None))
+        issue = issue_services.get_issue(tx, made.id)
+        assert issue is not None
+        issue.status_note = None
     with platform_db.reading(db) as s:
-        cleared = issue_services.issue(s, made.id)
+        cleared = issue_services.get_issue(s, made.id)
     assert cleared is not None
     assert cleared.status_note is None
 
@@ -137,16 +139,20 @@ def test_deleting_a_project_hides_its_issues_and_restoring_brings_them_back(db: 
 
     # One issue deleted in its own right, before the project goes.
     with platform_db.transaction(db) as tx:
-        issue_services.delete_issue(tx, doomed)
+        issue = issue_services.get_issue(tx, doomed.id)
+        assert issue is not None
+        issue_services.delete_issue(tx, issue)
     with platform_db.reading(db) as s:
-        assert _titles(issue_services.issues(s, "tt")) == ["kept"]
+        assert _titles(issue_services.list_issues(s, "tt")) == ["kept"]
 
     with platform_db.transaction(db) as tx:
-        project_services.delete_project(tx, tt)
+        project = project_services.get_project(tx, "tt")
+        assert project is not None
+        project_services.delete_project(tx, project)
     with platform_db.reading(db) as s:
-        assert project_services.project(s, "tt") is None
-        assert issue_services.issues(s, "tt") == []
-        assert issue_services.issue(s, doomed.id) is None
+        assert project_services.get_project(s, "tt") is None
+        assert issue_services.list_issues(s, "tt") == []
+        assert issue_services.get_issue(s, doomed.id) is None
 
     # The trash is by the row's own deleted_at, so the hidden issue is not in it —
     # one row was written on the way out, not two.
@@ -158,11 +164,12 @@ def test_deleting_a_project_hides_its_issues_and_restoring_brings_them_back(db: 
     assert [d.inner.title for d in trashed_issues] == ["doomed"]
 
     with platform_db.transaction(db) as tx:
-        project_services.restore_project(tx, trashed_projects[0])
+        project = project_services.trashed_projects(tx)[0].inner
+        project_services.restore_project(tx, project)
 
     # Exactly the issues that were not deleted in their own right.
     with platform_db.reading(db) as s:
-        assert _titles(issue_services.issues(s, "tt")) == ["kept"]
+        assert _titles(issue_services.list_issues(s, "tt")) == ["kept"]
         assert len(issue_services.trashed_issues(s)) == 1
 
 
@@ -170,7 +177,9 @@ def test_an_issue_can_be_restored_on_its_own(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "back")
     with platform_db.transaction(db) as tx:
-        issue_services.delete_issue(tx, made)
+        issue = issue_services.get_issue(tx, made.id)
+        assert issue is not None
+        issue_services.delete_issue(tx, issue)
 
     with platform_db.reading(db) as s:
         trashed = issue_services.trashed_issues(s)
@@ -180,48 +189,27 @@ def test_an_issue_can_be_restored_on_its_own(db: Engine) -> None:
     assert trashed[0].inner.project_slug == "tt"
 
     with platform_db.transaction(db) as tx:
-        issue_services.restore_issue(tx, trashed[0])
+        deleted = issue_services.trashed_issues(tx)[0].inner
+        issue_services.restore_issue(tx, deleted)
     with platform_db.reading(db) as s:
-        assert _titles(issue_services.issues(s, "tt")) == ["back"]
+        assert _titles(issue_services.list_issues(s, "tt")) == ["back"]
         assert issue_services.trashed_issues(s) == []
 
 
 def test_a_slug_is_reusable_once_its_project_is_deleted(db: Engine) -> None:
     first = a_project(db, "tt")
     with platform_db.transaction(db) as tx:
-        project_services.delete_project(tx, first)
+        project = project_services.get_project(tx, "tt")
+        assert project is not None
+        project_services.delete_project(tx, project)
 
     second = a_project(db, "tt")
     assert second.id != first.id
     with platform_db.reading(db) as s:
-        assert [p.slug for p in project_services.projects(s)] == ["tt"]
+        assert [p.slug for p in project_services.list_projects(s)] == ["tt"]
 
 
-# --- the two assertions the OCaml side cannot make ------------------------
-
-
-def test_the_emitted_schema_is_the_designed_one(db: Engine) -> None:
-    ddl = platform_db.emitted_ddl(db)
-    joined = "\n".join(ddl)
-
-    for table in ["CREATE TABLE projects", "CREATE TABLE issues"]:
-        assert table in joined
-    assert joined.count("STRICT") == 2
-    assert "CHECK (status IN ('active', 'archived'))" in joined
-    assert "CHECK (status IN ('todo', 'doing', 'done'))" in joined
-    assert "CHECK (priority IN (0, 1))" in joined
-    assert "projects_slug_live" in joined
-    assert "issues_by_project" in joined
-    assert "ON DELETE CASCADE" in joined
-
-    # The Core tables declare the columns and the DDL declares the tables, so this
-    # is the assertion that the two describe one schema.
-    for table, columns in schema.declared_columns():
-        statement = next(sql for sql in ddl if f"CREATE TABLE {table}" in sql)
-        for column in columns:
-            assert f"\n        {column} " in statement, (
-                f"{table}.{column} is declared by the table and not by the DDL"
-            )
+# --- the assertion the OCaml side cannot make -----------------------------
 
 
 def test_a_duplicate_live_slug_is_refused_by_the_constraint(db: Engine) -> None:
@@ -235,8 +223,8 @@ def test_a_duplicate_live_slug_is_refused_by_the_constraint(db: Engine) -> None:
 
 
 def test_the_enum_round_trips_through_the_column_it_is_stored_in(db: Engine) -> None:
-    # The wire names go through a column whose CHECK constraint spells them out,
-    # and come back as the same members.
+    # The wire names go through a column whose custom type spells them out, and come
+    # back as the same members.
     tt = a_project(db, "tt")
     for title, status, priority in [
         ("a", Status.TODO, Priority.NORMAL),
@@ -245,19 +233,20 @@ def test_the_enum_round_trips_through_the_column_it_is_stored_in(db: Engine) -> 
     ]:
         made = an_issue(db, tt, title, priority)
         with platform_db.transaction(db) as tx:
-            issue_services.update_issue(tx, replace(made, status=status))
+            issue = issue_services.get_issue(tx, made.id)
+            assert issue is not None
+            issue.status = status
         with platform_db.reading(db) as s:
-            read = issue_services.issue(s, made.id)
+            read = issue_services.get_issue(s, made.id)
         assert read is not None
         assert read.status == status
         assert read.priority == priority
 
-    with platform_db.reading(db) as s:
-        loaded = project_services.project(s, "tt")
-    assert loaded is not None
     with platform_db.transaction(db) as tx:
-        project_services.update_project(tx, replace(loaded, status=ProjectStatus.ARCHIVED))
+        project = project_services.get_project(tx, "tt")
+        assert project is not None
+        project.status = ProjectStatus.ARCHIVED
     with platform_db.reading(db) as s:
-        archived = project_services.project(s, "tt")
+        archived = project_services.get_project(s, "tt")
     assert archived is not None
     assert archived.status == ProjectStatus.ARCHIVED

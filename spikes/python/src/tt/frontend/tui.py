@@ -34,7 +34,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from tt.domains import schema
+from tt import schema
 from tt.domains.issue import actions as issue_actions
 from tt.domains.issue import services as issue_services
 from tt.domains.project import actions as project_actions
@@ -267,9 +267,7 @@ class Submit:
     """Build the payload and dispatch it."""
 
 
-type Intent = (
-    Ignored | Move | EnterIntent | Back | Quit | Insert | Rub | NextField | Cycle | Submit
-)
+type Intent = Ignored | Move | EnterIntent | Back | Quit | Insert | Rub | NextField | Cycle | Submit
 
 
 def on_key(state: State, key: str) -> Intent:
@@ -329,7 +327,7 @@ def load(engine: Engine, screen: Screen) -> tuple[str, list[Row]]:
     with db.reading(engine) as session:
         match screen:
             case Projects():
-                projects = project_services.projects(session)
+                projects = project_services.list_projects(session)
                 rows = _action_rows(project_actions.root(), projects)
                 rows.extend(
                     Go(
@@ -343,10 +341,10 @@ def load(engine: Engine, screen: Screen) -> tuple[str, list[Row]]:
                 )
                 return ("projects", rows)
             case Issues(slug=slug):
-                project = project_services.project(session, slug)
+                project = project_services.get_project(session, slug)
                 if project is None:
                     raise Invalid(f"no project {slug!r}")
-                issues = issue_services.issues(session, slug)
+                issues = issue_services.list_issues(session, slug)
                 rows = _action_rows(project_actions.group(), project)
                 rows.extend(
                     Go(
@@ -360,7 +358,7 @@ def load(engine: Engine, screen: Screen) -> tuple[str, list[Row]]:
                 )
                 return (f"{project.subject()}: {project.title}", rows)
             case Detail(id=issue_id):
-                issue = issue_services.issue(session, issue_id)
+                issue = issue_services.get_issue(session, issue_id)
                 if issue is None:
                     raise Invalid(f"no issue {issue_id}")
                 rows = _action_rows(issue_actions.group(), issue)
@@ -376,15 +374,15 @@ def _write(engine: Engine, screen: Screen, key: str, payload: dict[str, Any]) ->
     with db.transaction(engine) as tx:
         match screen:
             case Projects():
-                projects = project_services.projects(tx)
+                projects = project_services.list_projects(tx)
                 return wire.dispatch(project_actions.root(), projects, key, payload, tx)
             case Issues(slug=slug):
-                project = project_services.project(tx, slug)
+                project = project_services.get_project(tx, slug)
                 if project is None:
                     raise Invalid(f"no project {slug!r}")
                 return wire.dispatch(project_actions.group(), project, key, payload, tx)
             case Detail(id=issue_id):
-                issue = issue_services.issue(tx, issue_id)
+                issue = issue_services.get_issue(tx, issue_id)
                 if issue is None:
                     raise Invalid(f"no issue {issue_id}")
                 return wire.dispatch(issue_actions.group(), issue, key, payload, tx)
@@ -634,6 +632,6 @@ class TrackerApp(App[None]):
 
 def main() -> None:
     url = os.environ.get("TT_DB", "sqlite:///tt.db")
+    schema.upgrade(url)
     engine = db.connect(url)
-    schema.initialise(engine)
     TrackerApp(engine).run()

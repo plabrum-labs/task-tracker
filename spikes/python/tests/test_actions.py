@@ -1,16 +1,16 @@
 """The action layer, over a real in-memory SQLite database.
 
 Availability is a pure function of the object, so the menu cases run against
-literals with no database in sight. ``execute`` holds the transaction and writes
-for itself, so the cases that ``run`` an action seed a row, run, and assert both
-the message and the row's new state.
+literals with no database in sight. ``execute`` mutates the loaded row and flushes,
+so the cases that run an action load their object in the transaction they write —
+the way a frontend does — then assert both the message and the row's new state.
 
 Per the root ``CLAUDE.md`` every action key gets two cases: the menu withholds it
 and the write refuses it. No issue action refuses anything, so for those the
 honest pair is "always offered" and the refusal ``execute`` states.
 """
 
-from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy import Engine
 
 from conftest import a_project, an_issue
-from tt.domains import schema
+from tt import schema
 from tt.domains.issue import Issue, Priority, Status
 from tt.domains.issue import actions as issue_actions
 from tt.domains.issue import schemas as issue_schemas
@@ -39,20 +39,71 @@ from tt.platform.error import Conflict, Invalid
 
 def _fresh() -> Engine:
     engine = platform_db.connect("sqlite://")
-    schema.initialise(engine)
+    schema.create_all(engine)
     return engine
 
 
-def run[O, P: BaseModel](engine: Engine, action: type[Action[O, P]], obj: O, payload: P) -> str:
-    """``Action.run`` inside one transaction, committing on success so a later read
-    sees what it wrote."""
+def run_issue[P: BaseModel](
+    engine: Engine, action: type[Action[Issue, P]], issue_id: int, payload: P
+) -> str:
+    with platform_db.transaction(engine) as tx:
+        obj = issue_services.get_issue(tx, issue_id)
+        assert obj is not None
+        return action.run(obj, payload, tx)
+
+
+def run_project[P: BaseModel](
+    engine: Engine, action: type[Action[Project, P]], slug: str, payload: P
+) -> str:
+    with platform_db.transaction(engine) as tx:
+        obj = project_services.get_project(tx, slug)
+        assert obj is not None
+        return action.run(obj, payload, tx)
+
+
+def run_projects[P: BaseModel](
+    engine: Engine, action: type[Action[list[Project], P]], payload: P
+) -> str:
+    with platform_db.transaction(engine) as tx:
+        return action.run(project_services.list_projects(tx), payload, tx)
+
+
+def run_restore_issue(
+    engine: Engine, action: type[Action[Deleted[Issue], wire.Empty]], issue_id: int
+) -> str:
+    with platform_db.transaction(engine) as tx:
+        deleted = next(d for d in issue_services.trashed_issues(tx) if d.inner.id == issue_id)
+        return action.run(deleted, wire.Empty(), tx)
+
+
+def run_synthetic(engine: Engine, action: type[Action[Any, Any]], obj: Any, payload: Any) -> str:
+    # A refusal is decided before ``execute``, so a synthetic object never has to be
+    # attached to the session for these.
     with platform_db.transaction(engine) as tx:
         return action.run(obj, payload, tx)
 
 
-def dispatch[O](engine: Engine, group: wire.Group[O], obj: O, key: str, payload: Any) -> str:
-    """The same, through the erased wire path: decode the blob against the group,
-    then run."""
+def dispatch_issue(
+    engine: Engine, group: wire.Group[Issue], issue_id: int, key: str, payload: Any
+) -> str:
+    with platform_db.transaction(engine) as tx:
+        obj = issue_services.get_issue(tx, issue_id)
+        assert obj is not None
+        return wire.dispatch(group, obj, key, payload, tx)
+
+
+def dispatch_project(
+    engine: Engine, group: wire.Group[Project], slug: str, key: str, payload: Any
+) -> str:
+    with platform_db.transaction(engine) as tx:
+        obj = project_services.get_project(tx, slug)
+        assert obj is not None
+        return wire.dispatch(group, obj, key, payload, tx)
+
+
+def dispatch_synthetic(
+    engine: Engine, group: wire.Group[Any], obj: Any, key: str, payload: Any
+) -> str:
     with platform_db.transaction(engine) as tx:
         return wire.dispatch(group, obj, key, payload, tx)
 
@@ -64,30 +115,41 @@ def issue() -> Issue:
     return Issue(
         id=1,
         project_id=1,
-        project_slug="tt",
         title="a title",
         body="",
         status=Status.TODO,
         priority=Priority.NORMAL,
         status_note=None,
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
     )
 
 
-def project() -> Project:
+def project(
+    *, status: ProjectStatus = ProjectStatus.ACTIVE, issues: list[Issue] | None = None
+) -> Project:
     return Project(
         id=1,
         slug="tt",
         title="task tracker",
         body="",
-        status=ProjectStatus.ACTIVE,
-        todo=0,
-        doing=0,
-        done=0,
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
+        status=status,
+        issues=list(issues or []),
     )
+
+
+def doing_issues(n: int) -> list[Issue]:
+    """``n`` synthetic issues, all doing — what a project's counts read to refuse."""
+    return [
+        Issue(
+            id=i + 1,
+            project_id=1,
+            title=f"i{i}",
+            body="",
+            status=Status.DOING,
+            priority=Priority.NORMAL,
+            status_note=None,
+        )
+        for i in range(n)
+    ]
 
 
 # --- issues: the menu never withholds anything ----------------------------
@@ -96,7 +158,15 @@ def project() -> Project:
 def test_every_issue_edit_is_always_offered() -> None:
     for status in Status:
         for priority in Priority:
-            seeded = replace(issue(), status=status, priority=priority)
+            seeded = Issue(
+                id=1,
+                project_id=1,
+                title="a title",
+                body="",
+                status=status,
+                priority=priority,
+                status_note=None,
+            )
             assert issue_actions.EditTitle.availability(seeded) == Runnable()
             assert issue_actions.EditBody.availability(seeded) == Runnable()
             assert issue_actions.EditStatus.availability(seeded) == Runnable()
@@ -108,26 +178,28 @@ def test_edit_title_trims_saves_and_refuses_a_blank_title(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "old")
 
-    message = run(
-        db, issue_actions.EditTitle, seeded, issue_schemas.EditTitlePayload(title=" new ")
+    message = run_issue(
+        db, issue_actions.EditTitle, seeded.id, issue_schemas.EditTitlePayload(title=" new ")
     )
     assert message == "issue 1: saved"
     with platform_db.reading(db) as s:
-        read = issue_services.issue(s, seeded.id)
+        read = issue_services.get_issue(s, seeded.id)
     assert read is not None
     assert read.title == "new"
 
     with pytest.raises(Invalid):
-        run(db, issue_actions.EditTitle, seeded, issue_schemas.EditTitlePayload(title="   "))
+        run_issue(
+            db, issue_actions.EditTitle, seeded.id, issue_schemas.EditTitlePayload(title="   ")
+        )
 
 
 def test_edit_body_accepts_the_blank_that_edit_title_refuses(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
 
-    run(db, issue_actions.EditBody, seeded, issue_schemas.EditBodyPayload(body=""))
+    run_issue(db, issue_actions.EditBody, seeded.id, issue_schemas.EditBodyPayload(body=""))
     with platform_db.reading(db) as s:
-        read = issue_services.issue(s, seeded.id)
+        read = issue_services.get_issue(s, seeded.id)
     assert read is not None
     assert read.body == ""
 
@@ -136,27 +208,27 @@ def test_edit_status_replaces_the_note_it_arrived_with(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
 
-    run(
+    run_issue(
         db,
         issue_actions.EditStatus,
-        seeded,
+        seeded.id,
         issue_schemas.EditStatusPayload(status=Status.DOING, note="started"),
     )
     with platform_db.reading(db) as s:
-        noted = issue_services.issue(s, seeded.id)
+        noted = issue_services.get_issue(s, seeded.id)
     assert noted is not None
     assert noted.status == Status.DOING
     assert noted.status_note == "started"
 
     # Moving without one clears the old note.
-    run(
+    run_issue(
         db,
         issue_actions.EditStatus,
-        noted,
+        seeded.id,
         issue_schemas.EditStatusPayload(status=Status.DONE, note=None),
     )
     with platform_db.reading(db) as s:
-        cleared = issue_services.issue(s, seeded.id)
+        cleared = issue_services.get_issue(s, seeded.id)
     assert cleared is not None
     assert cleared.status_note is None
 
@@ -165,14 +237,14 @@ def test_edit_priority_sets_the_priority(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
 
-    run(
+    run_issue(
         db,
         issue_actions.EditPriority,
-        seeded,
+        seeded.id,
         issue_schemas.EditPriorityPayload(priority=Priority.HIGH),
     )
     with platform_db.reading(db) as s:
-        read = issue_services.issue(s, seeded.id)
+        read = issue_services.get_issue(s, seeded.id)
     assert read is not None
     assert read.priority == Priority.HIGH
 
@@ -181,33 +253,33 @@ def test_delete_hides_an_issue_and_restore_brings_it_back(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
 
-    message = run(db, issue_actions.Delete, seeded, wire.Empty())
+    message = run_issue(db, issue_actions.Delete, seeded.id, wire.Empty())
     assert message == "issue 1: deleted"
     with platform_db.reading(db) as s:
-        assert issue_services.issue(s, seeded.id) is None
+        assert issue_services.get_issue(s, seeded.id) is None
 
     with platform_db.reading(db) as s:
         deleted = issue_services.trashed_issues(s)[0]
     assert issue_actions.Restore.availability(deleted) == Runnable()
-    message = run(db, issue_actions.Restore, deleted, wire.Empty())
+    message = run_restore_issue(db, issue_actions.Restore, seeded.id)
     assert message == "issue 1: restored"
     with platform_db.reading(db) as s:
-        assert issue_services.issue(s, seeded.id) is not None
+        assert issue_services.get_issue(s, seeded.id) is not None
 
 
 # --- projects: the half with preconditions --------------------------------
 
 
 def test_edit_status_is_refused_while_anything_is_doing(db: Engine) -> None:
-    busy = replace(project(), doing=1)
+    busy = project(issues=doing_issues(1))
     assert project_actions.EditStatus.availability(busy) == Refused("finish or drop 1 issue first")
-    busier = replace(project(), doing=3)
+    busier = project(issues=doing_issues(3))
     assert project_actions.EditStatus.availability(busier) == Refused(
         "finish or drop 3 issues first"
     )
     # Stated against the object, so asking to stay active is refused too.
     with pytest.raises(Conflict):
-        run(
+        run_synthetic(
             db,
             project_actions.EditStatus,
             busy,
@@ -218,45 +290,45 @@ def test_edit_status_is_refused_while_anything_is_doing(db: Engine) -> None:
 def test_edit_status_is_runnable_once_nothing_is_doing(db: Engine) -> None:
     seeded = a_project(db, "tt")
     assert project_actions.EditStatus.availability(seeded) == Runnable()
-    message = run(
+    message = run_project(
         db,
         project_actions.EditStatus,
-        seeded,
+        "tt",
         project_schemas.EditStatusPayload(status=ProjectStatus.ARCHIVED),
     )
     assert message == "project tt: saved"
     with platform_db.reading(db) as s:
-        read = project_services.project(s, "tt")
+        read = project_services.get_project(s, "tt")
     assert read is not None
     assert read.status == ProjectStatus.ARCHIVED
 
 
 def test_delete_is_refused_while_the_project_is_active(db: Engine) -> None:
     assert project_actions.Delete.availability(project()) == Refused("archive it first")
-    seeded = a_project(db, "tt")
+    a_project(db, "tt")
     with pytest.raises(Conflict):
-        run(db, project_actions.Delete, seeded, wire.Empty())
+        run_project(db, project_actions.Delete, "tt", wire.Empty())
 
     # Archive it, and it goes.
     with platform_db.transaction(db) as tx:
-        current = project_services.project(tx, "tt")
+        current = project_services.get_project(tx, "tt")
         assert current is not None
-        project_services.update_project(tx, replace(current, status=ProjectStatus.ARCHIVED))
+        current.status = ProjectStatus.ARCHIVED
     with platform_db.reading(db) as s:
-        archived = project_services.project(s, "tt")
+        archived = project_services.get_project(s, "tt")
     assert archived is not None
     assert project_actions.Delete.availability(archived) == Runnable()
-    message = run(db, project_actions.Delete, archived, wire.Empty())
+    message = run_project(db, project_actions.Delete, "tt", wire.Empty())
     assert message == "project tt: deleted"
     with platform_db.reading(db) as s:
-        assert project_services.project(s, "tt") is None
+        assert project_services.get_project(s, "tt") is None
 
 
 def test_add_issue_is_refused_while_the_project_is_archived(db: Engine) -> None:
-    archived = replace(project(), status=ProjectStatus.ARCHIVED)
+    archived = project(status=ProjectStatus.ARCHIVED)
     assert project_actions.AddIssue.availability(archived) == Refused("project is archived")
     with pytest.raises(Conflict):
-        run(
+        run_synthetic(
             db,
             project_actions.AddIssue,
             archived,
@@ -265,58 +337,52 @@ def test_add_issue_is_refused_while_the_project_is_archived(db: Engine) -> None:
 
 
 def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
-    seeded = a_project(db, "tt")
-    message = run(
+    a_project(db, "tt")
+    message = run_project(
         db,
         project_actions.AddIssue,
-        seeded,
+        "tt",
         project_schemas.AddIssuePayload(title=" ship it ", body=None, priority=None),
     )
     assert message == "issue 1: created"
     with platform_db.reading(db) as s:
-        created = issue_services.issues(s, "tt")[0]
+        created = issue_services.list_issues(s, "tt")[0]
     assert created.title == "ship it"
     assert created.body == ""
     assert created.priority == Priority.NORMAL
 
-    with platform_db.reading(db) as s:
-        again = project_services.project(s, "tt")
-    assert again is not None
     with pytest.raises(Invalid):
-        run(
+        run_project(
             db,
             project_actions.AddIssue,
-            again,
+            "tt",
             project_schemas.AddIssuePayload(title="  ", body=None, priority=None),
         )
 
 
 def test_create_project_refuses_a_slug_the_list_already_holds(db: Engine) -> None:
     assert project_actions.CreateProject.availability([project()]) == Runnable()
-    tt = a_project(db, "tt")
+    a_project(db, "tt")
     with pytest.raises(Conflict):
-        run(
+        run_projects(
             db,
             project_actions.CreateProject,
-            [tt],
             project_schemas.CreateProjectPayload(slug="tt", title=None, body=None),
         )
     with pytest.raises(Invalid):
-        run(
+        run_projects(
             db,
             project_actions.CreateProject,
-            [],
             project_schemas.CreateProjectPayload(slug="  ", title=None, body=None),
         )
-    message = run(
+    message = run_projects(
         db,
         project_actions.CreateProject,
-        [],
         project_schemas.CreateProjectPayload(slug="other", title="another", body=None),
     )
     assert message == "project other: created"
     with platform_db.reading(db) as s:
-        made = project_services.project(s, "other")
+        made = project_services.get_project(s, "other")
     assert made is not None
     assert made.title == "another"
 
@@ -324,7 +390,8 @@ def test_create_project_refuses_a_slug_the_list_already_holds(db: Engine) -> Non
 def test_restore_is_refused_once_the_slug_is_taken_again(db: Engine) -> None:
     def restorable(live: list[Project]) -> Restorable:
         return Restorable(
-            deleted=Deleted(inner=project(), deleted_at="2026-01-02T00:00:00Z"), live=live
+            deleted=Deleted(inner=project(), deleted_at=datetime(2026, 1, 2, tzinfo=UTC)),
+            live=live,
         )
 
     assert project_actions.Restore.availability(restorable([])) == Runnable()
@@ -332,7 +399,7 @@ def test_restore_is_refused_once_the_slug_is_taken_again(db: Engine) -> None:
         'project "tt" exists again'
     )
     with pytest.raises(Conflict):
-        run(db, project_actions.Restore, restorable([project()]), wire.Empty())
+        run_synthetic(db, project_actions.Restore, restorable([project()]), wire.Empty())
 
 
 # --- the wire -------------------------------------------------------------
@@ -357,7 +424,7 @@ def test_a_group_keeps_refused_actions_and_drops_absent_ones() -> None:
     # An active project with two issues doing: editStatus and delete come back
     # refused, addIssue is runnable — one group, told apart by what each execute
     # writes rather than by which list it sat in.
-    busy = replace(project(), doing=2)
+    busy = project(issues=doing_issues(2))
     offered = [(entry.key, state) for entry, state in wire.available(project_actions.group(), busy)]
     assert offered == [
         ("editTitle", Runnable()),
@@ -370,35 +437,37 @@ def test_a_group_keeps_refused_actions_and_drops_absent_ones() -> None:
 
 def test_dispatch_refuses_what_availability_refused(db: Engine) -> None:
     with pytest.raises(Conflict):
-        dispatch(db, project_actions.group(), project(), "delete", {})
+        dispatch_synthetic(db, project_actions.group(), project(), "delete", {})
 
 
 def test_the_wire_agrees_with_the_typed_path() -> None:
     erased = _fresh()
     tt = a_project(erased, "tt")
     seeded = an_issue(erased, tt, "old")
-    via_wire = dispatch(erased, issue_actions.group(), seeded, "editTitle", {"title": " new "})
+    via_wire = dispatch_issue(
+        erased, issue_actions.group(), seeded.id, "editTitle", {"title": " new "}
+    )
 
     typed = _fresh()
     tt = a_project(typed, "tt")
     seeded = an_issue(typed, tt, "old")
-    via_typed = run(
-        typed, issue_actions.EditTitle, seeded, issue_schemas.EditTitlePayload(title=" new ")
+    via_typed = run_issue(
+        typed, issue_actions.EditTitle, seeded.id, issue_schemas.EditTitlePayload(title=" new ")
     )
 
     assert via_wire == via_typed == "issue 1: saved"
 
     # The same for a creator, whose execute writes a different table.
     erased = _fresh()
-    tt = a_project(erased, "tt")
-    via_wire = dispatch(erased, project_actions.group(), tt, "addIssue", {"title": "one"})
+    a_project(erased, "tt")
+    via_wire = dispatch_project(erased, project_actions.group(), "tt", "addIssue", {"title": "one"})
 
     typed = _fresh()
-    tt = a_project(typed, "tt")
-    via_typed = run(
+    a_project(typed, "tt")
+    via_typed = run_project(
         typed,
         project_actions.AddIssue,
-        tt,
+        "tt",
         project_schemas.AddIssuePayload(title="one", body=None, priority=None),
     )
 
@@ -412,26 +481,26 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
         {"title": "x", "bogus": 1},  # not advertised
     ]:
         with pytest.raises(Invalid):
-            dispatch(db, issue_actions.group(), issue(), "editTitle", payload)
+            dispatch_synthetic(db, issue_actions.group(), issue(), "editTitle", payload)
     # A value outside the enum, the one the schema could have told the caller
     # about in advance.
     with pytest.raises(Invalid):
-        dispatch(db, issue_actions.group(), issue(), "editStatus", {"status": "shipped"})
+        dispatch_synthetic(db, issue_actions.group(), issue(), "editStatus", {"status": "shipped"})
 
 
 def test_an_action_with_no_arguments_takes_an_empty_object_and_not_null(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
-    assert dispatch(db, issue_actions.group(), seeded, "delete", {}) == "issue 1: deleted"
+    assert dispatch_issue(db, issue_actions.group(), seeded.id, "delete", {}) == "issue 1: deleted"
     with pytest.raises(Invalid):
-        dispatch(db, issue_actions.group(), issue(), "delete", None)
+        dispatch_synthetic(db, issue_actions.group(), issue(), "delete", None)
 
 
 def test_an_unknown_key_is_invalid(db: Engine) -> None:
     with pytest.raises(Invalid):
-        dispatch(db, issue_actions.group(), issue(), "explode", {})
+        dispatch_synthetic(db, issue_actions.group(), issue(), "explode", {})
     with pytest.raises(Invalid):
-        dispatch(db, project_actions.root(), [], "explode", {})
+        dispatch_synthetic(db, project_actions.root(), [], "explode", {})
 
 
 def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db: Engine) -> None:
@@ -442,12 +511,14 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
 
     # A project status through the issue's editStatus.
     with pytest.raises(Invalid):
-        dispatch(db, issue_actions.group(), issue(), "editStatus", {"status": "archived"})
+        dispatch_synthetic(db, issue_actions.group(), issue(), "editStatus", {"status": "archived"})
     # An issue status, and an issue-only field, through the project's.
     with pytest.raises(Invalid):
-        dispatch(db, project_actions.group(), project(), "editStatus", {"status": "doing"})
+        dispatch_synthetic(
+            db, project_actions.group(), project(), "editStatus", {"status": "doing"}
+        )
     with pytest.raises(Invalid):
-        dispatch(
+        dispatch_synthetic(
             db,
             project_actions.group(),
             project(),
@@ -506,12 +577,11 @@ def test_the_advertised_schema_accepts_what_the_decoder_accepts(db: Engine) -> N
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
     assert (
-        dispatch(db, issue_actions.group(), seeded, "editStatus", {"status": "doing", "note": None})
+        dispatch_issue(
+            db, issue_actions.group(), seeded.id, "editStatus", {"status": "doing", "note": None}
+        )
         == "issue 1: saved"
     )
-    with platform_db.reading(db) as s:
-        reloaded = issue_services.issue(s, seeded.id)
-    assert reloaded is not None
-    assert dispatch(db, issue_actions.group(), reloaded, "editStatus", {"status": "doing"}) == (
-        "issue 1: saved"
-    )
+    assert dispatch_issue(
+        db, issue_actions.group(), seeded.id, "editStatus", {"status": "doing"}
+    ) == ("issue 1: saved")

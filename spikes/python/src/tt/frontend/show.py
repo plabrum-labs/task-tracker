@@ -11,7 +11,7 @@ literals.
 import json
 from typing import Any
 
-from tt.domains import schema
+from tt import schema
 from tt.domains.issue import actions as issue_actions
 from tt.domains.issue import services as issue_services
 from tt.domains.project import actions as project_actions
@@ -34,17 +34,17 @@ def _show(title: str, group: wire.Group[Any], obj: Any) -> None:
 
 def main() -> None:
     engine = db.connect("sqlite://")
-    schema.initialise(engine)
+    schema.create_all(engine)
 
     # No projects yet: the root creator, offered against the empty list it is
     # checked against.
     with db.reading(engine) as session:
-        _show("no projects yet", project_actions.root(), project_services.projects(session))
+        _show("no projects yet", project_actions.root(), project_services.list_projects(session))
 
     # Make one, then add an issue under it — each a real dispatch inside its own
     # transaction, exactly as a frontend would run it.
     with db.transaction(engine) as tx:
-        projects = project_services.projects(tx)
+        projects = project_services.list_projects(tx)
         wire.dispatch(
             project_actions.root(),
             projects,
@@ -54,7 +54,7 @@ def main() -> None:
         )
 
     with db.transaction(engine) as tx:
-        project = project_services.project(tx, "tt")
+        project = project_services.get_project(tx, "tt")
         assert project is not None
         wire.dispatch(
             project_actions.group(),
@@ -65,10 +65,10 @@ def main() -> None:
         )
 
     with db.reading(engine) as session:
-        project = project_services.project(session, "tt")
+        project = project_services.get_project(session, "tt")
         assert project is not None
         _show("the project, with one issue to do", project_actions.group(), project)
-        for issue in issue_services.issues(session, "tt"):
+        for issue in issue_services.list_issues(session, "tt"):
             _show("the issue", issue_actions.group(), issue)
 
 

@@ -37,7 +37,7 @@ import typer
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from tt.domains import schema
+from tt import schema
 from tt.domains.issue import Issue
 from tt.domains.issue import actions as issue_actions
 from tt.domains.issue import services as issue_services
@@ -100,8 +100,8 @@ def _project_json(p: Project) -> dict[str, Any]:
         "todo": p.todo,
         "doing": p.doing,
         "done": p.done,
-        "created_at": p.created_at,
-        "updated_at": p.updated_at,
+        "created_at": p.created_at.isoformat(),
+        "updated_at": p.updated_at.isoformat(),
     }
 
 
@@ -114,8 +114,8 @@ def _issue_json(i: Issue) -> dict[str, Any]:
         "status": wire.name_of(i.status),
         "priority": wire.name_of(i.priority),
         "status_note": i.status_note,
-        "created_at": i.created_at,
-        "updated_at": i.updated_at,
+        "created_at": i.created_at.isoformat(),
+        "updated_at": i.updated_at.isoformat(),
     }
 
 
@@ -151,7 +151,7 @@ def _pretty(value: Any) -> str:
 
 
 def _live_project(session: Session, slug: str) -> Project:
-    project = project_services.project(session, slug)
+    project = project_services.get_project(session, slug)
     if project is None:
         raise Invalid(f"no project {slug!r}")
     return project
@@ -166,11 +166,11 @@ def _restorable_project(session: Session, slug: str) -> Restorable:
     )
     if deleted is None:
         raise Invalid(f"no deleted project {slug!r}")
-    return Restorable(deleted=deleted, live=project_services.projects(session))
+    return Restorable(deleted=deleted, live=project_services.list_projects(session))
 
 
 def _live_issue(session: Session, id: int) -> Issue:
-    issue = issue_services.issue(session, id)
+    issue = issue_services.get_issue(session, id)
     if issue is None:
         raise Invalid(f"no issue {id}")
     return issue
@@ -228,7 +228,7 @@ def _root_write(engine: Engine, _address: Any, key: str, payload: dict[str, Any]
     """The root creator has no object to address, so its object is the list of live
     projects — which is exactly what its uniqueness refusal has to read."""
     with db.transaction(engine) as tx:
-        projects = project_services.projects(tx)
+        projects = project_services.list_projects(tx)
         return wire.dispatch(project_actions.root(), projects, key, payload, tx)
 
 
@@ -237,7 +237,7 @@ def _root_write(engine: Engine, _address: Any, key: str, payload: dict[str, Any]
 
 def _project_ls(engine: Engine) -> str:
     with db.reading(engine) as session:
-        return "\n".join(_project_line(p) for p in project_services.projects(session))
+        return "\n".join(_project_line(p) for p in project_services.list_projects(session))
 
 
 def _issue_ls(engine: Engine, project_slug: str | None) -> str:
@@ -245,11 +245,11 @@ def _issue_ls(engine: Engine, project_slug: str | None) -> str:
         if project_slug is not None:
             slugs = [_live_project(session, project_slug).slug]
         else:
-            slugs = [p.slug for p in project_services.projects(session)]
+            slugs = [p.slug for p in project_services.list_projects(session)]
         lines = [
             _issue_line(issue)
             for slug in slugs
-            for issue in issue_services.issues(session, slug)
+            for issue in issue_services.list_issues(session, slug)
         ]
     return "\n".join(lines)
 
@@ -272,11 +272,11 @@ def _trash(engine: Engine) -> str:
     """The trash, with what each row offers — which is ``restore`` and nothing
     else, because that is the only action registered against the deleted types."""
     with db.reading(engine) as session:
-        live = project_services.projects(session)
+        live = project_services.list_projects(session)
         projects = [
             {
                 "project": deleted.inner.slug,
-                "deleted_at": deleted.deleted_at,
+                "deleted_at": deleted.deleted_at.isoformat(),
                 "actions": _offers(
                     project_actions.deleted_group(),
                     Restorable(deleted=deleted, live=live),
@@ -288,7 +288,7 @@ def _trash(engine: Engine) -> str:
             {
                 "issue": deleted.inner.id,
                 "title": deleted.inner.title,
-                "deleted_at": deleted.deleted_at,
+                "deleted_at": deleted.deleted_at.isoformat(),
                 "actions": _offers(issue_actions.deleted_group(), deleted),
             }
             for deleted in issue_services.trashed_issues(session)
@@ -470,9 +470,8 @@ def _report(outcome: Callable[[], str]) -> None:
 
 
 def _open(database: str) -> Engine:
-    engine = db.connect(database)
-    schema.initialise(engine)
-    return engine
+    schema.upgrade(database)
+    return db.connect(database)
 
 
 # --- the command tree -----------------------------------------------------

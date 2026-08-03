@@ -2,7 +2,8 @@
 
 This is the half of the domain that has preconditions. Every issue action is
 always ``Runnable``; a project refuses three things, and all three refusals read
-something that is on the object only because the store put it there.
+something the store put on the object — its counts, or the live list it was
+widened to carry.
 
 A creator is an ordinary ``Action`` whose ``execute`` writes a different table —
 ``addIssue`` inserts an issue, ``createProject`` a project — and nothing about the
@@ -13,23 +14,21 @@ project: ``deleted_group`` is offered against a ``Restorable``, and ``root``
 against the list of live projects a ``createProject`` is checked against.
 """
 
-from dataclasses import replace
-
 from sqlalchemy.orm import Session
 
-from tt.domains.issue import Draft as IssueDraft
-from tt.domains.issue import Priority
 from tt.domains.issue import services as issue_services
-from tt.domains.project import Draft, Project, Restorable, Status, schemas, services
+from tt.domains.issue.models import Draft as IssueDraft
+from tt.domains.issue.models import Priority
+from tt.domains.project import schemas, services
+from tt.domains.project.models import Draft, Project, Restorable, Status
 from tt.platform.action import Action, Checked
 from tt.platform.error import Conflict, Invalid
 from tt.platform.wire import Empty, Group, entry_of
 
 
 def _saved(project: Project, tx: Session) -> str:
-    """The editable columns, written and reported as one. ``updated_at`` is the
-    store's to stamp."""
-    services.update_project(tx, project)
+    """Flush the edit and report it. ``updated_at`` is the database's to bump."""
+    tx.flush()
     return f"{project.subject()}: saved"
 
 
@@ -48,7 +47,8 @@ class EditTitle(Action[Project, schemas.EditTitlePayload]):
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")
-        return _saved(replace(obj, title=title), tx)
+        obj.title = title
+        return _saved(obj, tx)
 
 
 class EditBody(Action[Project, schemas.EditBodyPayload]):
@@ -59,7 +59,8 @@ class EditBody(Action[Project, schemas.EditBodyPayload]):
     def execute(
         cls, obj: Project, payload: schemas.EditBodyPayload, tx: Session, checked: Checked
     ) -> str:
-        return _saved(replace(obj, body=payload.body), tx)
+        obj.body = payload.body
+        return _saved(obj, tx)
 
 
 class EditStatus(Action[Project, schemas.EditStatusPayload]):
@@ -79,7 +80,8 @@ class EditStatus(Action[Project, schemas.EditStatusPayload]):
     def execute(
         cls, obj: Project, payload: schemas.EditStatusPayload, tx: Session, checked: Checked
     ) -> str:
-        return _saved(replace(obj, status=payload.status), tx)
+        obj.status = payload.status
+        return _saved(obj, tx)
 
 
 class Delete(Action[Project, Empty]):
@@ -117,7 +119,7 @@ class Restore(Action[Restorable, Empty]):
 
     @classmethod
     def execute(cls, obj: Restorable, payload: Empty, tx: Session, checked: Checked) -> str:
-        services.restore_project(tx, obj.deleted)
+        services.restore_project(tx, obj.deleted.inner)
         return f"{obj.deleted.inner.subject()}: restored"
 
 
@@ -143,12 +145,11 @@ class AddIssue(Action[Project, schemas.AddIssuePayload]):
         if not title:
             raise Invalid("title is required")
         draft = IssueDraft(
-            project_id=obj.id,
             title=title,
             body=payload.body or "",
             priority=payload.priority or Priority.NORMAL,
         )
-        created = issue_services.create_issue(tx, draft)
+        created = issue_services.create_issue(tx, obj, draft)
         return f"{created.subject()}: created"
 
 

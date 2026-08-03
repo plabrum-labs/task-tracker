@@ -1,9 +1,10 @@
 """Everything an issue can be asked, in two registrations.
 
 One action is one class: its object type, its key, its two hooks and its
-``execute``, which holds the open transaction and writes for itself — an edit is
-an ``UPDATE``, a delete stamps ``deleted_at``, and nothing outside the body says
-which. The payload shapes are in ``schemas``, one model per action.
+``execute``, which holds the open transaction and writes for itself — an edit
+mutates the loaded row and flushes, a delete stamps ``deleted_at``, and nothing
+outside the body says which. The payload shapes are in ``schemas``, one model per
+action.
 
 There is one group per object. ``group`` is everything a live issue offers — the
 four edits and the delete. ``deleted_group`` is offered against ``Deleted[Issue]``,
@@ -15,11 +16,10 @@ there is no WIP rule, so both hooks are the default in every case and the refusa
 are all ``execute``'s.
 """
 
-from dataclasses import replace
-
 from sqlalchemy.orm import Session
 
-from tt.domains.issue import Issue, schemas, services
+from tt.domains.issue import schemas, services
+from tt.domains.issue.models import Issue
 from tt.platform.action import Action, Checked
 from tt.platform.deleted import Deleted
 from tt.platform.error import Invalid
@@ -27,9 +27,9 @@ from tt.platform.wire import Empty, Group, entry_of
 
 
 def _saved(issue: Issue, tx: Session) -> str:
-    """The editable columns, written and reported as one. ``updated_at`` is
-    stamped by the store, so an ``execute`` states only what it changed."""
-    services.update_issue(tx, issue)
+    """Flush the edit and report it. ``updated_at`` is the database's to bump, so
+    an ``execute`` sets only the columns it changed."""
+    tx.flush()
     return f"{issue.subject()}: saved"
 
 
@@ -44,7 +44,8 @@ class EditTitle(Action[Issue, schemas.EditTitlePayload]):
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")
-        return _saved(replace(obj, title=title), tx)
+        obj.title = title
+        return _saved(obj, tx)
 
 
 class EditBody(Action[Issue, schemas.EditBodyPayload]):
@@ -57,7 +58,8 @@ class EditBody(Action[Issue, schemas.EditBodyPayload]):
     def execute(
         cls, obj: Issue, payload: schemas.EditBodyPayload, tx: Session, checked: Checked
     ) -> str:
-        return _saved(replace(obj, body=payload.body), tx)
+        obj.body = payload.body
+        return _saved(obj, tx)
 
 
 class EditStatus(Action[Issue, schemas.EditStatusPayload]):
@@ -71,7 +73,9 @@ class EditStatus(Action[Issue, schemas.EditStatusPayload]):
     def execute(
         cls, obj: Issue, payload: schemas.EditStatusPayload, tx: Session, checked: Checked
     ) -> str:
-        return _saved(replace(obj, status=payload.status, status_note=payload.note), tx)
+        obj.status = payload.status
+        obj.status_note = payload.note
+        return _saved(obj, tx)
 
 
 class EditPriority(Action[Issue, schemas.EditPriorityPayload]):
@@ -82,12 +86,13 @@ class EditPriority(Action[Issue, schemas.EditPriorityPayload]):
     def execute(
         cls, obj: Issue, payload: schemas.EditPriorityPayload, tx: Session, checked: Checked
     ) -> str:
-        return _saved(replace(obj, priority=payload.priority), tx)
+        obj.priority = payload.priority
+        return _saved(obj, tx)
 
 
 class Delete(Action[Issue, Empty]):
     # The soft delete, which is an update like any other — the column it sets is
-    # not on ``Issue`` at all, so the whole of the write is the store call.
+    # not one the edits touch, so the whole of the write is the store call.
     KEY = "delete"
     Payload = Empty
 
@@ -104,7 +109,7 @@ class Restore(Action[Deleted[Issue], Empty]):
 
     @classmethod
     def execute(cls, obj: Deleted[Issue], payload: Empty, tx: Session, checked: Checked) -> str:
-        services.restore_issue(tx, obj)
+        services.restore_issue(tx, obj.inner)
         return f"{obj.inner.subject()}: restored"
 
 

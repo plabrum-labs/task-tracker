@@ -1,15 +1,17 @@
 """The fixtures the store and action tests share.
 
 One ``connect`` is one in-memory database held open by a ``StaticPool``, so a test
-cannot see another's rows. ``initialise`` runs the same DDL the binary runs, and
-the helpers seed rows through the create services — the same path a frontend takes
-— so a seeded object is the projection every read returns, not a hand-built one.
+cannot see another's rows. ``create_all`` builds the schema on it — Alembic cannot
+reach a ``StaticPool``'s single connection, and a database that dies with the
+process has no history to migrate. The helpers seed rows through the create
+services — the same path a frontend takes — inside their own transaction, so what
+they return is a stored row read back rather than a hand-built one.
 """
 
 import pytest
 from sqlalchemy import Engine
 
-from tt.domains import schema
+from tt import schema
 from tt.domains.issue import Draft as IssueDraft
 from tt.domains.issue import Issue, Priority
 from tt.domains.issue import services as issue_services
@@ -22,7 +24,7 @@ from tt.platform import db as platform_db
 @pytest.fixture
 def db() -> Engine:
     engine = platform_db.connect("sqlite://")
-    schema.initialise(engine)
+    schema.create_all(engine)
     return engine
 
 
@@ -35,6 +37,8 @@ def an_issue(
     engine: Engine, project: Project, title: str, priority: Priority = Priority.NORMAL
 ) -> Issue:
     with platform_db.transaction(engine) as tx:
+        loaded = project_services.get_project(tx, project.slug)
+        assert loaded is not None
         return issue_services.create_issue(
-            tx, IssueDraft(project_id=project.id, title=title, body="", priority=priority)
+            tx, loaded, IssueDraft(title=title, body="", priority=priority)
         )

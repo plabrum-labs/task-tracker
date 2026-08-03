@@ -40,15 +40,13 @@ def _seeded(engine: Engine) -> None:
         project = project_services.create_project(
             tx, ProjectDraft(slug="tt", title="task tracker", body="")
         )
-        draft = IssueDraft(
-            project_id=project.id, title="ship the mvp", body="", priority=Priority.HIGH
-        )
-        issue_services.create_issue(tx, draft)
+        draft = IssueDraft(title="ship the mvp", body="", priority=Priority.HIGH)
+        issue_services.create_issue(tx, project, draft)
 
 
 def _dispatch_issue(engine: Engine, key: str, payload: dict[str, Any]) -> str:
     with platform_db.transaction(engine) as tx:
-        issue = issue_services.issue(tx, 1)
+        issue = issue_services.get_issue(tx, 1)
         assert issue is not None
         return dispatch(issue_actions.group(), issue, key, payload, tx)
 
@@ -108,7 +106,7 @@ def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engin
     _seeded(db)
     _dispatch_issue(db, "editStatus", payload)
     with platform_db.reading(db) as session:
-        issue = issue_services.issue(session, 1)
+        issue = issue_services.get_issue(session, 1)
     assert issue is not None
     assert issue.status_note is None
 

@@ -53,9 +53,8 @@ so the advertised arguments and the decoder can drift.
 
 ### The slice
 
-Two persisted objects, eleven actions and two creators, spread over eight
-registration lists. Both spikes carry all of it, and the file sets correspond
-one for one.
+Two persisted objects and thirteen actions, spread over five registration
+lists. Both spikes carry all of it, and the file sets correspond one for one.
 
 A **project** has a slug, a title, a body, a status and — from the read rather
 than from a column — the counts of the issues under it. An **issue** belongs to
@@ -74,21 +73,23 @@ a project and has a title, a body, a status, a priority and a status note.
 | project | `editStatus` | `{ status }` | refused while anything is `doing` |
 | project | `delete` | `{}` | refused while the project is active |
 | project | `restore` | `{}` | refused once the slug is taken again |
-| project | `addIssue` | `{ title, body?, priority? }` | creator; refused while archived |
-| root | `createProject` | `{ slug, title?, body? }` | creator; `create` refuses a duplicate slug |
+| project | `addIssue` | `{ title, body?, priority? }` | refused while archived; `execute` inserts an issue |
+| root | `createProject` | `{ slug, title?, body? }` | always; `execute` refuses a duplicate slug |
 
 Three keys — `editTitle`, `editBody`, `editStatus` — are registered against
 both objects with different payload types, which is what makes "resolve the
 object before the key" a property worth asserting rather than an accident.
 
-`delete` and `restore` are registered in their own groups because what
-distinguishes them is not what they mean but what the store does with the
-result: `group` is persisted by an `UPDATE` of the editable columns, `trash` by
-one that stamps `deleted_at`, `deleted_group` by one that clears it. Soft
-deletes are derived rather than cascaded — a live issue is one whose own
-`deleted_at` and whose project's are both null — so deleting a project hides its
-issues with one row written and restoring it brings back exactly the issues that
-were not deleted in their own right.
+`delete` sits in each object's live `group`; only `restore` is registered on its
+own, in a `deleted_group` offered against the deleted row rather than the live
+one — an edit registered against the live type cannot typecheck against the
+deleted one. What used to be a split by *what the store does with the result* is
+gone: an action's `execute` holds the transaction and writes for itself, so a
+soft delete is an `UPDATE` told apart from an edit by what its body does, not by
+which list it sits in. Soft deletes are derived rather than cascaded — a live
+issue is one whose own `deleted_at` and whose project's are both null — so
+deleting a project hides its issues with one row written and restoring it brings
+back exactly the issues that were not deleted in their own right.
 
 Both frontends use the **erased** path: an agent driving `tt issue action <id>
 <key> <json>` does exactly what a TUI user does — read the object, see what it
@@ -359,37 +360,40 @@ It does it with a token whose constructor is private to `action.rs`:
 ```rust
 pub struct Checked(());
 
-fn execute(obj: Self::Obj, payload: Self::Payload, _: Checked) -> Result<Self::Obj, Error>;
+async fn execute(obj: Self::Obj, payload: Self::Payload, tx: &DatabaseTransaction, _: Checked)
+    -> Result<String, Error>;
 ```
 
-The bypass is then `E0061: this function takes 3 arguments but 2 were
+The bypass is then `E0061: this function takes 4 arguments but 3 were
 supplied`, and forging the token from outside is `E0423: cannot initialize a
 tuple struct which contains private fields`. The cost is one parameter on every
-`execute`, plus the import.
+`execute`, plus the import. Like OCaml's, the field the token now guards is the
+write itself, not a pure function that hands back an object.
 
 The two costs scale differently. Rust's is paid again by every action added;
 OCaml's is paid once, and the same file buys the rest of the module's
 encapsulation.
 
 **A second module is still sealed, and giving `execute` the transaction narrowed
-what the seal buys.** The store keeps its tables unnameable from outside — OCaml
-still writes the interface, now one `services.mli` per object (17 lines of code
-across the two and 114 with the doc comments that are the only reason to keep
-them), and Rust still writes `mod entities;` without a `pub`. What changed is the
+what the seal buys — on both sides now.** The store keeps its tables unnameable
+from outside the domain layer. OCaml writes the interface, one `services.mli` per
+object (17 lines of code across the two and 114 with the doc comments that are
+the only reason to keep them). Rust writes `pub(in crate::domains) mod entities`
+in `schema.rs`, so a domain's services can name its table and `frontend/` cannot
+— sea-orm's typed relations couple the two entities, so they sit shared but
+domain-scoped rather than one private module per object. What changed is the
 guarantee. It used to be that no read *anywhere* could forget the soft-delete
 predicate, because a pure `execute` had no connection to read through and every
-read went through the sealed loads. Now `execute` holds the transaction and
-`Db.find` is public, so an action *could* issue a raw SELECT that sees a deleted
-row; the seal guarantees only that no read *stated in the module* forgets the
-filter, and every read the rest of the tree has still goes through there. The
-airtight version was a property of the pure `execute` this change removed.
+read went through the sealed loads. Now `execute` holds the transaction and the
+service reads are public within the domain, so an action *could* issue a raw
+SELECT that sees a deleted row; the seal guarantees only that no read *stated in
+the services* forgets the filter, and every read the rest of the tree has still
+goes through there. The airtight version was a property of the pure `execute`
+this change removed.
 
-Rust is measured before its own version of this change, so its `execute` is still
-pure and its seal still airtight — the honest comparison waits until Rust holds
-the transaction too. Finding 7's cost stays asymmetric — Rust pays `Checked` per
-*action*, OCaml pays an `.mli` per *module that needs sealing* — but the
-soft-delete guarantee that made the store the decisive second module is no longer
-airtight on the side that took the change.
+Finding 7's cost stays asymmetric — Rust pays `Checked` per *action*, OCaml pays
+an `.mli` per *module that needs sealing* — but the soft-delete guarantee that
+made the store the decisive second module is no longer airtight on either side.
 
 ### 8. Both can type "an action group never contains Absent", and Rust's is tidier
 
@@ -494,15 +498,15 @@ is where the database is — and `intent` is the seam. `test_frontend.ml`'s
 as `tests/frontend.rs` does; the OCaml tests are no longer the ones that cannot
 separate the two.
 
-The rows were the last place the two differed, and this change closed it. An
-OCaml row used to close over a `persist` function — the store call its group
-would end in — while a Rust row carries a `Persist` tag matched in one place,
-because a closure returning a future would have to be boxed. With `execute`
-holding the transaction there is no persist to carry: the OCaml `row` is
-`Do { key; disabled; schema }` and the write is the action's own. So the tag is
-now a difference in Rust's design alone, and stays one until Rust takes the same
-change — the measurement is that `grep persist lib/frontend/tui.ml` finds
-nothing.
+The rows were the last place the two differed, and holding the transaction
+closed it in both. An OCaml row used to close over a `persist` function — the
+store call its group would end in — and a Rust row carried a `Persist` tag
+matched in one place, because a closure returning a future would have to be
+boxed. With `execute` holding the transaction there is nothing to carry: the row
+is `Do { key; disabled; schema }` in OCaml and `Row::Do { key, offered, schema }`
+in Rust, and the write is the action's own. The measurement is that neither
+`grep persist lib/frontend/tui.ml` nor `grep -i persist rust/src/frontend/tui.rs`
+finds a tag.
 
 ### 12. sea-orm has petrol's schema gaps, and none of its migration ones
 
@@ -582,25 +586,29 @@ store's dispatch unsound. Rust kept `Action` and `Creator` apart with nominal
 traits; OCaml kept `('obj, 'p) t` and `('parent, 'p, 'child) creator` apart by
 discipline and by prefixing every field name.
 
-`execute` holding the transaction removes the premise. Nothing hands a result
-back for a store to place, so there is no store dispatch to be made unsound and
-no reason for a creator to be a separate type. `addIssue` and `createProject` are
-ordinary actions whose `execute` happens to `INSERT`; the OCaml `creator` record
-and the `out` type parameter are both gone, and `('obj, 'p, 'conn) Action.t` is
-the only action type there is — `grep -ri creator lib` finds the word only in
-comments.
+`execute` holding the transaction removes the premise, and both spikes have now
+taken the change. Nothing hands a result back for a store to place, so there is
+no store dispatch to be made unsound and no reason for a creator to be a separate
+type. `addIssue` and `createProject` are ordinary actions whose `execute` happens
+to `INSERT`; the OCaml `creator` record and its `out` type parameter, and the
+Rust `Creator` trait with its `CreatorEntry`/`CreatorGroup`, are all gone.
+`('obj, 'p, 'conn) Action.t` and `trait Action` are the only action types left —
+`grep -ri creator lib` and `grep -ri creator rust/src` find the word only in
+comments, naming the *role* of an action, not a type.
 
 The group-store pairing went with it. A soft delete is an update, so a group used
 to be paired with the store call that wrote its result, and the extra registration
 lists existed only so that pairing was written once per frontend rather than once
 per row. There is no store call beside a group now — the lists collapsed to one
-per object (findings above).
+per object on both sides (findings above).
 
-Rust is measured before its own version of this change, so it still writes two
-nominal traits and still pays the duplicated `availability`/`run` default-method
-bodies. What was "both languages keep two types apart, and Rust's is tidier" is
-now "Rust has two types where OCaml has one" — pending Rust holding the
-transaction too.
+What was briefly "Rust has two types where OCaml has one" is now one action type
+on each side, and the duplicated `availability`/`run` default-method bodies the
+Rust `Creator` trait cost are gone with it. The cost Rust pays that OCaml does
+not moved elsewhere: an erased `execute` is `async`, so `wire.rs` boxes each
+dispatched call into a `Pin<Box<dyn Future>>` where OCaml's blocking `run`
+returns a value — one allocation per dispatch, documented where it lives and
+nothing beside the write it wraps.
 
 ### 16. `Deleted<T>` is one generic type where OCaml writes two records
 
@@ -695,8 +703,8 @@ Two rows carry an argument rather than a measurement. `enum.ml` is 42 lines that
 exist only because two ppxes disagree, against nothing at all in Rust — the
 clearest single number in the table. And the two `.mli` files are 47 lines of
 code and 156 lines total, of which the doc comments are the part worth keeping;
-Rust buys the same encapsulation with `mod entities;` and one private tuple
-field.
+Rust buys the same encapsulation with `pub(in crate::domains) mod entities` and
+one private tuple field.
 
 A third argument-rather-than-measurement is the declaration ppx. `[%action]` is
 ~40 lines of `ppxlib` rewriter in `ppx/`, plus the dependency, and it exists only
@@ -704,10 +712,13 @@ to lift the `module Spec = struct … end` / `include Wire.Make (Spec)` pair off
 every action — OCaml's answer to the `#[derive]`-over-a-trait that gives the Rust
 declaration its shape, and the same kind of cost. It comes with a `schemas.ml`
 per object, where the payload shapes moved so an action states only its
-behaviour; that is a split for readability rather than a line count. (This is one
-of two places the OCaml column here predates a refactor: the store is now
-`caqti`-blocking rather than `petrol` over `lwt`, so findings 12–13 and the
-`nottui`/`lwt` note below are measured against the earlier tree.)
+behaviour; that is a split for readability rather than a line count. (The table
+predates refactors on both sides. The OCaml column is measured before the store
+became `caqti`-blocking rather than `petrol` over `lwt`, so findings 12–13 and
+the `nottui`/`lwt` note below are against the earlier tree; and both columns list
+the flat `src/`/`lib/` layout from before the regroup into `platform` / `domains`
+/ `frontend` and the split of the store into `db` plus a `services` per object,
+so the paths are those files' earlier names.)
 
 Dependencies moved too. `rust/Cargo.toml` went from three crates to nine —
 sea-orm, tokio, clap, ratatui, crossterm and chrono are all new, and `sqlx`
@@ -738,7 +749,10 @@ round made too much of: OCaml can carry them and this spike does not.
 Finding 7 also stopped being symmetric. Rust pays `Checked` once per action and
 OCaml pays an `.mli` once per module that needs sealing — and the store needed
 sealing, for the soft-delete predicate, at a cost of 88 more lines against
-Rust's one missing `pub`.
+Rust's one `pub(in crate::domains)`. Giving `execute` the transaction narrowed
+that guarantee on both sides — an action can now reach the reads — so the seal
+buys "no read stated in the services forgets the filter" rather than the airtight
+version it once did.
 
 What OCaml gained is smaller and real. Its schemas inline their enums where
 Rust's hide them behind `$ref`. Its `Priority.to_int` is a `match` and therefore

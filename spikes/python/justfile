@@ -28,6 +28,15 @@ cli *args:
 tui:
     uv run tt-tui
 
+# Author a migration from a change to the models (autogenerate against the
+# default database, so upgrade it to head first).
+db-revision message:
+    uv run alembic revision --autogenerate -m "{{ message }}"
+
+# Bring the default database up to the latest schema.
+db-upgrade:
+    uv run alembic upgrade head
+
 # Ruff's formatter over the tree. Rewrites files, so it is not part of verify.
 format:
     uv run ruff format

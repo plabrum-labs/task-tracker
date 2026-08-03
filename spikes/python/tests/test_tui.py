@@ -6,8 +6,6 @@ services — the same three steps ``TrackerApp`` runs per keystroke, minus the
 terminal. That is what splitting the key handler from the write is for.
 """
 
-from dataclasses import replace
-
 import pytest
 from sqlalchemy import Engine
 
@@ -44,10 +42,8 @@ def _seed_tt(engine: Engine) -> None:
         project = project_services.create_project(
             tx, ProjectDraft(slug="tt", title="task tracker", body="")
         )
-        draft = IssueDraft(
-            project_id=project.id, title="ship the mvp", body="", priority=Priority.HIGH
-        )
-        issue_services.create_issue(tx, draft)
+        draft = IssueDraft(title="ship the mvp", body="", priority=Priority.HIGH)
+        issue_services.create_issue(tx, project, draft)
 
 
 @pytest.fixture
@@ -147,9 +143,9 @@ def test_an_enum_field_is_a_cycling_selector_and_a_text_field_is_typed_into(
     assert form.key == "editStatus"
     assert form.entries[0].control == Choosing(values=["todo", "doing", "done"], index=0)
     # The label is the doc comment, not the property name.
-    assert any(
-        "Where the issue is up to." in line for line in tui.render_lines(state)
-    ), tui.render_lines(state)
+    assert any("Where the issue is up to." in line for line in tui.render_lines(state)), (
+        tui.render_lines(state)
+    )
 
     state = press(seeded, state, "right")
     assert _value(state, 0) == "doing"
@@ -169,7 +165,7 @@ def test_an_enum_field_is_a_cycling_selector_and_a_text_field_is_typed_into(
     state = press(seeded, state, "enter")
     assert state.form is None, "a successful write closes the form"
     with platform_db.reading(seeded) as session:
-        issue = issue_services.issue(session, 1)
+        issue = issue_services.get_issue(session, 1)
     assert issue is not None
     assert issue.status == Status.DOING
     assert issue.status_note == "started"
@@ -194,11 +190,11 @@ def test_deleting_what_the_screen_is_about_falls_out_to_the_parent(db: Engine) -
     _seed_tt(db)
     # Empty the project of live issues and archive it, so ``delete`` is runnable.
     with platform_db.transaction(db) as tx:
-        issue = issue_services.issues(tx, "tt")[0]
+        issue = issue_services.list_issues(tx, "tt")[0]
         issue_services.delete_issue(tx, issue)
-        archived = project_services.project(tx, "tt")
+        archived = project_services.get_project(tx, "tt")
         assert archived is not None
-        project_services.update_project(tx, replace(archived, status=ProjectStatus.ARCHIVED))
+        archived.status = ProjectStatus.ARCHIVED
 
     state = tui.start(db)
     state = press(db, state, "down")
@@ -216,7 +212,7 @@ def test_deleting_what_the_screen_is_about_falls_out_to_the_parent(db: Engine) -
 
     assert state.screen == Projects()
     with platform_db.reading(db) as session:
-        assert project_services.project(session, "tt") is None
+        assert project_services.get_project(session, "tt") is None
 
 
 def _value(state: State, index: int) -> str:

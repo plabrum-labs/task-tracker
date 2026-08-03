@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from tt.domains import schema
+from tt import schema
 from tt.domains.issue import Draft as IssueDraft
 from tt.domains.issue import Priority
 from tt.domains.issue import services as issue_services
@@ -33,17 +33,14 @@ def database(tmp_path: Path) -> str:
     """A temp-file database with one project and one high-priority issue under it,
     seeded through the domain services the CLI itself writes through."""
     url = f"sqlite:///{tmp_path / 'tt.db'}"
+    schema.upgrade(url)
     engine = db.connect(url)
-    schema.initialise(engine)
     with db.transaction(engine) as tx:
         project = project_services.create_project(
             tx, ProjectDraft(slug="tt", title="task tracker", body="")
         )
         issue_services.create_issue(
-            tx,
-            IssueDraft(
-                project_id=project.id, title="ship the mvp", body="", priority=Priority.HIGH
-            ),
+            tx, project, IssueDraft(title="ship the mvp", body="", priority=Priority.HIGH)
         )
     engine.dispose()
     return url

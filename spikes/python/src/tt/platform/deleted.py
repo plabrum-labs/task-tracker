@@ -6,9 +6,10 @@ about the registration's type rather than a rule the lists happen to follow.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
 class Deleted[T]:
     inner: T
-    deleted_at: str
+    deleted_at: datetime
