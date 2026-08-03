@@ -1,0 +1,148 @@
+"""The CLI, driven with no terminal: an argv in, an exit code and some text out.
+
+``cli.app`` is a pure command tree over the registries, so a test can inspect what
+subcommands it grew and invoke any argv against a seeded database through Typer's
+``CliRunner``. An in-memory ``sqlite://`` does not survive across separate
+invocations, so the fixture seeds a temp-file database and every invoke points
+``--db`` at the same path.
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from tt.domains import schema
+from tt.domains.issue import Draft as IssueDraft
+from tt.domains.issue import Priority
+from tt.domains.issue import services as issue_services
+from tt.domains.project import Draft as ProjectDraft
+from tt.domains.project import services as project_services
+from tt.frontend import cli
+from tt.platform import db
+
+runner = CliRunner()
+
+# A usage error is Click's own exit code, distinct from a refusal.
+USAGE = 2
+
+
+@pytest.fixture
+def database(tmp_path: Path) -> str:
+    """A temp-file database with one project and one high-priority issue under it,
+    seeded through the domain services the CLI itself writes through."""
+    url = f"sqlite:///{tmp_path / 'tt.db'}"
+    engine = db.connect(url)
+    schema.initialise(engine)
+    with db.transaction(engine) as tx:
+        project = project_services.create_project(
+            tx, ProjectDraft(slug="tt", title="task tracker", body="")
+        )
+        issue_services.create_issue(
+            tx,
+            IssueDraft(
+                project_id=project.id, title="ship the mvp", body="", priority=Priority.HIGH
+            ),
+        )
+    engine.dispose()
+    return url
+
+
+def invoke(database: str, *args: str):
+    return runner.invoke(cli.app, ["--db", database, *args])
+
+
+def _names(app: object) -> list[str]:
+    # ``registered_commands`` is in registration order, which is the order the tree
+    # offers them: the fixed commands, then a subcommand per registered action.
+    return [command.name for command in app.registered_commands]  # type: ignore[attr-defined]
+
+
+def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> None:
+    assert _names(cli.issue_app) == [
+        "ls",
+        "show",
+        "action",
+        "editTitle",
+        "editBody",
+        "editStatus",
+        "editPriority",
+        "delete",
+        "restore",
+    ]
+    assert _names(cli.project_app) == [
+        "ls",
+        "show",
+        "action",
+        "editTitle",
+        "editBody",
+        "editStatus",
+        "delete",
+        "addIssue",
+        "restore",
+    ]
+
+
+def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(database: str) -> None:
+    # ``--status`` comes from the schema, so a missing one is a usage error rather
+    # than a payload the decoder refuses further in.
+    assert invoke(database, "issue", "editStatus", "1").exit_code == USAGE
+    # A value outside the enum is a usage error listing the alternatives.
+    assert invoke(database, "issue", "editStatus", "1", "--status", "shipped").exit_code == USAGE
+    # A blank title gets past the parser — what a title has to contain is the
+    # action's business — so this is a refusal (123), not a usage error (2).
+    blank = invoke(database, "issue", "editTitle", "1", "--title", "")
+    assert blank.exit_code == cli.REFUSED
+    assert "title is required" in blank.output
+    # An option the schema does not advertise is rejected.
+    assert invoke(database, "issue", "editTitle", "1", "--bogus", "x").exit_code == USAGE
+
+
+def test_the_help_text_carries_the_field_doc_and_the_enum_values(database: str) -> None:
+    result = invoke(database, "issue", "editStatus", "--help")
+    assert result.exit_code == 0
+    assert "Where the issue is up to." in result.output
+    # Typer renders the closed choice inline rather than clap's "[possible values:
+    # …]", but the alternatives are all there.
+    for value in ("todo", "doing", "done"):
+        assert value in result.output
+
+
+def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
+    spelled = invoke(database, "issue", "editStatus", "1", "--status", "doing")
+    assert spelled.exit_code == 0
+    blob = invoke(database, "issue", "action", "1", "editStatus", '{"status":"doing"}')
+    assert blob.exit_code == 0
+    assert spelled.output == blob.output
+
+
+def test_a_refusal_comes_back_from_the_live_row_and_not_from_the_parser(database: str) -> None:
+    # ``delete`` is a subcommand on an active project, because the tree is built
+    # before any row has been read; the refusal comes from the live object.
+    result = invoke(database, "project", "delete", "tt")
+    assert result.exit_code == cli.REFUSED
+    assert "archive it first" in result.output
+
+
+def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None:
+    result = invoke(database, "issue", "show", "1")
+    assert result.exit_code == 0
+    value = json.loads(result.output)
+    assert value["issue"]["project"] == "tt"
+    assert value["issue"]["priority"] == "high"
+
+    keys = [action["key"] for action in value["actions"]]
+    assert keys == ["editTitle", "editBody", "editStatus", "editPriority", "delete"]
+    # The schema is passed through exactly as it was derived, descriptions and all.
+    assert (
+        value["actions"][0]["arguments"]["properties"]["title"]["description"]
+        == "What to call the issue."
+    )
+
+
+def test_an_unknown_object_or_malformed_json_is_invalid_rather_than_a_crash(database: str) -> None:
+    assert invoke(database, "issue", "show", "99").exit_code == cli.REFUSED
+    assert invoke(database, "project", "show", "nope").exit_code == cli.REFUSED
+    malformed = invoke(database, "issue", "action", "1", "editTitle", "not json")
+    assert malformed.exit_code == cli.REFUSED
