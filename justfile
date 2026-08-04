@@ -28,6 +28,12 @@ cli *args:
 tui:
     uv run tt-tui
 
+# The MCP server, over stdio, on the same groups. Register it once with
+# `claude mcp add tt -- uv run tt-mcp` (run from this repo), then an agent lists
+# and drives the same actions the CLI does.
+mcp:
+    uv run tt-mcp
+
 # Author a migration from a change to the models (autogenerate against the
 # default database, so upgrade it to head first).
 db-revision message:

@@ -10,11 +10,13 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.7",
     "textual>=0.60",
+    "mcp>=2.0",
 ]
 
 [project.scripts]
 tt-cli = "tt.frontend.cli:main"
 tt-tui = "tt.frontend.tui:main"
+tt-mcp = "tt.frontend.mcp:main"
 
 [dependency-groups]
 dev = [
