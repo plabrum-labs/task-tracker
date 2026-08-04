@@ -23,6 +23,9 @@ class EditProjectPayload(BaseModel):
     title: str = Field(description="What to call the project.")
     body: str = Field(description="The project's description. Blank clears it.")
     status: Status = Field(description="Whether the project is still being worked on.")
+    path: str | None = Field(
+        description="The directory bare tt opens this project in. Blank clears it."
+    )
 
 
 class AddIssuePayload(BaseModel):

@@ -247,7 +247,9 @@ def test_edit_refuses_archiving_while_anything_is_doing(db: Engine) -> None:
             db,
             project_actions.EditProject,
             busy,
-            project_schemas.EditProjectPayload(title="tt", body="", status=ProjectStatus.ARCHIVED),
+            project_schemas.EditProjectPayload(
+                title="tt", body="", status=ProjectStatus.ARCHIVED, path=None
+            ),
         )
     busier = project(issues=doing_issues(3))
     with pytest.raises(Conflict, match="finish or drop 3 issues first"):
@@ -255,7 +257,9 @@ def test_edit_refuses_archiving_while_anything_is_doing(db: Engine) -> None:
             db,
             project_actions.EditProject,
             busier,
-            project_schemas.EditProjectPayload(title="tt", body="", status=ProjectStatus.ARCHIVED),
+            project_schemas.EditProjectPayload(
+                title="tt", body="", status=ProjectStatus.ARCHIVED, path=None
+            ),
         )
 
 
@@ -268,7 +272,7 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
         db, "edit", {"title": "wip", "body": "", "status": "doing", "priority": "normal"}, made.id
     )
     response = project_api.project_action(
-        db, "edit", {"title": "renamed", "body": "notes", "status": "active"}, "tt"
+        db, "edit", {"title": "renamed", "body": "notes", "status": "active", "path": None}, "tt"
     )
     assert response.message == "project tt: saved"
     with platform_db.reading(db) as s:
@@ -281,20 +285,59 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
     # But archiving it while it is still busy is refused.
     with pytest.raises(Conflict):
         project_api.project_action(
-            db, "edit", {"title": "renamed", "body": "notes", "status": "archived"}, "tt"
+            db,
+            "edit",
+            {"title": "renamed", "body": "notes", "status": "archived", "path": None},
+            "tt",
         )
 
 
 def test_edit_archives_when_nothing_is_doing(db: Engine) -> None:
     a_project(db, "tt")
     response = project_api.project_action(
-        db, "edit", {"title": "tt", "body": "", "status": "archived"}, "tt"
+        db, "edit", {"title": "tt", "body": "", "status": "archived", "path": None}, "tt"
     )
     assert response.message == "project tt: saved"
     with platform_db.reading(db) as s:
         read = project_queries.get_project(s, "tt")
     assert read is not None
     assert read.status == ProjectStatus.ARCHIVED
+
+
+def test_edit_sets_and_clears_the_path(db: Engine) -> None:
+    # The whole-object edit owns ``path`` too, so it can bind one and, given a blank,
+    # clear it back to unbound — the same null an OptionalText form sends.
+    a_project(db, "tt")
+    project_api.project_action(
+        db, "edit", {"title": "tt", "body": "", "status": "active", "path": "/work/tt"}, "tt"
+    )
+    with platform_db.reading(db) as s:
+        read = project_queries.get_project(s, "tt")
+    assert read is not None
+    assert read.path == "/work/tt"
+
+    project_api.project_action(
+        db, "edit", {"title": "tt", "body": "", "status": "active", "path": None}, "tt"
+    )
+    with platform_db.reading(db) as s:
+        cleared = project_queries.get_project(s, "tt")
+    assert cleared is not None
+    assert cleared.path is None
+
+
+def test_edit_refuses_a_path_another_live_project_owns(db: Engine) -> None:
+    # The live-only unique index on ``path`` is read here as a sentence, the same
+    # guard ``setPath`` carries, so the edit refuses instead of hitting the constraint.
+    a_project(db, "tt")
+    a_project(db, "other")
+    project_api.project_action(db, "setPath", {"path": "/work/shared"}, "other")
+    with pytest.raises(Conflict, match='path already belongs to "other"'):
+        project_api.project_action(
+            db,
+            "edit",
+            {"title": "tt", "body": "", "status": "active", "path": "/work/shared"},
+            "tt",
+        )
 
 
 def test_delete_is_refused_while_the_project_is_active(db: Engine) -> None:
@@ -505,8 +548,13 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
         )
     # An issue status, and an issue-only field, through the project's edit.
     with pytest.raises(Invalid):
-        project_api.project_action(db, "edit", {"title": "tt", "body": "", "status": "doing"}, "tt")
+        project_api.project_action(
+            db, "edit", {"title": "tt", "body": "", "status": "doing", "path": None}, "tt"
+        )
     with pytest.raises(Invalid):
         project_api.project_action(
-            db, "edit", {"title": "tt", "body": "", "status": "active", "priority": "high"}, "tt"
+            db,
+            "edit",
+            {"title": "tt", "body": "", "status": "active", "priority": "high", "path": None},
+            "tt",
         )

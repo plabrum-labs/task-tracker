@@ -95,7 +95,7 @@ type Split = Literal["beside", "below"]
 
 # The detail pane is 52 columns wide; under this the list left beside it is too
 # cramped to read, so the pane stacks below the list rather than to its right.
-DETAIL_BESIDE_MIN_WIDTH = 88
+DETAIL_BESIDE_MIN_WIDTH = 120
 
 
 def pane_split(width: int) -> Split:

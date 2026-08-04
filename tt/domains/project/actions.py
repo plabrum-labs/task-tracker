@@ -54,10 +54,11 @@ def _path_owner(deps: ActionDeps, path: str, exclude_id: int | None) -> Project 
 
 @project_actions
 class EditProject(ObjectAction[Project, schemas.EditProjectPayload]):
-    # One whole-object edit. The one precondition is stated in ``execute`` against
-    # the object rather than as an ``is_disabled``: only *archiving* a project with
-    # issues in progress is refused, so a title or body edit that keeps it active is
-    # offered — and runs — even while it is busy.
+    # One whole-object edit. Its preconditions are stated in ``execute`` against the
+    # object rather than as an ``is_disabled``: *archiving* a project with issues in
+    # progress is refused, and binding ``path`` to a directory another live project
+    # owns is — the same live-only conflict ``setPath`` guards. An edit that trips
+    # neither is offered, and runs, even while the project is busy.
     KEY = "edit"
     LABEL = "Edit"
     Payload = schemas.EditProjectPayload
@@ -72,9 +73,15 @@ class EditProject(ObjectAction[Project, schemas.EditProjectPayload]):
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")
+        path = payload.path.strip() if payload.path else None
+        if path is not None:
+            owner = _path_owner(deps, path, exclude_id=obj.id)
+            if owner is not None:
+                raise Conflict(f'path already belongs to "{owner.slug}"')
         obj.title = title
         obj.body = payload.body
         obj.status = payload.status
+        obj.path = path
         return ActionResponse(message=f"{obj.subject()}: saved")
 
 

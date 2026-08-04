@@ -49,6 +49,11 @@ TT_DARK = Theme(
         "text-disabled": "ansi_bright_black",
         "border": "#23262E",
         "priority-high": "#F0883E",
+        # A floating modal needs an opaque surface, but ``ansi=True`` forces the
+        # stock ``$panel``/``$surface`` to ``transparent`` so the terminal shows
+        # through — a modal painted with them lets the dim scrim bleed straight
+        # through its panel. ``$overlay`` is a pinned hex the modals paint instead.
+        "overlay": "#1B1E25",
         **_ANSI_VARS_DARK,
     },
 )
@@ -68,6 +73,9 @@ TT_LIGHT = Theme(
         "text-disabled": "ansi_bright_black",
         "border": "#D5D8DE",
         "priority-high": "#B5540B",
+        # See ``$overlay`` on the dark theme: an opaque modal surface that
+        # ``ansi=True`` would otherwise make transparent.
+        "overlay": "#F0F1F4",
         **_ANSI_VARS_LIGHT,
     },
 )

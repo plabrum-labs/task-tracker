@@ -155,12 +155,14 @@ MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
     background: $background 55%;
 }
 
+/* ``$overlay``, not ``$panel``: under ``ansi=True`` the stock surface tokens are
+   transparent, so a panel painted with them lets the dim scrim show through. */
 #panel {
     width: 56;
     height: auto;
     margin-top: 3;
     padding: 1 1;
-    background: $panel;
+    background: $overlay;
     border: round $primary;
 }
 
@@ -177,14 +179,14 @@ MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
     border: none;
     height: 1;
     padding: 0 1;
-    background: $panel;
+    background: $overlay;
 }
 #panel OptionList {
     height: auto;
     max-height: 20;
     border: none;
     padding: 0;
-    background: $panel;
+    background: $overlay;
 }
 
 /* A form's text boxes keep a bordered box; the focused one takes the accent. */
@@ -193,7 +195,7 @@ FormScreen Input {
     height: 3;
     margin: 0 1;
     padding: 0 1;
-    background: $panel;
+    background: $overlay;
 }
 FormScreen Input:focus {
     border: round $primary;
