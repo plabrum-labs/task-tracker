@@ -17,11 +17,11 @@ from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
 from tt.frontend.tui.app import TrackerApp
 from tt.frontend.tui.domainview import DETAIL_BESIDE_MIN_WIDTH
-from tt.frontend.tui.screens.form import FormScreen
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.widgets.body import BoardColumn, Card, IssueRow
 from tt.frontend.tui.widgets.detail import DetailPane
+from tt.frontend.tui.widgets.edit import EditPane
 from tt.platform.config import ThemeName
 
 
@@ -76,7 +76,7 @@ async def test_capture_writes_a_row(seeded: Engine) -> None:
         assert "triage inbox" in titles
 
 
-async def test_a_refused_edit_keeps_the_form_open(seeded: Engine) -> None:
+async def test_a_refused_edit_keeps_the_editor_open(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -84,15 +84,65 @@ async def test_a_refused_edit_keeps_the_form_open(seeded: Engine) -> None:
         await pilot.pause()
         await pilot.press("x")  # issue menu
         await pilot.pause()
-        await pilot.press("enter")  # pick Edit — the form opens pre-filled
+        await pilot.press("enter")  # pick Edit — the form opens pre-filled in the pane
         await pilot.pause()
-        assert isinstance(app.screen, FormScreen)
-        app.screen.query_one("#field-title", Input).value = ""  # clear the required title
+        # No modal: the browse screen stays, with the edit form in the right pane and
+        # the read detail hidden behind it.
+        main = _main(app)
+        edit = main.query_one(EditPane)
+        assert edit.display and not main.query_one(DetailPane).display
+        edit.query_one("#field-title", Input).value = ""  # clear the required title
         await pilot.press("enter")  # submit
         await pilot.pause()
-        assert isinstance(app.screen, FormScreen), "the form stays up on a refusal"
-        error = str(app.screen.query_one("#form-error").render())
+        assert edit.display, "the editor stays open on a refusal"
+        error = str(edit.query_one("#edit-error").render())
         assert "title is required" in error
+
+
+async def test_editing_the_title_in_the_pane_persists_and_returns_to_read(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("]")
+        await pilot.pause()
+        selected = _main(app).selected_id
+        assert selected is not None
+        await pilot.press("x")  # issue menu
+        await pilot.pause()
+        await pilot.press("enter")  # pick Edit
+        await pilot.pause()
+        title = _main(app).query_one(EditPane).query_one("#field-title", Input)
+        title.value = "renamed in the pane"
+        await pilot.press("enter")  # save
+        await pilot.pause()
+        # The write persisted, and the pane is back to the read detail of the survivor.
+        edited = issue_api.issue_get(seeded, selected)
+        assert edited is not None and edited.title == "renamed in the pane"
+        main = _main(app)
+        assert main.query_one(DetailPane).display and not main.query_one(EditPane).display
+
+
+async def test_escape_abandons_the_pane_editor_without_writing(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("]")
+        await pilot.pause()
+        selected = _main(app).selected_id
+        assert selected is not None
+        before = issue_api.issue_get(seeded, selected)
+        assert before is not None
+        await pilot.press("x")  # issue menu
+        await pilot.pause()
+        await pilot.press("enter")  # pick Edit
+        await pilot.pause()
+        _main(app).query_one(EditPane).query_one("#field-title", Input).value = "abandoned"
+        await pilot.press("escape")  # cancel — no write
+        await pilot.pause()
+        main = _main(app)
+        assert main.query_one(DetailPane).display and not main.query_one(EditPane).display
+        after = issue_api.issue_get(seeded, selected)
+        assert after is not None and after.title == before.title
 
 
 async def test_d_deletes_and_selection_lands_on_neighbour(seeded: Engine) -> None:
@@ -215,6 +265,76 @@ async def test_board_columns_sit_side_by_side(seeded: Engine) -> None:
         assert len({c.region.y for c in cols}) == 1
         xs = [c.region.x for c in cols]
         assert xs == sorted(xs) and len(set(xs)) == 3
+
+
+async def test_the_menu_opens_on_the_list_with_the_filter_hidden(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("x")  # issue menu
+        await pilot.pause()
+        menu = app.screen
+        assert isinstance(menu, MenuScreen)
+        # No search box up front, and the list — not the filter — holds focus, so the
+        # arrow keys and accelerators land on it.
+        assert not menu.query_one("#menu-filter", Input).display
+        assert app.focused is menu.query_one(OptionList)
+
+
+async def test_slash_reveals_the_menu_filter_and_narrows_the_list(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("x")  # issue menu
+        await pilot.pause()
+        menu = app.screen
+        assert isinstance(menu, MenuScreen)
+        await pilot.press("slash")  # reveal the filter
+        await pilot.pause()
+        filter_box = menu.query_one("#menu-filter", Input)
+        assert filter_box.display and app.focused is filter_box
+        for char in "delete":
+            await pilot.press(char)
+        await pilot.pause()
+        shown = [menu._commands[ci].label for ci in menu._shown]
+        assert shown == [label for label in shown if "delete" in label.lower()]
+        assert any("Delete" in label for label in shown)
+
+
+async def test_an_accelerator_in_the_menu_runs_its_command(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("]")  # scope onto tt
+        await pilot.pause()
+        await pilot.press("x")  # issue menu
+        await pilot.pause()
+        await pilot.press("e")  # the edit accelerator picks Edit from the list
+        await pilot.pause()
+        # The menu dismissed and its edit command opened the pane, pre-filled.
+        main = _main(app)
+        edit = main.query_one(EditPane)
+        assert edit.display and not main.query_one(DetailPane).display
+        assert edit.query_one("#field-title", Input).value != ""
+
+
+async def test_e_opens_the_edit_form_for_the_selected_issue(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("]")  # scope onto tt
+        await pilot.pause()
+        selected = _main(app).selected_id
+        assert selected is not None
+        current = issue_api.issue_get(seeded, selected)
+        assert current is not None
+        await pilot.press("e")  # browse shortcut straight into the edit form
+        await pilot.pause()
+        main = _main(app)
+        edit = main.query_one(EditPane)
+        assert edit.display and not main.query_one(DetailPane).display
+        # Seeded from the issue's current values, not blank.
+        assert edit.query_one("#field-title", Input).value == current.title
 
 
 async def test_project_menu_greys_a_refused_delete(seeded: Engine) -> None:

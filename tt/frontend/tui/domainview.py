@@ -228,11 +228,13 @@ def match_path(candidates: list[tuple[str, str | None]], cwd: str) -> str | None
 # --- commands (the rows of every list overlay) ----------------------------
 
 # The single-key accelerators, each naming an action that runs against the selected
-# issue. ``d`` runs the fieldless ``delete`` straight; ``s`` drives a direct status
-# cycle — it dispatches ``setStatus`` on the next status rather than opening the
-# menu's pick-a-status form, so it does not go through the generic offer path.
+# issue. ``d`` runs the fieldless ``delete`` straight; ``e`` opens the edit form;
+# ``s`` drives a direct status cycle — it dispatches ``setStatus`` on the next status
+# rather than opening the menu's pick-a-status form, so it does not go through the
+# generic offer path.
 ACCELERATORS: dict[str, str] = {
     "d": "delete",
+    "e": "edit",
     "s": "setStatus",
 }
 _HINT = {action_key: keystroke for keystroke, action_key in ACCELERATORS.items()}

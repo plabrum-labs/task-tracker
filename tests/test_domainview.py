@@ -135,8 +135,14 @@ def test_a_runnable_offer_carries_its_accelerator_and_a_refused_one_its_reason()
 
 
 def test_the_accelerators_name_the_actions_they_run() -> None:
-    # ``d`` runs delete straight; ``s`` drives the direct status cycle.
-    assert dv.ACCELERATORS == {"d": "delete", "s": "setStatus"}
+    # ``d`` runs delete straight; ``e`` opens the edit form; ``s`` drives the direct
+    # status cycle.
+    assert dv.ACCELERATORS == {"d": "delete", "e": "edit", "s": "setStatus"}
+
+
+def test_the_edit_offer_carries_the_e_accelerator() -> None:
+    edit = Offer(key="edit", label="Edit", state=Runnable(), fields=[])
+    assert dv.issue_commands([edit], 1)[0].hint == "e"
 
 
 def test_next_status_advances_one_step_and_wraps() -> None:

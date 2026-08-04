@@ -3,10 +3,10 @@
 Bindings map every browse key to an ``action_*`` method; nothing here parses a key
 event. The screen holds the scope, layout, rows, selection and filter as reactives,
 and mutation methods assign them so watchers repaint the affected widget. Everything
-you can do to the selected object is reached through a modal overlay derived from
-what that object offers — a ``MenuScreen`` for the list, a ``FormScreen`` for an
-action with fields — so this screen names only the two accelerators (``d`` delete,
-``s`` status cycle) and derives the rest.
+you can do to the selected object is reached through what that object offers — a
+``MenuScreen`` overlay for the list, and for an action with fields the ``EditPane``
+that takes over the right pane where the read detail was — so this screen names only
+the accelerators (``d`` delete, ``e`` edit, ``s`` status cycle) and derives the rest.
 """
 
 from __future__ import annotations
@@ -53,12 +53,12 @@ from tt.frontend.tui.domainview import (
 )
 from tt.frontend.tui.screens.capture import CaptureScreen
 from tt.frontend.tui.screens.cheatsheet import CheatsheetScreen
-from tt.frontend.tui.screens.form import FormScreen
 from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.screens.settings import SettingsScreen
 from tt.frontend.tui.theme import save_theme
 from tt.frontend.tui.widgets.body import Body
 from tt.frontend.tui.widgets.detail import DetailPane
+from tt.frontend.tui.widgets.edit import Edit, EditPane
 from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
 from tt.frontend.tui.widgets.topbar import TopBar
 from tt.platform.actions import REFUSALS, Refused
@@ -66,6 +66,7 @@ from tt.platform.config import ThemeName
 
 BROWSING = "j/k move · enter open · x actions · s status · / filter · ? keys · q quit"
 READING = "j/k scroll · esc back"
+EDITING = "enter save · esc cancel"
 
 
 class MainScreen(Screen[None]):
@@ -100,6 +101,7 @@ class MainScreen(Screen[None]):
         Binding("R", "refresh", "refresh", show=False),
         Binding("n", "capture", "new issue", show=False),
         Binding("d", "delete", "delete", show=False),
+        Binding("e", "edit", "edit", show=False),
         Binding("s", "set_status", "status", show=False),
         Binding("escape", "escape", "back", show=False),
         Binding("q", "quit", "quit", show=False),
@@ -126,6 +128,7 @@ class MainScreen(Screen[None]):
         with Horizontal(id="content"):
             yield Body(id="body")
             yield DetailPane(id="detail")
+            yield EditPane(id="edit")
         yield StatusBar(id="statusbar")
         yield FilterInput(id="filter", placeholder="filter")
 
@@ -385,17 +388,34 @@ class MainScreen(Screen[None]):
             def submit(payload: dict[str, Any]) -> str:
                 return data.dispatch(self.engine, run.target, run.key, payload)
 
-            self.app.push_screen(FormScreen(label, run.fields, run.seed, submit), self._on_write)
+            self._begin_edit(Edit(label, run.fields, run.seed, submit))
         else:
             self._write(run.key, lambda: data.dispatch(self.engine, run.target, run.key, {}))
 
-    def _on_write(self, message: str | None) -> None:
-        # The form already ran the write and only resolves on success; a refusal keeps
-        # it open, so a message here is always a success to reload behind.
-        if message is None:
-            return
-        self.status = message
+    def _begin_edit(self, edit: Edit) -> None:
+        # The form takes the right pane's slot: the read detail hides and the editor
+        # shows in its place, seeded and focused on its first control.
+        self.query_one(DetailPane).display = False
+        pane = self.query_one(EditPane)
+        pane.display = True
+        pane.begin(edit)
+        self.status = EDITING
+
+    def _end_edit(self) -> None:
+        self.query_one(EditPane).display = False
+        self.query_one(DetailPane).display = True
+        self.set_focus(None)
+
+    def on_edit_pane_saved(self, event: EditPane.Saved) -> None:
+        # The pane already ran the write and only reports Saved on success; a refusal
+        # keeps it open, so this is always a success to reload the list behind.
+        self._end_edit()
+        self.status = event.message
         self.reload()
+
+    def on_edit_pane_cancelled(self, event: EditPane.Cancelled) -> None:
+        self._end_edit()
+        self.status = BROWSING
 
     def _write(self, key: str, thunk: Any) -> None:
         try:
@@ -420,6 +440,26 @@ class MainScreen(Screen[None]):
             self.status = f"delete: {offer.state.reason}"
             return
         self._run_action(RunAction(IssueTarget(issue.id), "delete", offer.fields), offer.label)
+
+    def action_edit(self) -> None:
+        issue = self._selected_issue()
+        if issue is None:
+            self.status = "no issue selected"
+            return
+        detail, offers = issue_api.issue_detail(self.engine, issue.id)
+        offer = next((o for o in offers if o.key == "edit"), None)
+        if offer is None:
+            self.status = "edit: not available"
+            return
+        if isinstance(offer.state, Refused):
+            self.status = f"edit: {offer.state.reason}"
+            return
+        # Seed the form from the issue's current values so the pane opens pre-filled,
+        # the same way the menu builds its edit command.
+        self._run_action(
+            RunAction(IssueTarget(issue.id), "edit", offer.fields, detail.model_dump(mode="json")),
+            offer.label,
+        )
 
     def action_set_status(self) -> None:
         # The quick cycle: compute the next status off the selected row and dispatch

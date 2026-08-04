@@ -1,9 +1,10 @@
 """The reusable command list overlay: the issue menu, project menu, palette, switcher.
 
-An ``Input`` filters a live substring over an ``OptionList`` of the object's offered
-commands. A refused command is a disabled option, rendered greyed with its reason,
-so it reads but cannot be picked. Enter (or a click) dismisses with the chosen
-``Command``; escape dismisses with ``None``.
+An ``OptionList`` of the object's offered commands opens focused, navigated by the
+arrow keys and by each command's single-key accelerator. A refused command is a
+disabled option, rendered greyed with its reason, so it reads but cannot be picked.
+``/`` reveals a filter that live-narrows the list by substring; Enter (or a click)
+dismisses with the chosen ``Command``; escape closes the filter, then the menu.
 """
 
 from __future__ import annotations
@@ -15,16 +16,24 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from tt.frontend.tui.domainview import Command, visible
+from tt.frontend.tui.domainview import ACCELERATORS, Command, visible
 
 
 class MenuScreen(ModalScreen["Command | None"]):
     """A floating command list. Its result is the picked ``Command``, or ``None``."""
 
+    # Open on the list, not the hidden filter, so the arrow keys and accelerators
+    # reach it straight away.
+    AUTO_FOCUS = "#menu-list"
+
     BINDINGS = [
         ("escape", "cancel", "cancel"),
         ("down", "cursor_down", "down"),
         ("up", "cursor_up", "up"),
+        ("slash", "reveal_filter", "search"),
+        # Each accelerator runs its command in place. A focused filter box swallows
+        # the letter before this fires, so it only acts while the list has focus.
+        *[(key, f"accelerator('{key}')", action) for key, action in ACCELERATORS.items()],
     ]
 
     def __init__(self, header: str, commands: list[Command]) -> None:
@@ -38,12 +47,15 @@ class MenuScreen(ModalScreen["Command | None"]):
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
             yield Static(f"[$overlay-text-muted]{esc(self._header)}[/]", classes="ov-header")
-            yield Input(placeholder="Search…", id="menu-filter")
+            # Hidden until ``/``. Not focusable while hidden: a ``display: none`` box
+            # still reports focusable, so the accelerators would type into it.
+            filter_box = Input(placeholder="Search…", id="menu-filter")
+            filter_box.can_focus = False
+            yield filter_box
             yield OptionList(id="menu-list")
 
     def on_mount(self) -> None:
         self._populate("")
-        self.query_one(Input).focus()
 
     def _option_markup(self, command: Command) -> str:
         if command.reason is not None:
@@ -91,6 +103,24 @@ class MenuScreen(ModalScreen["Command | None"]):
             return
         self.dismiss(command)
 
+    def action_accelerator(self, key: str) -> None:
+        hit = next(
+            (
+                pos
+                for pos, ci in enumerate(self._shown)
+                if self._commands[ci].hint == key and self._commands[ci].reason is None
+            ),
+            None,
+        )
+        if hit is not None:
+            self._pick(hit)
+
+    def action_reveal_filter(self) -> None:
+        filter_box = self.query_one(Input)
+        filter_box.can_focus = True
+        filter_box.display = True
+        filter_box.focus()
+
     def action_cursor_down(self) -> None:
         self.query_one(OptionList).action_cursor_down()
 
@@ -98,4 +128,14 @@ class MenuScreen(ModalScreen["Command | None"]):
         self.query_one(OptionList).action_cursor_up()
 
     def action_cancel(self) -> None:
+        # First escape retreats from an open filter back to the list; a second (or an
+        # escape with no filter open) dismisses the menu.
+        filter_box = self.query_one(Input)
+        if filter_box.display:
+            filter_box.value = ""
+            filter_box.display = False
+            filter_box.can_focus = False
+            self._populate("")
+            self.query_one(OptionList).focus()
+            return
         self.dismiss(None)

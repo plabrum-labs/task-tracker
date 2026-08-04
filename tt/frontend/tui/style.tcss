@@ -24,11 +24,17 @@ Body {
     padding: 1 0;
 }
 
-DetailPane {
+/* The read detail and the edit form share the right pane's slot: one shows while
+   the other is display:none, so they carry the same geometry. EditPane starts
+   hidden — the screen reveals it for an action with fields. */
+DetailPane, EditPane {
     width: 1fr;
     height: 1fr;
     padding: 1 2;
     border-left: solid $border;
+}
+EditPane {
+    display: none;
 }
 
 /* On a thin column the ``#content`` row becomes a stack: the pane drops under the
@@ -37,7 +43,7 @@ DetailPane {
 #content.below {
     layout: vertical;
 }
-#content.below DetailPane {
+#content.below DetailPane, #content.below EditPane {
     width: 1fr;
     height: auto;
     max-height: 50%;
@@ -58,6 +64,30 @@ DetailPane {
 }
 .d-empty {
     color: $text-disabled;
+}
+
+/* The edit form inside the pane. Its boxes sit on the terminal background like the
+   read detail beside them — not on the modal ``$overlay`` — so the accent is the
+   only paint; the focused box takes it. */
+.e-header {
+    height: auto;
+    padding-bottom: 1;
+}
+EditPane Input {
+    border: round $border;
+    height: 3;
+    margin: 0 1;
+    padding: 0 1;
+    background: ansi_default;
+}
+EditPane Input:focus {
+    border: round $primary;
+}
+EditPane Input > .input--placeholder {
+    color: $text-disabled;
+}
+EditPane Select {
+    margin: 0 1;
 }
 
 StatusBar {
@@ -151,13 +181,17 @@ Card.sel {
 
 /* --- the modal overlays -------------------------------------------------- */
 
-MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
+/* No scrim: the browse screen stays at full brightness behind the floating panel,
+   the way lazygit draws its popups. The panel's own ``$overlay`` fill and accent
+   border are what set it apart from the content it covers. */
+MenuScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
     align: center top;
-    background: $background 55%;
+    background: transparent;
 }
 
 /* ``$overlay``, not ``$panel``: under ``ansi=True`` the stock surface tokens are
-   transparent, so a panel painted with them lets the dim scrim show through. */
+   transparent, so a panel painted with them would let the content behind show
+   straight through it. The pinned hex keeps the floating panel opaque. */
 #panel {
     width: 56;
     height: auto;
@@ -197,25 +231,20 @@ MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
     background: $overlay;
     color: $overlay-text;
 }
-
-/* A form's text boxes keep a bordered box; the focused one takes the accent. */
-FormScreen Input {
-    border: round $border;
-    height: 3;
-    margin: 0 1;
-    padding: 0 1;
-    background: $overlay;
+/* The highlighted row takes the same accent tint the browse list uses, so the
+   menu's selection reads the same as the screen behind it. */
+#panel OptionList > .option-list--option-highlighted {
+    background: $primary 14%;
     color: $overlay-text;
+    text-style: none;
 }
-FormScreen Input > .input--placeholder {
-    color: $overlay-text-disabled;
+
+/* The menu's filter stays hidden until ``/`` reveals it — the menu opens focused
+   on the list. Scoped by id so the always-shown capture box is not caught. */
+#menu-filter {
+    display: none;
 }
-FormScreen Input:focus {
-    border: round $primary;
-}
-FormScreen Select {
-    margin: 0 1;
-}
+
 .f-label {
     padding: 0 1;
     height: 1;
