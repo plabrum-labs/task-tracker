@@ -132,6 +132,7 @@ class SetPath(ObjectAction[Project, schemas.SetPathPayload]):
     KEY = "setPath"
     LABEL = "Set path"
     Payload = schemas.SetPathPayload
+    SEED_FROM_TARGET = True
 
     @classmethod
     def execute(

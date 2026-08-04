@@ -105,12 +105,19 @@ class Offer:
     """One action an object offers: its key, its label, whether it is runnable or
     refused, and the fields its payload asks for. The whole of what a person
     picking an action and an agent driving the CLI both need, with the payload
-    type erased."""
+    type erased.
+
+    ``seed`` carries the action's ``SEED_FROM_TARGET``: whether a form should
+    pre-fill from the object it addresses. A menu that offers both an edit (seed)
+    and a create (do not) over overlapping fields cannot tell them apart by the
+    fields alone, so the action declares its intent and the offer carries it.
+    """
 
     key: str
     label: str
     state: Offered
     fields: list[Field]
+    seed: bool = False
 
 
 # --- the two actions ------------------------------------------------------
@@ -128,6 +135,11 @@ class ObjectAction[Obj, P: BaseModel]:
     KEY: ClassVar[str]
     LABEL: ClassVar[str]
     Payload: ClassVar[type[BaseModel]]
+    # Whether a form for this action pre-fills from the object it addresses: true
+    # for an edit of the target, false for a create hung off it (whose fields may
+    # overlap the target's but describe a new row). A frontend seeds on this rather
+    # than on field-name overlap, which cannot tell the two apart.
+    SEED_FROM_TARGET: ClassVar[bool] = False
 
     @classmethod
     def is_available(cls, obj: Obj) -> bool:

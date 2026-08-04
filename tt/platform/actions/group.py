@@ -90,6 +90,7 @@ class ActionGroup[Obj]:
                         label=action.LABEL,
                         state=state,
                         fields=fields_of(action.Payload),
+                        seed=action.SEED_FROM_TARGET,
                     )
                 )
         return result
