@@ -85,6 +85,7 @@ pull force="":
 _sync direction force="":
     #!/usr/bin/env bash
     set -euo pipefail
+    direction="{{ direction }}"
     host="{{ tt_sync_host }}"
     local_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tt"
     remote_dir=".local/share/tt"
