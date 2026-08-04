@@ -14,15 +14,34 @@ its columns and its eagerly-loaded relationships once the ``with`` block that
 loaded it has closed.
 """
 
+import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
 from typing import Concatenate
 
 from sqlalchemy import DateTime, Engine, create_engine, event, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
+
+
+def default_url() -> str:
+    """The database a frontend opens when given no explicit ``--db``.
+
+    ``TT_DB`` overrides it — the tests and any throwaway database go through
+    that. Otherwise every frontend shares one per-user file under the XDG data
+    home (``~/.local/share/tt/tt.db``), created on demand, so the tracker a
+    project is filed against does not depend on the directory a command runs
+    in."""
+    override = os.environ.get("TT_DB")
+    if override is not None:
+        return override
+    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    path = Path(data_home) / "tt" / "tt.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path}"
 
 
 def connect(url: str) -> Engine:

@@ -84,8 +84,8 @@ Dependency flow: `frontend` (`cli`/`tui`) → domain `api` → `platform` → SQ
   transaction, the base every table maps on), `enums`, and `actions/`
   (`base`, `deps`, `form`, `group`, `registry`) — the action framework the
   domains register into.
-- `src/tt/frontend/` — `cli` (Typer), `tui` (Textual), and `show` (the erased
-  dispatch an agent reads). No frontend names an action key; the subcommands
+- `src/tt/frontend/` — `cli` (Typer), `tui` (Textual), and `mcp` (the MCP
+  server an agent drives). No frontend names an action key; the subcommands
   and forms are derived from the registered action schemas.
 - `src/tt/schema.py` — `create_all` and the metadata that binds the domains'
   tables to one engine.
@@ -139,8 +139,6 @@ path a frontend takes — so what a test reads back is persisted, not hand-built
   schema changes are a new forward migration (`just db-revision`).
 - Editing the mapped `models` in a way that changes the schema without a
   matching migration.
-- Changing a `--json` key, an exit code (notably the 123 a refusal returns), or
-  a CLI flag/subcommand name.
 - Silencing a linter — a `# type: ignore`, a `# noqa`, or a `ruff`/
   `basedpyright` config change. Fix the finding instead; if it is a false
   positive, say so and let me decide.

@@ -30,12 +30,10 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
-from tt import schema
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
-from tt.platform import db
 from tt.platform.actions import (
     REFUSALS,
     Enum,
@@ -1479,8 +1477,5 @@ def _initial_scope(engine: Engine) -> Scope:
     return ProjectScope(slug) if slug is not None else AllScope()
 
 
-def main() -> None:
-    url = os.environ.get("TT_DB", "sqlite:///tt.db")
-    schema.upgrade(url)
-    engine = db.connect(url)
+def run(engine: Engine) -> None:
     TrackerApp(engine, start(engine, _initial_scope(engine))).run()

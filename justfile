@@ -9,10 +9,6 @@ sync:
 test:
     uv run pytest
 
-# The erased path from outside: the offers, their schemas, then one dispatch.
-show:
-    uv run python -m tt.frontend.show
-
 # A refusal exits 123 — it is the object's answer, not a usage error.
 #
 #     just cli project ls
@@ -22,11 +18,11 @@ show:
 
 # The command line, over the same groups. Takes a subcommand.
 cli *args:
-    uv run tt-cli {{ args }}
+    uv run tt {{ args }}
 
 # The terminal UI. Up/down to move, enter to pick, esc to go back, q to quit.
 tui:
-    uv run tt-tui
+    uv run tt tui
 
 # The MCP server, over stdio, on the same groups. Register it once with
 # `claude mcp add tt -- uv run tt-mcp` (run from this repo), then an agent lists

@@ -1,7 +1,7 @@
 """The domain with an MCP client on the end of it.
 
-A fourth frontend beside ``cli``, ``tui`` and ``show``, over the same ``api``: an
-agent lists projects and issues and runs the same actions a person runs, through
+A third frontend beside ``cli`` and ``tui``, over the same ``api``: an agent
+lists projects and issues and runs the same actions a person runs, through
 the same availability checks, with no privileged path. Nothing here names an
 action key — a write tool exists because ``action_schemas`` or ``top_level_offers``
 lists it, and its input schema is the ``Field``\\ s the payload derived. Adding a
@@ -25,7 +25,6 @@ same rule applied to the one top-level action, left uniform on purpose.
 """
 
 import json
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -36,10 +35,8 @@ from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from sqlalchemy import Engine
 
-from tt import schema
 from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
-from tt.platform import db
 from tt.platform.actions import (
     REFUSALS,
     ActionResponse,
@@ -52,8 +49,6 @@ from tt.platform.actions import (
     Runnable,
     Text,
 )
-
-DEFAULT_DB = "sqlite:///tt.db"
 
 # What a write tool hands its address and payload to — ``project_action`` or
 # ``issue_action`` with the arguments reordered to (engine, address, key, payload).
@@ -361,10 +356,6 @@ async def _serve(engine: Engine) -> None:
         await server.run(read, write, server.create_initialization_options())
 
 
-def _open(url: str) -> Engine:
-    schema.upgrade(url)
-    return db.connect(url)
-
-
-def main() -> None:
-    anyio.run(_serve, _open(os.environ.get("TT_DB", DEFAULT_DB)))
+def serve(engine: Engine) -> None:
+    """Run the stdio MCP server against an open database until the client closes it."""
+    anyio.run(_serve, engine)

@@ -36,7 +36,7 @@ from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
-from tt.platform import actions, db
+from tt.platform import actions
 from tt.platform.actions import REFUSALS, Enum, Field, Invalid, Offer, Refused, Runnable
 
 # A refusal is the object's answer, not a usage error, so it is neither Click's 2
@@ -44,8 +44,6 @@ from tt.platform.actions import REFUSALS, Enum, Field, Invalid, Offer, Refused, 
 # thing — distinct codes for the two refusals are a real tracker's problem and not
 # this spike's.
 REFUSED = 123
-
-DEFAULT_DB = "sqlite:///tt.db"
 
 # The help of the two arguments the raw ``action`` path shares, factored out only
 # so the command declarations stay one line each.
@@ -299,15 +297,10 @@ def _report(outcome: Callable[[], str]) -> None:
     typer.echo(message)
 
 
-def _open(database: str) -> Engine:
-    schema.upgrade(database)
-    return db.connect(database)
-
-
 # --- the command tree -----------------------------------------------------
 
 app = typer.Typer(
-    help="A small task tracker, driven from a command line.",
+    help="A small task tracker: a command line, a terminal UI, and an MCP server.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -317,11 +310,11 @@ app = typer.Typer(
 def _main(
     ctx: typer.Context,
     database: Annotated[
-        str,
-        typer.Option("--db", envvar="TT_DB", help="The database to open."),
-    ] = DEFAULT_DB,
+        str | None,
+        typer.Option("--db", help="The database to open. Defaults to the shared per-user file."),
+    ] = None,
 ) -> None:
-    ctx.obj = _open(database)
+    ctx.obj = schema.bootstrap(database)
 
 
 project_app = typer.Typer(help="Projects.", no_args_is_help=True)
@@ -402,6 +395,24 @@ _register_generated(
 
 app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
+
+
+# The other two frontends are the same tracker with a different surface, so they
+# are subcommands of the one binary rather than separate entry points. Textual and
+# the MCP SDK are imported only when their command runs, so ``tt issue ls`` does
+# not pay to load them.
+@app.command("tui", help="Open the terminal UI.")
+def _tui_command(ctx: typer.Context) -> None:
+    from tt.frontend import tui
+
+    tui.run(_engine(ctx))
+
+
+@app.command("mcp", help="Serve the tracker's actions as MCP tools over stdio.")
+def _mcp_command(ctx: typer.Context) -> None:
+    from tt.frontend import mcp
+
+    mcp.serve(_engine(ctx))
 
 
 def main() -> None:

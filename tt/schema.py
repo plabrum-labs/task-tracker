@@ -19,6 +19,7 @@ from sqlalchemy import Engine
 
 import tt.domains.issue.models  # noqa: F401  (registers the issues table)
 import tt.domains.project.models  # noqa: F401  (registers the projects table)
+from tt.platform import db
 from tt.platform.db import BaseDBModel
 
 # alembic.ini sits at the repo root, one level above the tt package.
@@ -36,3 +37,13 @@ def upgrade(url: str) -> None:
     config = Config(str(_ALEMBIC_INI))
     config.set_main_option("sqlalchemy.url", url)
     command.upgrade(config, "head")
+
+
+def bootstrap(override: str | None = None) -> Engine:
+    """Resolve the database a frontend should open, bring it to head, and open it.
+
+    ``override`` is a frontend's explicit ``--db``; without one the shared
+    per-user file (or ``TT_DB``) is used."""
+    url = override if override is not None else db.default_url()
+    upgrade(url)
+    return db.connect(url)
