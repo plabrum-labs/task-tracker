@@ -1,8 +1,10 @@
 """Everything a project can be asked.
 
 This is the half of the domain that has preconditions. Every issue action is
-always ``Runnable``; a project refuses three things, and all three refusals read
-something a read put on the object — its counts, or its status.
+always ``Runnable``; a project refuses on its counts and its status. ``delete``
+and ``addIssue`` refuse at the menu (an ``is_disabled`` reading the loaded row);
+``edit`` refuses only in ``execute`` — archiving a project with issues in progress
+— so a title or body edit that keeps it active is offered even while it is busy.
 
 A creator writes a table its ``execute`` chooses — ``addIssue`` inserts an issue
 against the project it was loaded for, ``createProject`` a project it queries the
@@ -51,55 +53,27 @@ def _path_owner(deps: ActionDeps, path: str, exclude_id: int | None) -> Project 
 
 
 @project_actions
-class EditTitle(ObjectAction[Project, schemas.EditTitlePayload]):
-    KEY = "editTitle"
-    LABEL = "Edit title"
-    Payload = schemas.EditTitlePayload
+class EditProject(ObjectAction[Project, schemas.EditProjectPayload]):
+    # One whole-object edit. The one precondition is stated in ``execute`` against
+    # the object rather than as an ``is_disabled``: only *archiving* a project with
+    # issues in progress is refused, so a title or body edit that keeps it active is
+    # offered — and runs — even while it is busy.
+    KEY = "edit"
+    LABEL = "Edit"
+    Payload = schemas.EditProjectPayload
+    SEED_FROM_TARGET = True
 
     @classmethod
     def execute(
-        cls, obj: Project, payload: schemas.EditTitlePayload, deps: ActionDeps
+        cls, obj: Project, payload: schemas.EditProjectPayload, deps: ActionDeps
     ) -> ActionResponse:
+        if payload.status is Status.ARCHIVED and obj.doing > 0:
+            raise Conflict(f"finish or drop {_issues(obj.doing)} first")
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")
         obj.title = title
-        return ActionResponse(message=f"{obj.subject()}: saved")
-
-
-@project_actions
-class EditBody(ObjectAction[Project, schemas.EditBodyPayload]):
-    KEY = "editBody"
-    LABEL = "Edit body"
-    Payload = schemas.EditBodyPayload
-
-    @classmethod
-    def execute(
-        cls, obj: Project, payload: schemas.EditBodyPayload, deps: ActionDeps
-    ) -> ActionResponse:
         obj.body = payload.body
-        return ActionResponse(message=f"{obj.subject()}: saved")
-
-
-@project_actions
-class EditStatus(ObjectAction[Project, schemas.EditStatusPayload]):
-    # The refusal is stated against the object rather than against the payload, so
-    # it holds whichever status was asked for — archiving is the only move that
-    # could break it, and asking to stay active is refused too.
-    KEY = "editStatus"
-    LABEL = "Edit status"
-    Payload = schemas.EditStatusPayload
-
-    @classmethod
-    def is_disabled(cls, obj: Project) -> str | None:
-        if obj.doing > 0:
-            return f"finish or drop {_issues(obj.doing)} first"
-        return None
-
-    @classmethod
-    def execute(
-        cls, obj: Project, payload: schemas.EditStatusPayload, deps: ActionDeps
-    ) -> ActionResponse:
         obj.status = payload.status
         return ActionResponse(message=f"{obj.subject()}: saved")
 

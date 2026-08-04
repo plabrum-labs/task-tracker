@@ -15,21 +15,13 @@ from tt.domains.issue.schemas import WirePriority
 from tt.domains.project.enums import Status
 
 
-class EditTitlePayload(BaseModel):
+class EditProjectPayload(BaseModel):
+    # The whole editable project, sent at once: the caller reads the object,
+    # changes what it likes, and sends it back.
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(description="What to call the project.")
-
-
-class EditBodyPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     body: str = Field(description="The project's description. Blank clears it.")
-
-
-class EditStatusPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     status: Status = Field(description="Whether the project is still being worked on.")
 
 

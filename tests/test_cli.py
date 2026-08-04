@@ -57,9 +57,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "ls",
         "show",
         "action",
-        "editTitle",
-        "editBody",
-        "editStatus",
+        "edit",
         "delete",
         "setPath",
         "addIssue",
@@ -197,5 +195,5 @@ def test_create_project_is_reached_through_the_top_level_action_path(database: s
 def test_an_unknown_object_or_malformed_json_is_invalid_rather_than_a_crash(database: str) -> None:
     assert invoke(database, "issue", "show", "99").exit_code == cli.REFUSED
     assert invoke(database, "project", "show", "nope").exit_code == cli.REFUSED
-    malformed = invoke(database, "issue", "action", "1", "editTitle", "not json")
+    malformed = invoke(database, "issue", "action", "1", "edit", "not json")
     assert malformed.exit_code == cli.REFUSED

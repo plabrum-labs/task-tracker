@@ -237,31 +237,59 @@ def test_delete_hides_an_issue(db: Engine) -> None:
 # --- projects: the half with preconditions --------------------------------
 
 
-def test_edit_status_is_refused_while_anything_is_doing(db: Engine) -> None:
+def test_edit_refuses_archiving_while_anything_is_doing(db: Engine) -> None:
+    # The precondition moved from the menu into execute: the edit is always offered
+    # now, and only archiving a busy project is refused — against the object, so the
+    # count in the reason is this project's.
     busy = project(issues=doing_issues(1))
-    assert project_actions.EditStatus.availability(busy) == Refused("finish or drop 1 issue first")
-    busier = project(issues=doing_issues(3))
-    assert project_actions.EditStatus.availability(busier) == Refused(
-        "finish or drop 3 issues first"
-    )
-    # Stated against the object, so asking to stay active is refused too.
-    with pytest.raises(Conflict):
+    assert project_actions.EditProject.availability(busy) == Runnable()
+    with pytest.raises(Conflict, match="finish or drop 1 issue first"):
         run_synthetic(
             db,
-            project_actions.EditStatus,
+            project_actions.EditProject,
             busy,
-            project_schemas.EditStatusPayload(status=ProjectStatus.ACTIVE),
+            project_schemas.EditProjectPayload(title="tt", body="", status=ProjectStatus.ARCHIVED),
+        )
+    busier = project(issues=doing_issues(3))
+    with pytest.raises(Conflict, match="finish or drop 3 issues first"):
+        run_synthetic(
+            db,
+            project_actions.EditProject,
+            busier,
+            project_schemas.EditProjectPayload(title="tt", body="", status=ProjectStatus.ARCHIVED),
         )
 
 
-def test_edit_status_is_runnable_once_nothing_is_doing(db: Engine) -> None:
-    seeded = a_project(db, "tt")
-    assert project_actions.EditStatus.availability(seeded) == Runnable()
-    response = run_project(
-        db,
-        project_actions.EditStatus,
-        "tt",
-        project_schemas.EditStatusPayload(status=ProjectStatus.ARCHIVED),
+def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) -> None:
+    # The regression the moved precondition buys: a title/body edit that keeps the
+    # project active goes through even with an issue in progress.
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wip")
+    issue_api.issue_action(
+        db, "edit", {"title": "wip", "body": "", "status": "doing", "priority": "normal"}, made.id
+    )
+    response = project_api.project_action(
+        db, "edit", {"title": "renamed", "body": "notes", "status": "active"}, "tt"
+    )
+    assert response.message == "project tt: saved"
+    with platform_db.reading(db) as s:
+        read = project_queries.get_project(s, "tt")
+    assert read is not None
+    assert read.title == "renamed"
+    assert read.body == "notes"
+    assert read.status == ProjectStatus.ACTIVE
+
+    # But archiving it while it is still busy is refused.
+    with pytest.raises(Conflict):
+        project_api.project_action(
+            db, "edit", {"title": "renamed", "body": "notes", "status": "archived"}, "tt"
+        )
+
+
+def test_edit_archives_when_nothing_is_doing(db: Engine) -> None:
+    a_project(db, "tt")
+    response = project_api.project_action(
+        db, "edit", {"title": "tt", "body": "", "status": "archived"}, "tt"
     )
     assert response.message == "project tt: saved"
     with platform_db.reading(db) as s:
@@ -356,15 +384,14 @@ def _keys(offered: list[Any]) -> list[str]:
 
 def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
     assert _keys(issue_group.offers(issue())) == ["edit", "delete"]
-    # An active project with two issues doing: editStatus and delete come back
-    # refused, addIssue is runnable — one list, told apart by what each execute
-    # writes rather than by which registration it sat in.
+    # An active project with two issues doing: edit is runnable (its archive
+    # precondition is in execute now), delete comes back refused, addIssue runnable
+    # — one list, told apart by what each execute writes rather than by which
+    # registration it sat in.
     busy = project(issues=doing_issues(2))
     offered = [(offer.key, offer.state) for offer in project_group.offers(busy)]
     assert offered == [
-        ("editTitle", Runnable()),
-        ("editBody", Runnable()),
-        ("editStatus", Refused("finish or drop 2 issues first")),
+        ("edit", Runnable()),
         ("delete", Refused("archive it first")),
         ("setPath", Runnable()),
         ("addIssue", Runnable()),
@@ -453,9 +480,13 @@ def test_an_unknown_key_is_invalid(db: Engine) -> None:
         project_api.project_action(db, "explode", {})
 
 
-def test_a_key_decodes_against_the_group_it_was_dispatched_on(db: Engine) -> None:
+def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "one")
+    issue_keys = _keys(issue_group.offers(issue()))
+    project_keys = _keys(project_group.offers(project()))
+    for key in ["edit", "delete"]:
+        assert key in issue_keys and key in project_keys
 
     # A project status through the issue's edit — the issue enum has no ``archived``.
     with pytest.raises(Invalid):
@@ -465,8 +496,10 @@ def test_a_key_decodes_against_the_group_it_was_dispatched_on(db: Engine) -> Non
             {"title": "x", "body": "", "status": "archived", "priority": "normal"},
             made.id,
         )
-    # An issue status, and an issue-only field, through the project's editStatus.
+    # An issue status, and an issue-only field, through the project's edit.
     with pytest.raises(Invalid):
-        project_api.project_action(db, "editStatus", {"status": "doing"}, "tt")
+        project_api.project_action(db, "edit", {"title": "tt", "body": "", "status": "doing"}, "tt")
     with pytest.raises(Invalid):
-        project_api.project_action(db, "editStatus", {"status": "active", "note": "why"}, "tt")
+        project_api.project_action(
+            db, "edit", {"title": "tt", "body": "", "status": "active", "priority": "high"}, "tt"
+        )

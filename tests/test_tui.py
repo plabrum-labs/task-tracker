@@ -354,7 +354,7 @@ def test_switching_to_a_missing_project_falls_out_to_all_projects(db: Engine) ->
     _seed(db)
     state = tui.start(db, ProjectScope("tt"))
     # Archive then delete the project out from under the scope, then refresh.
-    project_api.project_action(db, "editStatus", {"status": "archived"}, "tt")
+    project_api.project_action(db, "edit", {"title": "tt", "body": "", "status": "archived"}, "tt")
     project_api.project_action(db, "delete", {}, "tt")
     state = press(db, state, "R")
     assert state.scope == AllScope()
