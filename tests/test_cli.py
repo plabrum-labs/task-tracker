@@ -75,6 +75,25 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
     ]
 
 
+def test_no_subcommand_opens_the_tui_on_the_chosen_database(
+    database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bare ``tt`` is the TUI, not a help screen, and it opens the database the
+    # callback bootstrapped rather than a fresh default.
+    opened: list[object] = []
+    monkeypatch.setattr("tt.frontend.tui.run", lambda engine: opened.append(engine))
+    result = invoke(database)
+    assert result.exit_code == 0
+    assert len(opened) == 1
+
+
+def test_a_subcommand_does_not_open_the_tui(database: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[object] = []
+    monkeypatch.setattr("tt.frontend.tui.run", lambda engine: opened.append(engine))
+    assert invoke(database, "project", "ls").exit_code == 0
+    assert opened == []
+
+
 def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(database: str) -> None:
     # ``--status`` comes from the schema, so a missing one is a usage error rather
     # than a payload the decoder refuses further in.

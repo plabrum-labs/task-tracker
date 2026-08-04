@@ -40,14 +40,14 @@ or renaming an entry point, refresh the shim with
 just cli project ls              # list live projects
 just cli issue show 1            # print an issue and what it offers
 just cli issue editStatus 1 --status doing --note started
-just tui                         # the terminal UI
+just tui                         # the terminal UI (bare `tt`, no subcommand)
 ```
 
 A refusal (an action the object won't allow) exits `123` — it is the object's
 answer, not a usage error.
 
 If you ran `just install`, the same commands work directly: `tt project ls`,
-`tt tui`, and so on.
+`tt issue show 1`, and so on. Bare `tt` opens the terminal UI.
 
 ## MCP server
 

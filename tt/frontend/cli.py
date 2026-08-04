@@ -301,12 +301,11 @@ def _report(outcome: Callable[[], str]) -> None:
 
 app = typer.Typer(
     help="A small task tracker: a command line, a terminal UI, and an MCP server.",
-    no_args_is_help=True,
     add_completion=False,
 )
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def _main(
     ctx: typer.Context,
     database: Annotated[
@@ -314,7 +313,16 @@ def _main(
         typer.Option("--db", help="The database to open. Defaults to the shared per-user file."),
     ] = None,
 ) -> None:
-    ctx.obj = schema.bootstrap(database)
+    """Bare ``tt`` is the terminal UI; a subcommand is the command line. So the
+    callback runs even with no subcommand, and opens the TUI when none was
+    invoked. Textual is imported only on that branch, so a CLI command does not
+    pay to load it."""
+    engine = schema.bootstrap(database)
+    ctx.obj = engine
+    if ctx.invoked_subcommand is None:
+        from tt.frontend import tui
+
+        tui.run(engine)
 
 
 project_app = typer.Typer(help="Projects.", no_args_is_help=True)
@@ -397,17 +405,9 @@ app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
 
 
-# The other two frontends are the same tracker with a different surface, so they
-# are subcommands of the one binary rather than separate entry points. Textual and
-# the MCP SDK are imported only when their command runs, so ``tt issue ls`` does
-# not pay to load them.
-@app.command("tui", help="Open the terminal UI.")
-def _tui_command(ctx: typer.Context) -> None:
-    from tt.frontend import tui
-
-    tui.run(_engine(ctx))
-
-
+# The MCP server is the same tracker with a different surface, so it is a
+# subcommand of the one binary rather than a separate entry point. The MCP SDK is
+# imported only when the command runs, so ``tt issue ls`` does not pay to load it.
 @app.command("mcp", help="Serve the tracker's actions as MCP tools over stdio.")
 def _mcp_command(ctx: typer.Context) -> None:
     from tt.frontend import mcp

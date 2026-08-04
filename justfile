@@ -26,8 +26,9 @@ cli *args:
     uv run tt {{ args }}
 
 # The terminal UI. Up/down to move, enter to pick, esc to go back, q to quit.
+# Bare `tt` with no subcommand is the TUI.
 tui:
-    uv run tt tui
+    uv run tt
 
 # The MCP server, over stdio, on the same groups. Register it once with
 # `claude mcp add tt -- uv run tt mcp` (run from this repo), then an agent lists
