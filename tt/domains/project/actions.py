@@ -37,6 +37,10 @@ from tt.platform.actions import (
 
 project_actions: ActionGroup[Project] = ActionGroup("project", locate=queries.get_project)
 
+# A slug is uppercased into every issue's Linear-style id, so it stays short enough
+# to leave the id column room to read.
+SLUG_MAX_LENGTH = 5
+
 
 def _issues(n: int) -> str:
     return "1 issue" if n == 1 else f"{n} issues"
@@ -180,6 +184,8 @@ class CreateProject(TopLevelAction[schemas.CreateProjectPayload]):
         slug = payload.slug.strip()
         if not slug:
             raise Invalid("slug is required")
+        if len(slug) > SLUG_MAX_LENGTH:
+            raise Invalid(f"slug must be at most {SLUG_MAX_LENGTH} characters")
         existing = deps.tx.scalars(
             select(Project).where(Project.slug == slug, Project.deleted_at.is_(None))
         ).first()

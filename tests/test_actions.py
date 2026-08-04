@@ -417,6 +417,18 @@ def test_create_project_refuses_a_slug_the_live_list_already_holds(db: Engine) -
     assert made.title == "another"
 
 
+def test_create_project_refuses_a_slug_over_the_length_cap(db: Engine) -> None:
+    # The slug is uppercased into every issue id, so it is capped short; the
+    # boundary length is accepted and one past it is refused.
+    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
+        project_group.trigger(ActionDeps(tx), "createProject", {"slug": "toolong", "title": None})
+    with platform_db.transaction(db) as tx:
+        response = project_group.trigger(
+            ActionDeps(tx), "createProject", {"slug": "abcde", "title": None}
+        )
+    assert response.message == "project abcde: created"
+
+
 # --- dispatch through the group -------------------------------------------
 
 
