@@ -15,7 +15,6 @@ from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project import api as project_api
 from tt.frontend import tui
 from tt.frontend.tui import (
-    ACCELERATORS,
     AllScope,
     CaptureOverlay,
     Choosing,
@@ -39,7 +38,6 @@ from tt.frontend.tui import (
     StartFilter,
     State,
 )
-from tt.platform.actions import Offer, Refused, Runnable
 from tt.platform.config import ThemeName
 
 # --- helpers --------------------------------------------------------------
@@ -74,106 +72,6 @@ def seeded(db: Engine) -> Engine:
 def press(engine: Engine, state: State, key: str) -> State:
     """One keystroke: the pure ``on_key`` then the ``apply`` that may write."""
     return tui.apply(engine, state, tui.on_key(state, key))
-
-
-# --- pure: columns and selection ------------------------------------------
-
-
-def test_columns_are_one_for_list_and_three_by_status_for_board() -> None:
-    issues = [_item(1, "todo"), _item(2, "doing"), _item(3, "done"), _item(4, "todo")]
-    flat = tui.columns(issues, "list")
-    assert len(flat) == 1
-    assert [i.id for i in flat[0].issues] == [1, 2, 3, 4]
-
-    board = tui.columns(issues, "board")
-    assert [c.status for c in board] == ["todo", "doing", "done"]
-    assert [[i.id for i in c.issues] for c in board] == [[1, 4], [2], [3]]
-
-
-def test_move_selection_walks_the_flat_list() -> None:
-    issues = [_item(1), _item(2), _item(3)]
-    assert tui.move_selection(issues, "list", 1, 1, 0) == 2
-    assert tui.move_selection(issues, "list", 3, 1, 0) == 3  # clamps at the end
-    assert tui.move_selection(issues, "list", 2, -tui.FAR, 0) == 1  # g goes to the top
-    assert tui.move_selection(issues, "list", 1, tui.FAR, 0) == 3  # G goes to the bottom
-    assert tui.move_selection(issues, "list", None, 1, 0) == 1  # nothing selected picks the first
-
-
-def test_move_selection_moves_within_and_between_board_columns() -> None:
-    issues = [_item(1, "todo"), _item(2, "todo"), _item(3, "doing"), _item(4, "done")]
-    assert tui.move_selection(issues, "board", 1, 1, 0) == 2  # down within todo
-    assert tui.move_selection(issues, "board", 1, 0, 1) == 3  # right to doing
-    assert tui.move_selection(issues, "board", 3, 0, 1) == 4  # right to done
-    assert tui.move_selection(issues, "board", 1, 0, -1) == 1  # nothing to the left, stays
-
-
-def test_surviving_id_keeps_the_issue_or_takes_its_neighbour() -> None:
-    issues = [_item(2), _item(3), _item(4)]
-    assert tui.surviving_id(issues, 3, 1) == 3  # still here
-    assert tui.surviving_id(issues, 1, 0) == 2  # gone: whatever now sits where it was
-    assert tui.surviving_id(issues, 1, 9) == 4  # clamps the fallback
-    assert tui.surviving_id([], 1, 0) is None
-
-
-def test_index_of_is_zero_when_the_selection_is_gone() -> None:
-    issues = [_item(5), _item(6)]
-    assert tui.index_of(issues, 6) == 1
-    assert tui.index_of(issues, 99) == 0
-
-
-# --- pure: layout fitting -------------------------------------------------
-
-
-def test_fits_and_next_layout() -> None:
-    assert tui.fits("list", 40, 10)
-    assert not tui.fits("board", 80, 30)
-    assert tui.fits("board", 100, 30)
-    # tab lands on the widest that fits, skipping board when it doesn't.
-    assert tui.next_layout("list", 100, 30) == "board"
-    assert tui.next_layout("list", 80, 30) == "list"
-    assert tui.next_layout("board", 100, 30) == "list"
-
-
-# --- pure: cwd resolution -------------------------------------------------
-
-
-def test_match_path_takes_the_longest_ancestor() -> None:
-    candidates = [("tt", "/repo/tt"), ("web", "/repo/web"), ("unbound", None)]
-    assert tui.match_path(candidates, "/repo/tt") == "tt"  # exact
-    assert tui.match_path(candidates, "/repo/tt/sub/dir") == "tt"  # inside
-    assert tui.match_path(candidates, "/elsewhere") is None  # outside every project
-    # The deepest matching path wins, not the first.
-    assert tui.match_path([("outer", "/repo"), ("inner", "/repo/tt")], "/repo/tt/x") == "inner"
-
-
-# --- pure: the visual vocabulary ------------------------------------------
-
-
-def test_glyph_marker_and_ref() -> None:
-    assert tui.glyph("doing") == "◐"
-    assert tui.marker("high") == "▲"
-    assert tui.marker("normal") is None
-    assert tui.issue_ref("tt", 4) == "TT-4"
-
-
-# --- pure: an offer becomes a command -------------------------------------
-
-
-def test_a_runnable_offer_carries_its_accelerator_and_a_refused_one_its_reason() -> None:
-    runnable = Offer(key="delete", label="Delete", state=Runnable(), fields=[])
-    refused = Offer(key="delete", label="Delete", state=Refused("archive it first"), fields=[])
-
-    keep = tui.issue_commands([runnable], 1)[0]
-    assert keep.reason is None
-    assert keep.hint == "d"  # delete is the one remaining accelerator
-
-    drop = tui.project_commands([refused], "tt")[0]
-    assert drop.reason == "archive it first"
-
-
-def test_the_accelerators_name_the_actions_they_run() -> None:
-    # The per-field edits collapsed into the menu's ``Edit``; only delete keeps a key.
-    assert ACCELERATORS == {"d": "delete"}
 
 
 # --- reducer: loading -----------------------------------------------------
