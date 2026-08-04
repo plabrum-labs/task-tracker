@@ -1,0 +1,168 @@
+/* Every colour is a theme ``$`` variable, so a theme switch repaints with no
+   hardcoded hex. ``ansi_default`` lets the terminal's own background show through
+   rather than painting one over it. */
+
+Screen {
+    background: ansi_default;
+}
+
+/* --- the browse screen --------------------------------------------------- */
+
+TopBar {
+    height: 1;
+    padding: 0 1;
+    margin: 1 0 0 0;
+}
+
+Body {
+    height: 1fr;
+    padding: 1 0;
+}
+
+StatusBar {
+    dock: bottom;
+    height: 1;
+    border-top: solid $border;
+    padding: 0 1;
+}
+
+FilterInput {
+    dock: bottom;
+    height: 1;
+    border: none;
+    padding: 0 1;
+    background: ansi_default;
+    /* Hidden until ``/`` — and while hidden it is not focusable, so browse keys
+       reach the screen bindings instead of being typed into it. */
+    display: none;
+}
+
+/* --- the flat list row --------------------------------------------------- */
+
+IssueRow {
+    height: 1;
+}
+IssueRow.sel {
+    background: $primary 14%;
+}
+.bar {
+    width: 2;
+    color: $primary;
+}
+.glyph {
+    width: 2;
+}
+.st-todo {
+    color: $text-muted;
+}
+.st-doing {
+    color: $warning;
+}
+.st-done {
+    color: $success;
+}
+.ref {
+    width: 8;
+    color: $text-muted;
+}
+.title {
+    width: 1fr;
+    color: $foreground;
+}
+.title.done {
+    color: $text-muted;
+}
+.pri {
+    width: 8;
+    text-align: right;
+    padding-right: 1;
+    color: $priority-high;
+}
+.empty {
+    padding: 0 2;
+}
+
+/* --- the board ----------------------------------------------------------- */
+
+BoardColumn {
+    width: 1fr;
+    height: auto;
+    padding: 0 1;
+}
+.col-h {
+    padding-bottom: 1;
+}
+Card {
+    padding: 0 1;
+    margin-bottom: 1;
+    height: auto;
+}
+Card.sel {
+    background: $primary 14%;
+}
+
+/* --- the modal overlays -------------------------------------------------- */
+
+MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
+    align: center top;
+    background: $background 55%;
+}
+
+#panel {
+    width: 56;
+    height: auto;
+    margin-top: 3;
+    padding: 1 1;
+    background: $panel;
+    border: round $primary;
+}
+
+.ov-header {
+    padding: 0 1;
+    height: 1;
+}
+.ov-foot {
+    padding: 1 1 0 1;
+}
+
+/* The menu's search box and list sit flush inside the panel. */
+#panel Input {
+    border: none;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+#panel OptionList {
+    height: auto;
+    max-height: 20;
+    border: none;
+    padding: 0;
+    background: $panel;
+}
+
+/* A form's text boxes keep a bordered box; the focused one takes the accent. */
+FormScreen Input {
+    border: round $border;
+    height: 3;
+    margin: 0 1;
+    padding: 0 1;
+    background: $panel;
+}
+FormScreen Input:focus {
+    border: round $primary;
+}
+FormScreen Select {
+    margin: 0 1;
+}
+.f-label {
+    padding: 0 1;
+    height: 1;
+}
+.f-error {
+    padding: 0 1;
+    height: auto;
+}
+.cheat {
+    height: 1;
+    padding: 0 1;
+}

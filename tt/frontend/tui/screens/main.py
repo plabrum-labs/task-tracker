@@ -1,0 +1,452 @@
+"""The one browse screen: the dense issue list you never leave.
+
+Bindings map every browse key to an ``action_*`` method; nothing here parses a key
+event. The screen holds the scope, layout, rows, selection and filter as reactives,
+and mutation methods assign them so watchers repaint the affected widget. Everything
+you can do to the selected object is reached through a modal overlay derived from
+what that object offers — a ``MenuScreen`` for the list, a ``FormScreen`` for an
+action with fields — so this screen names one action key, the ``d`` delete
+accelerator, and derives the rest.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import Engine
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.reactive import reactive
+from textual.screen import Screen
+from textual.widgets import Input
+
+from tt.domains.issue import api as issue_api
+from tt.domains.issue.schemas import IssueListItem
+from tt.domains.project import api as project_api
+from tt.domains.project.schemas import ProjectListItem
+from tt.frontend.tui import data
+from tt.frontend.tui.domainview import (
+    FAR,
+    HALF,
+    AllScope,
+    Command,
+    IssueTarget,
+    Layout,
+    Navigate,
+    ProjectScope,
+    ProjectTarget,
+    RunAction,
+    Scope,
+    index_of,
+    issue_commands,
+    issue_ref,
+    move_selection,
+    next_layout,
+    project_commands,
+    surviving_id,
+    switcher_commands,
+)
+from tt.frontend.tui.screens.capture import CaptureScreen
+from tt.frontend.tui.screens.cheatsheet import CheatsheetScreen
+from tt.frontend.tui.screens.form import FormScreen
+from tt.frontend.tui.screens.menu import MenuScreen
+from tt.frontend.tui.screens.settings import SettingsScreen
+from tt.frontend.tui.theme import save_theme
+from tt.frontend.tui.widgets.body import Body
+from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
+from tt.frontend.tui.widgets.topbar import TopBar
+from tt.platform.actions import REFUSALS, Refused
+from tt.platform.config import ThemeName
+
+BROWSING = "j/k move · x actions · / filter · ? keys · q quit"
+
+
+class MainScreen(Screen[None]):
+    """The browse screen. Assigns reactives; watchers repaint TopBar/Body/StatusBar."""
+
+    # Browse mode holds no focus, so every keystroke reaches the bindings below rather
+    # than being typed into a widget; ``/`` focuses the filter, and closing it blurs.
+    AUTO_FOCUS = None
+
+    BINDINGS = [
+        Binding("j,down", "move_down", "down", show=False),
+        Binding("k,up", "move_up", "up", show=False),
+        Binding("J,ctrl+d", "half_down", "half page down", show=False),
+        Binding("K,ctrl+u", "half_up", "half page up", show=False),
+        Binding("g,less_than_sign", "top", "top", show=False),
+        Binding("G,greater_than_sign", "bottom", "bottom", show=False),
+        Binding("h,left", "col_left", "left", show=False),
+        Binding("l,right", "col_right", "right", show=False),
+        Binding("tab", "cycle_layout", "layout", show=False),
+        Binding("left_square_bracket", "prev_project", "prev project", show=False),
+        Binding("right_square_bracket", "next_project", "next project", show=False),
+        Binding("enter,x,space", "issue_menu", "actions", show=False),
+        Binding("X", "project_menu", "project actions", show=False),
+        Binding("colon", "palette", "commands", show=False),
+        Binding("P", "switcher", "switch project", show=False),
+        Binding("question_mark", "cheatsheet", "keys", show=False),
+        Binding("comma", "settings", "settings", show=False),
+        Binding("slash", "filter", "filter", show=False),
+        Binding("R", "refresh", "refresh", show=False),
+        Binding("n", "capture", "new issue", show=False),
+        Binding("d", "delete", "delete", show=False),
+        Binding("escape", "escape", "back", show=False),
+        Binding("q", "quit", "quit", show=False),
+    ]
+
+    # ``view_layout`` rather than ``layout``: a ``Screen`` is a ``Widget`` whose
+    # ``layout`` is a property, and a reactive of that name would shadow it.
+    scope: reactive[Scope] = reactive[Scope](AllScope())
+    view_layout: reactive[Layout] = reactive[Layout]("list")
+    projects: reactive[list[ProjectListItem]] = reactive(list)
+    issues: reactive[list[IssueListItem]] = reactive(list)
+    selected_id: reactive[int | None] = reactive[int | None](None)
+    filter: reactive[str] = reactive("")
+    status: reactive[str] = reactive(BROWSING)
+
+    def __init__(self, engine: Engine) -> None:
+        super().__init__()
+        self.engine = engine
+        self._ready = False
+
+    def compose(self) -> ComposeResult:
+        yield TopBar(id="topbar")
+        yield Body(id="body")
+        yield StatusBar(id="statusbar")
+        yield FilterInput(id="filter", placeholder="filter")
+
+    def on_mount(self) -> None:
+        self.scope = data.initial_scope(self.engine)
+        self.reload()
+        self._ready = True
+        self._paint_all()
+        # Browse mode holds no focus, so every keystroke reaches the bindings rather
+        # than a focused widget; ``/`` focuses the filter and closing it blurs back.
+        self.set_focus(None)
+
+    # --- the visible slice and the selected row ---------------------------
+
+    def _visible(self) -> list[IssueListItem]:
+        if not self.filter:
+            return self.issues
+        needle = self.filter.lower()
+        return [i for i in self.issues if needle in i.title.lower()]
+
+    def _selected_issue(self) -> IssueListItem | None:
+        return next((i for i in self._visible() if i.id == self.selected_id), None)
+
+    def _slug(self) -> str | None:
+        return self.scope.slug if isinstance(self.scope, ProjectScope) else None
+
+    def _first_visible(self) -> int | None:
+        return move_selection(self._visible(), self.view_layout, None, 0, 0)
+
+    # --- loading ----------------------------------------------------------
+
+    def reload(self) -> None:
+        """Read the scope back and reconcile the selection onto a survivor."""
+        fallback = index_of(self._visible(), self.selected_id)
+        scope, projects, issues = data.resolve(self.engine, self.scope)
+        self.scope = scope
+        self.projects = projects
+        self.issues = issues
+        self.selected_id = surviving_id(self._visible(), self.selected_id, fallback)
+
+    # --- painting ---------------------------------------------------------
+
+    def _paint_all(self) -> None:
+        self._paint_topbar()
+        self._paint_body()
+        self._paint_footer()
+
+    def _paint_topbar(self) -> None:
+        self.query_one(TopBar).show(
+            self.scope, self.projects, self.view_layout, len(self._visible())
+        )
+
+    def _paint_body(self) -> None:
+        body = self.query_one(Body)
+        body.scoped = isinstance(self.scope, ProjectScope)
+        body.view_layout = self.view_layout
+        body.issues = self._visible()
+        body.selected_id = self.selected_id
+
+    def _paint_footer(self) -> None:
+        self.query_one(StatusBar).show(self.status)
+
+    def watch_scope(self) -> None:
+        if self._ready:
+            self._paint_topbar()
+            self._paint_body()
+
+    def watch_view_layout(self) -> None:
+        if self._ready:
+            self._paint_topbar()
+            self._paint_body()
+
+    def watch_projects(self) -> None:
+        if self._ready:
+            self._paint_topbar()
+
+    def watch_issues(self) -> None:
+        if self._ready:
+            self._paint_topbar()
+            self._paint_body()
+
+    def watch_selected_id(self) -> None:
+        if self._ready:
+            self.query_one(Body).selected_id = self.selected_id
+
+    def watch_filter(self) -> None:
+        if self._ready:
+            self._paint_topbar()
+            self._paint_body()
+
+    def watch_status(self) -> None:
+        if self._ready:
+            self._paint_footer()
+
+    # --- movement ---------------------------------------------------------
+
+    def _move(self, dr: int, dc: int) -> None:
+        self.selected_id = move_selection(
+            self._visible(), self.view_layout, self.selected_id, dr, dc
+        )
+
+    def action_move_down(self) -> None:
+        self._move(1, 0)
+
+    def action_move_up(self) -> None:
+        self._move(-1, 0)
+
+    def action_half_down(self) -> None:
+        self._move(HALF, 0)
+
+    def action_half_up(self) -> None:
+        self._move(-HALF, 0)
+
+    def action_top(self) -> None:
+        self._move(-FAR, 0)
+
+    def action_bottom(self) -> None:
+        self._move(FAR, 0)
+
+    def action_col_left(self) -> None:
+        self._move(0, -1)
+
+    def action_col_right(self) -> None:
+        self._move(0, 1)
+
+    def action_cycle_layout(self) -> None:
+        self.view_layout = next_layout(self.view_layout, self.size.width, self.size.height)
+
+    # --- scope ------------------------------------------------------------
+
+    def action_prev_project(self) -> None:
+        self._shift_project(-1)
+
+    def action_next_project(self) -> None:
+        self._shift_project(1)
+
+    def _shift_project(self, n: int) -> None:
+        if not self.projects:
+            return
+        # All-projects is a stop on the cycle, so ``]`` off the last project lands
+        # back on it rather than skipping to the first.
+        scopes: list[Scope] = [AllScope(), *(ProjectScope(p.slug) for p in self.projects)]
+        base = next((i for i, s in enumerate(scopes) if s == self.scope), 0)
+        self._switch_scope(scopes[(base + n) % len(scopes)])
+
+    def _switch_scope(self, scope: Scope) -> None:
+        self.scope = scope
+        self.selected_id = None
+        self.status = BROWSING
+        self.reload()
+
+    # --- overlays ---------------------------------------------------------
+
+    def action_issue_menu(self) -> None:
+        issue = self._selected_issue()
+        if issue is None:
+            self.status = "no issue selected"
+            return
+        detail, offers = issue_api.issue_detail(self.engine, issue.id)
+        commands = issue_commands(offers, issue.id, detail.model_dump(mode="json"))
+        header = f"{issue_ref(issue.project, issue.id)} · {issue.title}"
+        self.app.push_screen(MenuScreen(header, commands), self._on_command)
+
+    def action_project_menu(self) -> None:
+        slug = self._slug()
+        if slug is None:
+            self.status = "pick a project first (P)"
+            return
+        detail, offers = project_api.project_detail(self.engine, slug)
+        commands = project_commands(offers, slug, detail.model_dump(mode="json"))
+        self.app.push_screen(MenuScreen(f"Project · {slug}", commands), self._on_command)
+
+    def action_palette(self) -> None:
+        commands: list[Command] = []
+        issue = self._selected_issue()
+        if issue is not None:
+            detail, offers = issue_api.issue_detail(self.engine, issue.id)
+            commands.extend(issue_commands(offers, issue.id, detail.model_dump(mode="json")))
+        slug = self._slug()
+        if slug is not None:
+            project_detail, offers = project_api.project_detail(self.engine, slug)
+            commands.extend(project_commands(offers, slug, project_detail.model_dump(mode="json")))
+        commands.extend(
+            [
+                Command("Switch project", None, "P", Navigate("switcher")),
+                Command("Toggle layout", None, "tab", Navigate("layout")),
+                Command("Refresh", None, "R", Navigate("refresh")),
+            ]
+        )
+        self.app.push_screen(MenuScreen("Commands", commands), self._on_command)
+
+    def action_switcher(self) -> None:
+        offers = project_api.top_level_offers()
+        create = next((o for o in offers if o.key == "createProject"), None)
+        commands = switcher_commands(self.projects, create)
+        self.app.push_screen(MenuScreen("Switch project", commands), self._on_command)
+
+    def _on_command(self, command: Command | None) -> None:
+        if command is None:
+            return
+        match command.run:
+            case RunAction():
+                self._run_action(command.run, command.label)
+            case Navigate():
+                self._navigate(command.run)
+
+    def _navigate(self, nav: Navigate) -> None:
+        match nav.what:
+            case "switch" if nav.arg is not None:
+                self._switch_scope(ProjectScope(nav.arg))
+            case "layout":
+                self.action_cycle_layout()
+            case "switcher":
+                self.action_switcher()
+            case "refresh":
+                self.reload()
+            case _:
+                return
+
+    # --- writes -----------------------------------------------------------
+
+    def _run_action(self, run: RunAction, label: str) -> None:
+        if run.fields:
+
+            def submit(payload: dict[str, Any]) -> str:
+                return data.dispatch(self.engine, run.target, run.key, payload)
+
+            self.app.push_screen(FormScreen(label, run.fields, run.seed, submit), self._on_write)
+        else:
+            self._write(run.key, lambda: data.dispatch(self.engine, run.target, run.key, {}))
+
+    def _on_write(self, message: str | None) -> None:
+        # The form already ran the write and only resolves on success; a refusal keeps
+        # it open, so a message here is always a success to reload behind.
+        if message is None:
+            return
+        self.status = message
+        self.reload()
+
+    def _write(self, key: str, thunk: Any) -> None:
+        try:
+            message = thunk()
+        except REFUSALS as error:
+            self.status = f"{key}: {error}"
+            return
+        self.status = message
+        self.reload()
+
+    def action_delete(self) -> None:
+        issue = self._selected_issue()
+        if issue is None:
+            self.status = "no issue selected"
+            return
+        _, offers = issue_api.issue_detail(self.engine, issue.id)
+        offer = next((o for o in offers if o.key == "delete"), None)
+        if offer is None:
+            self.status = "delete: not available"
+            return
+        if isinstance(offer.state, Refused):
+            self.status = f"delete: {offer.state.reason}"
+            return
+        self._run_action(RunAction(IssueTarget(issue.id), "delete", offer.fields), offer.label)
+
+    # --- capture ----------------------------------------------------------
+
+    def action_capture(self) -> None:
+        slug = self._slug()
+        if slug is None:
+            self.status = "pick a project first (P)"
+            return
+        self.app.push_screen(CaptureScreen(slug), lambda title: self._add_issue(slug, title))
+
+    def _add_issue(self, slug: str, title: str | None) -> None:
+        if title is None:
+            return
+        self._write(
+            "addIssue",
+            lambda: data.dispatch(self.engine, ProjectTarget(slug), "addIssue", {"title": title}),
+        )
+
+    # --- settings ---------------------------------------------------------
+
+    def action_settings(self) -> None:
+        current = ThemeName(self.app.theme)
+        self.app.push_screen(SettingsScreen(current), self._on_settings)
+
+    def _on_settings(self, theme: ThemeName | None) -> None:
+        if theme is None:
+            return
+        self.app.theme = theme.value
+        save_theme(theme)
+        self.status = BROWSING
+
+    def action_cheatsheet(self) -> None:
+        self.app.push_screen(CheatsheetScreen())
+
+    # --- filter -----------------------------------------------------------
+
+    def action_filter(self) -> None:
+        filter_input = self.query_one(FilterInput)
+        filter_input.value = self.filter
+        filter_input.can_focus = True
+        filter_input.display = True
+        self.query_one(StatusBar).display = False
+        filter_input.focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if isinstance(event.input, FilterInput):
+            self.filter = event.value
+            self.selected_id = self._first_visible()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if isinstance(event.input, FilterInput):
+            self._close_filter(keep=True)
+
+    def action_escape(self) -> None:
+        if self.query_one(FilterInput).display or self.filter:
+            self._close_filter(keep=False)
+
+    def _close_filter(self, *, keep: bool) -> None:
+        filter_input = self.query_one(FilterInput)
+        filter_input.display = False
+        filter_input.can_focus = False
+        self.query_one(StatusBar).display = True
+        self.set_focus(None)
+        if not keep:
+            self.filter = ""
+            filter_input.value = ""
+            self.selected_id = self._first_visible()
+        self.status = BROWSING
+
+    # --- lifecycle --------------------------------------------------------
+
+    def action_refresh(self) -> None:
+        self.reload()
+
+    def action_quit(self) -> None:
+        self.app.exit()
