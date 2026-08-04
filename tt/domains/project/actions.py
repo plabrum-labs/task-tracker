@@ -151,7 +151,6 @@ class AddIssue(ObjectAction[Project, schemas.AddIssuePayload]):
             body=payload.body or "",
             status=IssueStatus.TODO,
             priority=payload.priority or Priority.NORMAL,
-            status_note=None,
         )
         deps.tx.add(issue)
         deps.tx.flush()

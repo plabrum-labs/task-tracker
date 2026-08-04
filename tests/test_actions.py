@@ -91,7 +91,6 @@ def issue() -> Issue:
         body="",
         status=Status.TODO,
         priority=Priority.NORMAL,
-        status_note=None,
     )
 
 
@@ -118,7 +117,6 @@ def doing_issues(n: int) -> list[Issue]:
             body="",
             status=Status.DOING,
             priority=Priority.NORMAL,
-            status_note=None,
         )
         for i in range(n)
     ]
@@ -134,7 +132,6 @@ def _edit(**over: Any) -> issue_schemas.EditIssuePayload:
         "title": "a title",
         "body": "",
         "status": Status.TODO,
-        "status_note": None,
         "priority": Priority.NORMAL,
     }
     fields.update(over)
@@ -151,7 +148,6 @@ def test_every_issue_edit_is_always_offered() -> None:
                 body="",
                 status=status,
                 priority=priority,
-                status_note=None,
             )
             assert issue_actions.EditIssue.availability(seeded) == Runnable()
             assert issue_actions.Delete.availability(seeded) == Runnable()
@@ -169,7 +165,6 @@ def test_edit_sets_every_field_at_once(db: Engine) -> None:
             title=" new ",
             body="details",
             status=Status.DOING,
-            status_note="started",
             priority=Priority.HIGH,
         ),
     )
@@ -180,7 +175,6 @@ def test_edit_sets_every_field_at_once(db: Engine) -> None:
     assert read.title == "new"  # trimmed
     assert read.body == "details"
     assert read.status == Status.DOING
-    assert read.status_note == "started"
     assert read.priority == Priority.HIGH
 
 
@@ -190,38 +184,6 @@ def test_edit_trims_and_refuses_a_blank_title(db: Engine) -> None:
 
     with pytest.raises(Invalid):
         run_issue(db, issue_actions.EditIssue, seeded.id, _edit(title="   "))
-
-
-def test_edit_carries_whatever_status_note_the_payload_holds(db: Engine) -> None:
-    # A whole-object edit does not auto-clear the note on a status move: the note is
-    # just another field, so it follows the payload rather than the move.
-    tt = a_project(db, "tt")
-    seeded = an_issue(db, tt, "one")
-
-    run_issue(
-        db, issue_actions.EditIssue, seeded.id, _edit(status=Status.DOING, status_note="started")
-    )
-    with platform_db.reading(db) as s:
-        noted = issue_queries.get_issue(s, seeded.id)
-    assert noted is not None
-    assert noted.status == Status.DOING
-    assert noted.status_note == "started"
-
-    # A move carrying a note keeps it — no auto-clear.
-    run_issue(
-        db, issue_actions.EditIssue, seeded.id, _edit(status=Status.DONE, status_note="finished")
-    )
-    with platform_db.reading(db) as s:
-        kept = issue_queries.get_issue(s, seeded.id)
-    assert kept is not None
-    assert kept.status_note == "finished"
-
-    # A move carrying None clears it — the payload said so.
-    run_issue(db, issue_actions.EditIssue, seeded.id, _edit(status=Status.TODO))
-    with platform_db.reading(db) as s:
-        cleared = issue_queries.get_issue(s, seeded.id)
-    assert cleared is not None
-    assert cleared.status_note is None
 
 
 def test_delete_hides_an_issue(db: Engine) -> None:
@@ -494,6 +456,14 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
             db,
             "edit",
             {"title": "x", "body": "", "status": "archived", "priority": "normal"},
+            made.id,
+        )
+    # ``status_note`` is gone from the issue edit, so sending it is an extra field.
+    with pytest.raises(Invalid):
+        issue_api.issue_action(
+            db,
+            "edit",
+            {"title": "x", "body": "", "status": "todo", "priority": "normal", "status_note": "x"},
             made.id,
         )
     # An issue status, and an issue-only field, through the project's edit.

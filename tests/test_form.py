@@ -15,6 +15,7 @@ from sqlalchemy import Engine
 from conftest import a_project, an_issue
 from tt.domains.issue import api as issue_api
 from tt.domains.issue import schemas as issue_schemas
+from tt.domains.project import api as project_api
 from tt.domains.project import schemas as project_schemas
 from tt.platform.actions import Empty, Enum, Field, Invalid, OptionalText, Text, fields_of, payload
 
@@ -43,12 +44,6 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
             required=True,
             kind=Enum(["todo", "doing", "done"]),
             description="Where the issue is up to.",
-        ),
-        Field(
-            name="status_note",
-            required=False,
-            kind=OptionalText(),
-            description="What to record about the move.",
         ),
         Field(
             name="priority",
@@ -82,30 +77,27 @@ def test_a_field_the_form_cannot_render_fails_the_whole_form() -> None:
 
 
 def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engine) -> None:
-    fields = fields_of(issue_schemas.EditIssuePayload)
-    values = [
-        (fields[0], "keep"),  # title
-        (fields[1], ""),  # body
-        (fields[2], "doing"),  # status
-        (fields[3], ""),  # status_note — the blank optional
-        (fields[4], "normal"),  # priority
-    ]
-    built = payload(values)
-    assert built == {
-        "title": "keep",
-        "body": "",
-        "status": "doing",
-        "status_note": None,
-        "priority": "normal",
-    }
+    # ``addIssue``'s optional ``body`` is the ``OptionalText`` whose blank state is a
+    # real ``null`` rather than a withheld field.
+    fields = fields_of(project_schemas.AddIssuePayload)
+    assert fields[1].kind == OptionalText()  # body
+    built = payload(
+        [
+            (fields[0], "triage inbox"),  # title
+            (fields[1], ""),  # body — the blank optional
+            (fields[2], "normal"),  # priority
+        ]
+    )
+    assert built == {"title": "triage inbox", "body": None, "priority": "normal"}
 
     # And the decoder accepts exactly that: the dispatch writes, so reading the
-    # issue back shows the null cleared the note.
-    _seeded(db)
-    _dispatch_issue(db, "edit", built)
-    issue = issue_api.issue_get(db, 1)
+    # created issue back shows the null body defaulted to blank.
+    a_project(db, "tt")
+    response = project_api.project_action(db, "addIssue", built, "tt")
+    assert response.created_id is not None
+    issue = issue_api.issue_get(db, response.created_id)
     assert issue is not None
-    assert issue.status_note is None
+    assert issue.body == ""
 
 
 def test_a_blank_required_text_field_is_submitted_and_refused(db: Engine) -> None:
@@ -117,8 +109,7 @@ def test_a_blank_required_text_field_is_submitted_and_refused(db: Engine) -> Non
             (fields[0], ""),
             (fields[1], ""),
             (fields[2], "todo"),
-            (fields[3], ""),
-            (fields[4], "normal"),
+            (fields[3], "normal"),
         ]
     )
     assert built["title"] == ""
@@ -131,4 +122,4 @@ def test_text_and_enum_are_the_two_controls_a_field_derives() -> None:
     # The kind is what ``tui`` reads to choose between a text box and a selector.
     fields = fields_of(issue_schemas.EditIssuePayload)
     assert fields[0].kind == Text()  # title
-    assert fields[4].kind == Enum(["normal", "high"])  # priority
+    assert fields[3].kind == Enum(["normal", "high"])  # priority

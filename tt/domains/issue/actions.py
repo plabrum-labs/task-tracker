@@ -2,9 +2,9 @@
 
 One action is one class: its object type, its key, its label, its two hooks and
 its ``execute``, which holds the deps and mutates the loaded row — an edit sets
-columns, a delete stamps ``deleted_at``. The flush is the group's, once, so an
-``execute`` only says what it changed. The payload shapes are in ``schemas``, one
-model per action.
+every editable column, a delete stamps ``deleted_at``. The flush is the group's,
+once, so an ``execute`` only says what it changed. The payload shapes are in
+``schemas``, one model per action.
 
 Neither the edit nor the delete refuses anything. Many issues may be ``doing`` at
 once, there is no WIP rule, so both hooks are the default in every case and the
@@ -31,8 +31,7 @@ issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.get_issu
 @issue_actions
 class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
     # One whole-object edit: the payload carries every editable field and each is
-    # set. ``status_note`` is just another field the caller controls, so a status
-    # move that carries no note clears it and a move that carries one keeps it.
+    # set. Status rides along here like any other field.
     KEY = "edit"
     LABEL = "Edit"
     Payload = schemas.EditIssuePayload
@@ -48,7 +47,6 @@ class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
         obj.title = title
         obj.body = payload.body
         obj.status = payload.status
-        obj.status_note = payload.status_note
         obj.priority = payload.priority
         return ActionResponse(message=f"{obj.subject()}: saved")
 

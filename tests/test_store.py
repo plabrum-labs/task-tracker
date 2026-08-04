@@ -111,25 +111,16 @@ def test_an_update_writes_the_editable_columns_and_leaves_the_rest(db: Engine) -
         issue.body = "why"
         issue.status = Status.DOING
         issue.priority = Priority.HIGH
-        issue.status_note = "started"
 
     with platform_db.reading(db) as s:
         read = issue_queries.get_issue(s, made.id)
     assert read is not None
     assert read.title == "renamed"
-    assert read.status_note == "started"
+    assert read.body == "why"
+    assert read.status == Status.DOING
+    assert read.priority == Priority.HIGH
     assert read.created_at == made.created_at
     assert read.project_id == made.project_id
-
-    # A nullable column has one write path: clearing it writes NULL.
-    with platform_db.transaction(db) as tx:
-        issue = issue_queries.get_issue(tx, made.id)
-        assert issue is not None
-        issue.status_note = None
-    with platform_db.reading(db) as s:
-        cleared = issue_queries.get_issue(s, made.id)
-    assert cleared is not None
-    assert cleared.status_note is None
 
 
 # --- soft deletes ---------------------------------------------------------

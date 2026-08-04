@@ -40,7 +40,6 @@ class Issue(BaseDBModel):
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[Status] = mapped_column(TextEnum(Status))
     priority: Mapped[Priority] = mapped_column(IntEnum(Priority))
-    status_note: Mapped[str | None] = mapped_column(Text, default=None)
 
     project: Mapped[Project] = relationship(back_populates="issues", lazy="raise")
 

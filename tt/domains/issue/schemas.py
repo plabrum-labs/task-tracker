@@ -41,15 +41,14 @@ WirePriority = Annotated[
 
 class EditIssuePayload(BaseModel):
     # The whole editable issue, sent at once: the caller reads the object, changes
-    # what it likes, and sends it back. ``status_note`` is named for the
-    # ``IssueDetail`` attribute so a form seeding from a detail is a uniform
-    # ``detail[field.name]`` lookup.
+    # what it likes, and sends it back. Each field is named for its ``IssueDetail``
+    # attribute so a form seeding from a detail is a uniform ``detail[field.name]``
+    # lookup.
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(description="What to call the issue.")
     body: str = Field(description="The issue's description. Blank clears it.")
     status: Status = Field(description="Where the issue is up to.")
-    status_note: str | None = Field(default=None, description="What to record about the move.")
     priority: WirePriority = Field(description="How far up the list the issue sorts.")
 
 
@@ -68,6 +67,5 @@ class IssueDetail(BaseModel):
     body: str
     status: str
     priority: str
-    status_note: str | None
     created_at: datetime
     updated_at: datetime

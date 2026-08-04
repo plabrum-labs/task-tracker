@@ -38,7 +38,6 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
         body=issue.body,
         status=name_of(issue.status),
         priority=name_of(issue.priority),
-        status_note=issue.status_note,
         created_at=issue.created_at,
         updated_at=issue.updated_at,
     )
