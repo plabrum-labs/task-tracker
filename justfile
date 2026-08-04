@@ -1,77 +1,50 @@
-# Path to the SQLite store the db-* recipes operate on. Absolute, because the
-# db-* recipes run from backend/ and a relative TT_DB would resolve there.
-db := absolute_path(env("TT_DB", "tt.db"))
-
 default:
     @just --list
 
-# Format all Go source.
-format:
-    go tool golangci-lint fmt ./...
+# Install the environment from the lockfile.
+sync:
+    uv sync
 
-# Formatting, go vet and the enabled linters. See .golangci.yml.
-lint:
-    go tool golangci-lint run ./...
-
-# Build all packages.
-build:
-    go build ./...
-
-# Unit tests.
+# The domain, the wire, the frontends, and the SQL edge against real SQLite.
 test:
-    go test ./...
+    uv run pytest
 
-# Unit tests under the race detector.
-test-race:
-    go test -race ./...
+# The erased path from outside: the offers, their schemas, then one dispatch.
+show:
+    uv run python -m tt.frontend.show
 
-# Regenerate ent. Run after editing backend/internal/ent/schema/, and commit the result.
-generate:
-    go generate ./backend/internal/ent
-
-# The db-* recipes run from backend/, where atlas.hcl lives. Atlas's ent loader
-# writes a temp package into .entc/ in the working directory, and from the
-# repository root that package cannot import backend/internal/ent/schema.
-# migrations/ stays at the root; atlas.hcl reaches it as ../migrations.
-
-# Generate a new versioned migration from the current ent schema.
-db-migrate name:
-    cd backend && atlas migrate diff --env local {{ name }}
-
-# Apply every pending migration to the store.
-db-upgrade:
-    cd backend && atlas migrate apply --env local --url "sqlite://{{ db }}"
-
-# Which migrations the store has applied, and what is pending.
-db-status:
-    cd backend && atlas migrate status --env local --url "sqlite://{{ db }}"
-
-# Tests build their schema with Schema.Create rather than by replaying
-# migrations/, so a forgotten db-migrate breaks nothing until someone opens a
-# real database. This is what catches it.
+# A refusal exits 123 — it is the object's answer, not a usage error.
 #
-# `migrate diff` exits 0 whether or not it found a difference — the difference
-# is a file it wrote — so the file is the signal. Writing one also rewrites
-# atlas.sum, hence the hash on the way out.
+#     just cli project ls
+#     just cli issue show 1
+#     just cli issue editStatus 1 --status doing --note started
+#     just cli issue action 1 editStatus '{"status":"doing"}'
 
-# Fail if the ent schema has drifted from migrations/.
-db-check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd backend
-    atlas migrate diff --env local drift_check
-    shopt -s nullglob
-    drift=(../migrations/*_drift_check.sql)
-    if (( ${#drift[@]} )); then
-        rm -f "${drift[@]}"
-        atlas migrate hash --env local
-        echo "the ent schema has drifted from migrations/ — run 'just db-migrate <name>'" >&2
-        exit 1
-    fi
+# The command line, over the same groups. Takes a subcommand.
+cli *args:
+    uv run tt-cli {{ args }}
 
-# Full verification. A change is not complete until this passes.
-verify: lint build test
+# The terminal UI. Up/down to move, enter to pick, esc to go back, q to quit.
+tui:
+    uv run tt-tui
 
-# Install the git hooks. Run once per clone.
-hooks:
-    pre-commit install --hook-type pre-commit --hook-type pre-push
+# Author a migration from a change to the models (autogenerate against the
+# default database, so upgrade it to head first).
+db-revision message:
+    uv run alembic revision --autogenerate -m "{{ message }}"
+
+# Bring the default database up to the latest schema.
+db-upgrade:
+    uv run alembic upgrade head
+
+# Ruff's formatter over the tree. Rewrites files, so it is not part of verify.
+format:
+    uv run ruff format
+
+# Ruff's linter and basedpyright.
+lint:
+    uv run ruff check
+    uv run basedpyright
+
+# Lints, and tests. Mirrors the root justfile's verify.
+verify: lint test

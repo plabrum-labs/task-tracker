@@ -10,7 +10,7 @@ repos:
         name: just format
         entry: just format
         language: system
-        types: [go]
+        types: [python]
         pass_filenames: false
         stages: [pre-commit]
 
@@ -18,15 +18,7 @@ repos:
         name: just lint
         entry: just lint
         language: system
-        types: [go]
-        pass_filenames: false
-        stages: [pre-commit]
-
-      - id: build
-        name: just build
-        entry: just build
-        language: system
-        types: [go]
+        types: [python]
         pass_filenames: false
         stages: [pre-commit]
 

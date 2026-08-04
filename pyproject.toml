@@ -38,6 +38,9 @@ testpaths = ["tests"]
 src = ["src", "tests"]
 target-version = "py312"
 line-length = 100
+# Throwaway TUI prototype kept for reference; superseded by src/tt/frontend/tui.py.
+# Excluded from lint until it is promoted into src/tt or removed.
+extend-exclude = ["tui_spike.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

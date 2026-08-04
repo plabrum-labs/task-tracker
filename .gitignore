@@ -1,7 +1,19 @@
-/tt
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# uv / virtualenv
+.venv/
+
+# Packaging
+*.egg-info/
+build/
+dist/
+
+# The tracker's own database (the default TT_DB target)
+tt.db
 *.db
 *.db-wal
 *.db-shm
-
-/spikes/ocaml/_build/
-/spikes/rust/target/

@@ -1,5 +1,0 @@
-(executables
- (names show cli tui)
- (libraries tt yojson cmdliner notty-community.unix)
- (flags
-  (:standard -warn-error +8)))
