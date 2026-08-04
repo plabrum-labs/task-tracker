@@ -15,6 +15,7 @@ _CHEATS: list[tuple[str, str]] = [
     ("h / l", "columns (board)"),
     ("tab", "cycle layout"),
     ("[ / ]", "prev / next project"),
+    ("enter", "read detail (esc to leave)"),
     ("x / space", "issue actions"),
     ("X", "project actions"),
     (":", "command palette"),

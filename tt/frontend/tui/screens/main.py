@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import Engine
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Input
@@ -54,20 +55,24 @@ from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.screens.settings import SettingsScreen
 from tt.frontend.tui.theme import save_theme
 from tt.frontend.tui.widgets.body import Body
+from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
 from tt.frontend.tui.widgets.topbar import TopBar
 from tt.platform.actions import REFUSALS, Refused
 from tt.platform.config import ThemeName
 
-BROWSING = "j/k move · s status · x actions · / filter · ? keys · q quit"
+BROWSING = "j/k move · enter open · x actions · s status · / filter · ? keys · q quit"
+READING = "j/k scroll · esc back"
 
 
 class MainScreen(Screen[None]):
     """The browse screen. Assigns reactives; watchers repaint TopBar/Body/StatusBar."""
 
     # Browse mode holds no focus, so every keystroke reaches the bindings below rather
-    # than being typed into a widget; ``/`` focuses the filter, and closing it blurs.
-    AUTO_FOCUS = None
+    # than being typed into a widget; ``/`` focuses the filter and ``enter`` the detail
+    # pane, and leaving either blurs. The empty selector disables auto-focus outright:
+    # ``None`` would inherit the app's ``*`` and grab the focusable detail pane on mount.
+    AUTO_FOCUS = ""
 
     BINDINGS = [
         Binding("j,down", "move_down", "down", show=False),
@@ -81,7 +86,8 @@ class MainScreen(Screen[None]):
         Binding("tab", "cycle_layout", "layout", show=False),
         Binding("left_square_bracket", "prev_project", "prev project", show=False),
         Binding("right_square_bracket", "next_project", "next project", show=False),
-        Binding("enter,x,space", "issue_menu", "actions", show=False),
+        Binding("enter", "focus_detail", "detail", show=False),
+        Binding("x,space", "issue_menu", "actions", show=False),
         Binding("X", "project_menu", "project actions", show=False),
         Binding("colon", "palette", "commands", show=False),
         Binding("P", "switcher", "switch project", show=False),
@@ -113,7 +119,9 @@ class MainScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield TopBar(id="topbar")
-        yield Body(id="body")
+        with Horizontal(id="content"):
+            yield Body(id="body")
+            yield DetailPane(id="detail")
         yield StatusBar(id="statusbar")
         yield FilterInput(id="filter", placeholder="filter")
 
@@ -153,12 +161,17 @@ class MainScreen(Screen[None]):
         self.projects = projects
         self.issues = issues
         self.selected_id = surviving_id(self._visible(), self.selected_id, fallback)
+        # An edit that leaves the selection where it was does not fire the id watcher,
+        # so repaint the detail here to reflect the write behind the reload.
+        if self._ready:
+            self._paint_detail()
 
     # --- painting ---------------------------------------------------------
 
     def _paint_all(self) -> None:
         self._paint_topbar()
         self._paint_body()
+        self._paint_detail()
         self._paint_footer()
 
     def _paint_topbar(self) -> None:
@@ -172,6 +185,11 @@ class MainScreen(Screen[None]):
         body.view_layout = self.view_layout
         body.issues = self._visible()
         body.selected_id = self.selected_id
+
+    def _paint_detail(self) -> None:
+        issue = self._selected_issue()
+        detail = issue_api.issue_get(self.engine, issue.id) if issue is not None else None
+        self.query_one(DetailPane).detail = detail
 
     def _paint_footer(self) -> None:
         self.query_one(StatusBar).show(self.status)
@@ -198,6 +216,7 @@ class MainScreen(Screen[None]):
     def watch_selected_id(self) -> None:
         if self._ready:
             self.query_one(Body).selected_id = self.selected_id
+            self._paint_detail()
 
     def watch_filter(self) -> None:
         if self._ready:
@@ -266,6 +285,16 @@ class MainScreen(Screen[None]):
         self.reload()
 
     # --- overlays ---------------------------------------------------------
+
+    def action_focus_detail(self) -> None:
+        # Enter drills into the selected issue: move focus into the always-present
+        # detail pane so its ``j``/``k`` scroll a body taller than the pane. Escape
+        # returns to browse. No selection means nothing to read.
+        if self._selected_issue() is None:
+            self.status = "no issue selected"
+            return
+        self.set_focus(self.query_one(DetailPane))
+        self.status = READING
 
     def action_issue_menu(self) -> None:
         issue = self._selected_issue()
@@ -445,6 +474,12 @@ class MainScreen(Screen[None]):
             self._close_filter(keep=True)
 
     def action_escape(self) -> None:
+        # Escape leaves the detail pane back to browse before it touches the filter,
+        # so reading an issue and then backing out does not also clear a live filter.
+        if isinstance(self.focused, DetailPane):
+            self.set_focus(None)
+            self.status = BROWSING
+            return
         if self.query_one(FilterInput).display or self.filter:
             self._close_filter(keep=False)
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import Engine
-from textual.widgets import Input, OptionList
+from textual.widgets import Input, OptionList, Static
 
 from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
@@ -20,6 +20,7 @@ from tt.frontend.tui.screens.form import FormScreen
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.widgets.body import Card, IssueRow
+from tt.frontend.tui.widgets.detail import DetailPane
 from tt.platform.config import ThemeName
 
 
@@ -125,6 +126,50 @@ async def test_s_cycles_the_selected_issue_status_and_keeps_the_selection(seeded
             moved = issue_api.issue_get(seeded, selected)
             assert moved is not None
             assert moved.status == expected  # advanced one step and persisted
+
+
+async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_cursor(
+    seeded: Engine,
+) -> None:
+    # Give the first issue a body; the pane is the only place a body is shown.
+    first = issue_api.issue_list(seeded, "tt")[0]
+    issue_api.issue_action(
+        seeded,
+        "edit",
+        {
+            "title": first.title,
+            "body": "the parser drops trailing commas",
+            "status": first.status,
+            "priority": first.priority,
+        },
+        first.id,
+    )
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        # Browse mode holds no focus even though the pane is focusable, so the first
+        # j/k moves the list rather than scrolling the pane.
+        assert app.focused is None
+        assert _main(app).selected_id == first.id
+        assert pane.detail is not None and pane.detail.id == first.id
+        rendered = " ".join(str(widget.render()) for widget in pane.query(Static))
+        assert "the parser drops trailing commas" in rendered  # the body is on screen
+
+        # Enter drills in: focus moves into the pane so a long body can be scrolled.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.focused is pane
+        # Escape backs out to browse, leaving no widget focused.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.focused is None
+
+        # The pane tracks the cursor: moving down shows the next issue's detail.
+        await pilot.press("j")
+        await pilot.pause()
+        second = issue_api.issue_list(seeded, "tt")[1]
+        assert pane.detail is not None and pane.detail.id == second.id
 
 
 async def test_board_only_appears_at_width_90(seeded: Engine) -> None:
