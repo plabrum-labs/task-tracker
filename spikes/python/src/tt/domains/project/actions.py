@@ -33,7 +33,7 @@ from tt.platform.actions import (
     TopLevelAction,
 )
 
-project_actions: ActionGroup[Project] = ActionGroup("project", locate=queries.by_slug)
+project_actions: ActionGroup[Project] = ActionGroup("project", locate=queries.get_project)
 
 
 def _issues(n: int) -> str:

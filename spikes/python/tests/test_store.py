@@ -58,14 +58,14 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
     for title in ["a", "b", "c"]:
         an_issue(db, tt, title)
     with platform_db.reading(db) as s:
-        first = issue_queries.for_project(s, "tt")[0]
+        first = issue_queries.list_issues(s, "tt")[0]
     with platform_db.transaction(db) as tx:
-        issue = issue_queries.get(tx, first.id)
+        issue = issue_queries.get_issue(tx, first.id)
         assert issue is not None
         issue.status = Status.DOING
 
     with platform_db.reading(db) as s:
-        loaded = project_queries.by_slug(s, "tt")
+        loaded = project_queries.get_project(s, "tt")
     assert loaded is not None
     assert (loaded.todo, loaded.doing, loaded.done) == (2, 1, 0)
     assert loaded.issue_count() == 3
@@ -73,7 +73,7 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
     # A project with nothing under it still gets zeroes rather than nothing.
     empty = a_project(db, "empty")
     with platform_db.reading(db) as s:
-        reloaded = project_queries.by_slug(s, empty.slug)
+        reloaded = project_queries.get_project(s, empty.slug)
     assert reloaded is not None
     assert (reloaded.todo, reloaded.doing, reloaded.done) == (0, 0, 0)
 
@@ -93,7 +93,7 @@ def test_issues_come_back_high_priority_first_then_oldest_first(db: Engine) -> N
     ]:
         an_issue(db, tt, title, priority)
     with platform_db.reading(db) as s:
-        issues = issue_queries.for_project(s, "tt")
+        issues = issue_queries.list_issues(s, "tt")
     assert _titles(issues) == ["second", "third", "first"]
 
 
@@ -105,7 +105,7 @@ def test_an_update_writes_the_editable_columns_and_leaves_the_rest(db: Engine) -
     made = an_issue(db, tt, "first")
 
     with platform_db.transaction(db) as tx:
-        issue = issue_queries.get(tx, made.id)
+        issue = issue_queries.get_issue(tx, made.id)
         assert issue is not None
         issue.title = "renamed"
         issue.body = "why"
@@ -114,7 +114,7 @@ def test_an_update_writes_the_editable_columns_and_leaves_the_rest(db: Engine) -
         issue.status_note = "started"
 
     with platform_db.reading(db) as s:
-        read = issue_queries.get(s, made.id)
+        read = issue_queries.get_issue(s, made.id)
     assert read is not None
     assert read.title == "renamed"
     assert read.status_note == "started"
@@ -123,11 +123,11 @@ def test_an_update_writes_the_editable_columns_and_leaves_the_rest(db: Engine) -
 
     # A nullable column has one write path: clearing it writes NULL.
     with platform_db.transaction(db) as tx:
-        issue = issue_queries.get(tx, made.id)
+        issue = issue_queries.get_issue(tx, made.id)
         assert issue is not None
         issue.status_note = None
     with platform_db.reading(db) as s:
-        cleared = issue_queries.get(s, made.id)
+        cleared = issue_queries.get_issue(s, made.id)
     assert cleared is not None
     assert cleared.status_note is None
 
@@ -146,51 +146,51 @@ def test_deleting_a_project_hides_its_issues(db: Engine) -> None:
 
     # One issue deleted in its own right, before the project goes.
     with platform_db.transaction(db) as tx:
-        issue = issue_queries.get(tx, doomed.id)
+        issue = issue_queries.get_issue(tx, doomed.id)
         assert issue is not None
         _stamp(issue)
     with platform_db.reading(db) as s:
-        assert _titles(issue_queries.for_project(s, "tt")) == ["kept"]
+        assert _titles(issue_queries.list_issues(s, "tt")) == ["kept"]
 
     # Deleting the project hides it and every live issue under it — one soft delete
     # on the way out, and every read filters the stamp so the rows simply vanish.
     with platform_db.transaction(db) as tx:
-        project = project_queries.by_slug(tx, "tt")
+        project = project_queries.get_project(tx, "tt")
         assert project is not None
         _stamp(project)
     with platform_db.reading(db) as s:
-        assert project_queries.by_slug(s, "tt") is None
-        assert issue_queries.for_project(s, "tt") == []
-        assert issue_queries.get(s, doomed.id) is None
+        assert project_queries.get_project(s, "tt") is None
+        assert issue_queries.list_issues(s, "tt") == []
+        assert issue_queries.get_issue(s, doomed.id) is None
 
 
 def test_an_issue_can_be_deleted_on_its_own(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "gone")
     with platform_db.transaction(db) as tx:
-        issue = issue_queries.get(tx, made.id)
+        issue = issue_queries.get_issue(tx, made.id)
         assert issue is not None
         _stamp(issue)
 
     # The stamp is the issue's own, so it drops out of its live project's reads
     # while the project stays.
     with platform_db.reading(db) as s:
-        assert project_queries.by_slug(s, "tt") is not None
-        assert issue_queries.for_project(s, "tt") == []
-        assert issue_queries.get(s, made.id) is None
+        assert project_queries.get_project(s, "tt") is not None
+        assert issue_queries.list_issues(s, "tt") == []
+        assert issue_queries.get_issue(s, made.id) is None
 
 
 def test_a_slug_is_reusable_once_its_project_is_deleted(db: Engine) -> None:
     first = a_project(db, "tt")
     with platform_db.transaction(db) as tx:
-        project = project_queries.by_slug(tx, "tt")
+        project = project_queries.get_project(tx, "tt")
         assert project is not None
         _stamp(project)
 
     second = a_project(db, "tt")
     assert second.id != first.id
     with platform_db.reading(db) as s:
-        assert [p.slug for p in project_queries.live(s)] == ["tt"]
+        assert [p.slug for p in project_queries.list_projects(s)] == ["tt"]
 
 
 # --- the assertion the OCaml side cannot make -----------------------------
@@ -218,20 +218,20 @@ def test_the_enum_round_trips_through_the_column_it_is_stored_in(db: Engine) -> 
     ]:
         made = an_issue(db, tt, title, priority)
         with platform_db.transaction(db) as tx:
-            issue = issue_queries.get(tx, made.id)
+            issue = issue_queries.get_issue(tx, made.id)
             assert issue is not None
             issue.status = status
         with platform_db.reading(db) as s:
-            read = issue_queries.get(s, made.id)
+            read = issue_queries.get_issue(s, made.id)
         assert read is not None
         assert read.status == status
         assert read.priority == priority
 
     with platform_db.transaction(db) as tx:
-        project = project_queries.by_slug(tx, "tt")
+        project = project_queries.get_project(tx, "tt")
         assert project is not None
         project.status = ProjectStatus.ARCHIVED
     with platform_db.reading(db) as s:
-        archived = project_queries.by_slug(s, "tt")
+        archived = project_queries.get_project(s, "tt")
     assert archived is not None
     assert archived.status == ProjectStatus.ARCHIVED

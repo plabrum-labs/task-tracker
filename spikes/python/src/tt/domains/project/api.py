@@ -49,19 +49,19 @@ def _detail(project: Project) -> schemas.ProjectDetail:
 
 @with_transaction
 def project_list(tx: Session) -> list[schemas.ProjectListItem]:
-    return [_list_item(project) for project in queries.live(tx)]
+    return [_list_item(project) for project in queries.list_projects(tx)]
 
 
 @with_transaction
 def project_get(tx: Session, slug: str) -> schemas.ProjectDetail | None:
-    project = queries.by_slug(tx, slug)
+    project = queries.get_project(tx, slug)
     return _detail(project) if project is not None else None
 
 
 @with_transaction
 def project_detail(tx: Session, slug: str) -> tuple[schemas.ProjectDetail, list[Offer]]:
     """A project and what it offers, for a detail view."""
-    project = queries.by_slug(tx, slug)
+    project = queries.get_project(tx, slug)
     if project is None:
         raise Invalid(f"no project {slug!r}")
     return _detail(project), project_actions.offers(project)

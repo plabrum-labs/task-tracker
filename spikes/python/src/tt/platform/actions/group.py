@@ -1,8 +1,8 @@
 """A group of actions over one kind of object, and the dispatch through it.
 
 A group is created with a name and a ``locate`` — the one callable that turns an
-address into the live row an action runs against, ``queries.by_slug`` for a
-project or ``queries.get`` for an issue, so slug-versus-int lives in one place and
+address into the live row an action runs against, ``queries.get_project`` for a
+project or ``queries.get_issue`` for an issue, so slug-versus-int lives in one place and
 not in every write. Each action registers by decorating itself with the group.
 
 ``trigger`` is the single write path: it finds the action by key, and for an

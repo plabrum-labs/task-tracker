@@ -30,7 +30,7 @@ def db() -> Engine:
 def a_project(engine: Engine, slug: str) -> Project:
     project_api.project_action(engine, "createProject", {"slug": slug, "title": slug})
     with platform_db.reading(engine) as session:
-        project = project_queries.by_slug(session, slug)
+        project = project_queries.get_project(session, slug)
         assert project is not None
         return project
 
@@ -43,6 +43,6 @@ def an_issue(
     )
     assert response.created_id is not None
     with platform_db.reading(engine) as session:
-        issue = issue_queries.get(session, response.created_id)
+        issue = issue_queries.get_issue(session, response.created_id)
         assert issue is not None
         return issue

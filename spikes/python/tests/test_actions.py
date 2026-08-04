@@ -57,7 +57,7 @@ def run_issue[P: BaseModel](
     engine: Engine, action: type[ObjectAction[Issue, P]], issue_id: int, payload: P
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
-        obj = issue_queries.get(tx, issue_id)
+        obj = issue_queries.get_issue(tx, issue_id)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -66,7 +66,7 @@ def run_project[P: BaseModel](
     engine: Engine, action: type[ObjectAction[Project, P]], slug: str, payload: P
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
-        obj = project_queries.by_slug(tx, slug)
+        obj = project_queries.get_project(tx, slug)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -155,7 +155,7 @@ def test_edit_title_trims_saves_and_refuses_a_blank_title(db: Engine) -> None:
     )
     assert response.message == "issue 1: saved"
     with platform_db.reading(db) as s:
-        read = issue_queries.get(s, seeded.id)
+        read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
     assert read.title == "new"
 
@@ -171,7 +171,7 @@ def test_edit_body_accepts_the_blank_that_edit_title_refuses(db: Engine) -> None
 
     run_issue(db, issue_actions.EditBody, seeded.id, issue_schemas.EditBodyPayload(body=""))
     with platform_db.reading(db) as s:
-        read = issue_queries.get(s, seeded.id)
+        read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
     assert read.body == ""
 
@@ -187,7 +187,7 @@ def test_edit_status_replaces_the_note_it_arrived_with(db: Engine) -> None:
         issue_schemas.EditStatusPayload(status=Status.DOING, note="started"),
     )
     with platform_db.reading(db) as s:
-        noted = issue_queries.get(s, seeded.id)
+        noted = issue_queries.get_issue(s, seeded.id)
     assert noted is not None
     assert noted.status == Status.DOING
     assert noted.status_note == "started"
@@ -200,7 +200,7 @@ def test_edit_status_replaces_the_note_it_arrived_with(db: Engine) -> None:
         issue_schemas.EditStatusPayload(status=Status.DONE, note=None),
     )
     with platform_db.reading(db) as s:
-        cleared = issue_queries.get(s, seeded.id)
+        cleared = issue_queries.get_issue(s, seeded.id)
     assert cleared is not None
     assert cleared.status_note is None
 
@@ -216,7 +216,7 @@ def test_edit_priority_sets_the_priority(db: Engine) -> None:
         issue_schemas.EditPriorityPayload(priority=Priority.HIGH),
     )
     with platform_db.reading(db) as s:
-        read = issue_queries.get(s, seeded.id)
+        read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
     assert read.priority == Priority.HIGH
 
@@ -228,7 +228,7 @@ def test_delete_hides_an_issue(db: Engine) -> None:
     response = run_issue(db, issue_actions.Delete, seeded.id, Empty())
     assert response.message == "issue 1: deleted"
     with platform_db.reading(db) as s:
-        assert issue_queries.get(s, seeded.id) is None
+        assert issue_queries.get_issue(s, seeded.id) is None
 
 
 # --- projects: the half with preconditions --------------------------------
@@ -262,7 +262,7 @@ def test_edit_status_is_runnable_once_nothing_is_doing(db: Engine) -> None:
     )
     assert response.message == "project tt: saved"
     with platform_db.reading(db) as s:
-        read = project_queries.by_slug(s, "tt")
+        read = project_queries.get_project(s, "tt")
     assert read is not None
     assert read.status == ProjectStatus.ARCHIVED
 
@@ -275,17 +275,17 @@ def test_delete_is_refused_while_the_project_is_active(db: Engine) -> None:
 
     # Archive it, and it goes.
     with platform_db.transaction(db) as tx:
-        current = project_queries.by_slug(tx, "tt")
+        current = project_queries.get_project(tx, "tt")
         assert current is not None
         current.status = ProjectStatus.ARCHIVED
     with platform_db.reading(db) as s:
-        archived = project_queries.by_slug(s, "tt")
+        archived = project_queries.get_project(s, "tt")
     assert archived is not None
     assert project_actions.Delete.availability(archived) == Runnable()
     response = run_project(db, project_actions.Delete, "tt", Empty())
     assert response.message == "project tt: deleted"
     with platform_db.reading(db) as s:
-        assert project_queries.by_slug(s, "tt") is None
+        assert project_queries.get_project(s, "tt") is None
 
 
 def test_add_issue_is_refused_while_the_project_is_archived(db: Engine) -> None:
@@ -311,7 +311,7 @@ def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
     assert response.message == "issue 1: created"
     assert response.created_id == 1
     with platform_db.reading(db) as s:
-        created = issue_queries.for_project(s, "tt")[0]
+        created = issue_queries.list_issues(s, "tt")[0]
     assert created.title == "ship it"
     assert created.body == ""
     assert created.priority == Priority.NORMAL
@@ -339,7 +339,7 @@ def test_create_project_refuses_a_slug_the_live_list_already_holds(db: Engine) -
         )
     assert response.message == "project other: created"
     with platform_db.reading(db) as s:
-        made = project_queries.by_slug(s, "other")
+        made = project_queries.get_project(s, "other")
     assert made is not None
     assert made.title == "another"
 

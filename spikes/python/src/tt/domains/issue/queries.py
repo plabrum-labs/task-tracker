@@ -1,10 +1,9 @@
-"""Reads against the issues table.
+"""Reads against the issues table: the live list for a project, and one by id.
 
 Every read joins the project and loads it onto the issue with ``contains_eager``,
 so an issue's slug is there once the session closes and no read costs a query per
 row. Liveness is carried by construction: an issue is live when its own
-``deleted_at`` is null, and ``for_project`` and ``get`` add that its project is
-live too.
+``deleted_at`` is null, and both reads add that its project is live too.
 """
 
 from sqlalchemy import select
@@ -21,7 +20,7 @@ _loaded = (
 )
 
 
-def for_project(db: Session, project_slug: str) -> list[Issue]:
+def list_issues(db: Session, project_slug: str) -> list[Issue]:
     """Live issues of a live project, high priority first then oldest first."""
     stmt = _loaded.where(
         Issue.deleted_at.is_(None),
@@ -31,7 +30,8 @@ def for_project(db: Session, project_slug: str) -> list[Issue]:
     return list(db.scalars(stmt))
 
 
-def get(db: Session, issue_id: int) -> Issue | None:
+def get_issue(db: Session, issue_id: int) -> Issue | None:
+    """The one live issue of a live project by id, or ``None``."""
     stmt = _loaded.where(
         Issue.deleted_at.is_(None),
         Project.deleted_at.is_(None),

@@ -11,14 +11,22 @@ frontend stays: `issue_api` / `project_api` are the only calls we make.
 
 ## What we keep
 
-- **The api surface is the whole contract.** Reads: `issue_api.list_issues`,
-  `issue_api.show` → `(IssueDetail, list[Offer])`, `project_api.list_projects`,
-  `project_api.show`, `project_api.root_offers`. Writes: `issue_api.run`,
-  `project_api.run`, `project_api.run_root`. Refusals: catch `REFUSALS`.
-- **`Offer` is the menu.** `Offer(key, state: Runnable | Refused(reason), fields:
-  list[Field])`. A menu row *is* an offer: runnable ones are selectable, refused
-  ones greyed with `reason`. Nothing in the frontend names an action key to build
-  the menu — it enumerates offers. Adding a sixth action changes no menu code.
+- **The api surface is the whole contract.** Every call hands the **engine**, not
+  a session — each is `@with_transaction`, so one call is one transaction and the
+  frontend draws no `with` block. Reads: `issue_api.issue_list(engine, slug)`,
+  `issue_api.issue_detail(engine, id)` → `(IssueDetail, list[Offer])`,
+  `project_api.project_list(engine)`, `project_api.project_detail(engine, slug)`,
+  `project_api.top_level_offers()` (no engine — pure). Writes:
+  `issue_api.issue_action(engine, key, payload, id)`,
+  `project_api.project_action(engine, key, payload, slug=None)` (slug `None` for
+  `createProject`). Refusals: catch `REFUSALS`. Import the vocabulary from
+  `tt.platform.actions`.
+- **`Offer` is the menu.** `Offer(key, label, state: Runnable | Refused(reason),
+  fields: list[Field])`. A menu row *is* an offer: its text is `offer.label`
+  (declared on the action as `LABEL`, domain-owned), runnable ones selectable,
+  refused ones greyed with `reason`. The frontend names no action key to build or
+  label the menu — it enumerates offers. Adding a sixth action changes no menu
+  code.
 - **`Field` drives every form.** `Field(name, required, kind: Text | OptionalText
   | Enum(values), description)`. The form controls (`Editing`, `Choosing`) and
   `action.payload(values)` carry over unchanged.
@@ -68,8 +76,8 @@ invariant 1). This is a pure function — `resolve_index(issues, selected_id)`.
   always fits. The whole responsive story in one tested function.
 - `resolve_index(issues, selected_id) -> int` — selection survival.
 - `menu_items(offers, accelerators) -> list[MenuItem]` — an `Offer` becomes a
-  runnable or greyed row, with its accelerator key attached. Grouped ISSUE /
-  PROJECT.
+  runnable or greyed row: text from `offer.label`, accelerator key attached where
+  one maps to `offer.key`. Grouped ISSUE / PROJECT.
 - `filter_issues(issues, query)` and `filter_projects(...)` — live substring.
 - `glyph(status)`, `marker(priority)`, `issue_id_label(slug, id)` — the visual
   vocabulary, one place.
@@ -80,8 +88,10 @@ invariant 1). This is a pure function — `resolve_index(issues, selected_id)`.
 ### Reducer
 
 `on_key(state, key) -> Intent` and `apply(engine, state, intent) -> State` stay as
-now: `on_key` pure, `apply` the only half that touches the DB (loads via `*_api`
-reads, writes via `*_api.run*`, catches `REFUSALS`). New intents for the overlays
+now: `on_key` pure, `apply` the only half that touches the DB — it calls the
+`*_api` reads and `issue_action`/`project_action` writes with the **engine** (each
+its own transaction, no session plumbing here) and catches `REFUSALS`. New intents
+for the overlays
 (open menu, open switcher, run accelerator, start capture, submit capture, filter
 keystroke, cycle layout).
 
@@ -129,19 +139,20 @@ fill, no caret. Ids render `TT-4` (`slug` upper + `-` + id).
 | `h` `l` | Move between columns (board) | reducer |
 | `tab` | Cycle layout (skip ones that don't `fit`) | reducer |
 | `enter` | Open selected issue (split pane / full swap in list) | reducer |
-| `space` | **Command menu** for the selected issue | `issue_api.show` offers |
+| `space` | **Command menu** for the selected issue | `issue_api.issue_detail` offers |
 | `s` `p` | Change status / priority | accelerator → `editStatus` / `editPriority` form |
 | `n` | New issue — inline title prompt | `addIssue` (Capture) |
 | `e` | Edit title/body | accelerator → `editTitle` form |
 | `/` | Filter, live substring | reducer |
-| `P` | **Project switcher** | `project_api.list_projects` |
+| `P` | **Project switcher** | `project_api.project_list` |
 | `A` | Toggle all-projects scope | reducer |
 | `?` | Cheatsheet overlay (reads the accelerator table) | reducer |
 | `esc` | Close overlay / clear filter | reducer |
 | `q` | Quit | reducer |
 
 The command menu is the discoverable superset; accelerators are the fast path.
-Both end at `*_api.run`, so neither can reach an action the object doesn't offer.
+Both end at `issue_action` / `project_action`, so neither can reach an action the
+object doesn't offer.
 
 ## cwd → project resolution — OPEN DECISION
 
@@ -173,7 +184,7 @@ behavior (per CLAUDE.md). No phase leaves the tree red.
   Issue rows with glyph/priority/id, indigo selection bar, top bar, footer keybar,
   `j/k`/arrows over `selected_id`. *Done when:* bare `tt` shows the study's list
   frame against real data.
-- **Phase 2 — command menu + forms.** `space` opens the menu from `show` offers
+- **Phase 2 — command menu + forms.** `space` opens the menu from `issue_detail` offers
   (runnable + greyed refusals with reason); pick → run (Empty payload) or open the
   `Field` form; single-key accelerators (`s`/`p`/`e`). *Done when:* the study's
   menu frame works end to end, including a real greyed refusal.
@@ -199,7 +210,7 @@ behavior (per CLAUDE.md). No phase leaves the tree red.
   invariant, no DB, no terminal.
 - **Reducer** (`on_key` + `apply`) — the existing `test_tui.py` style: real
   migrated in-memory SQLite from `dbtest`, drive keystrokes, assert on `State` and
-  the messages `*_api.run` returns. Every accelerator gets two cases: the menu
+  the messages `issue_action` / `project_action` return. Every accelerator gets two cases: the menu
   withholds a refused action, and the write refuses it against live rows.
 - **Integration** — a few Textual `run_test` (Pilot) tests: `space` opens the
   menu, `enter` on a refused row shows the reason, `tab` skips an unfitting layout.

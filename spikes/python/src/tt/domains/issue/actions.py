@@ -25,7 +25,7 @@ from tt.platform.actions import (
     ObjectAction,
 )
 
-issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.get)
+issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.get_issue)
 
 
 @issue_actions

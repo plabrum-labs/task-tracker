@@ -46,12 +46,12 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
 
 @with_transaction
 def issue_list(tx: Session, project_slug: str) -> list[schemas.IssueListItem]:
-    return [_list_item(issue) for issue in queries.for_project(tx, project_slug)]
+    return [_list_item(issue) for issue in queries.list_issues(tx, project_slug)]
 
 
 @with_transaction
 def issue_get(tx: Session, issue_id: int) -> schemas.IssueDetail | None:
-    issue = queries.get(tx, issue_id)
+    issue = queries.get_issue(tx, issue_id)
     return _detail(issue) if issue is not None else None
 
 
@@ -59,7 +59,7 @@ def issue_get(tx: Session, issue_id: int) -> schemas.IssueDetail | None:
 def issue_detail(tx: Session, issue_id: int) -> tuple[schemas.IssueDetail, list[Offer]]:
     """An issue and what it offers, for a detail view — the two reads a detail view
     makes at once, so a caller does not load the row twice."""
-    issue = queries.get(tx, issue_id)
+    issue = queries.get_issue(tx, issue_id)
     if issue is None:
         raise Invalid(f"no issue {issue_id}")
     return _detail(issue), issue_actions.offers(issue)

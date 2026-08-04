@@ -164,7 +164,7 @@ def test_an_enum_field_is_a_cycling_selector_and_a_text_field_is_typed_into(
     state = press(seeded, state, "enter")
     assert state.form is None, "a successful write closes the form"
     with platform_db.reading(seeded) as session:
-        issue = issue_queries.get(session, 1)
+        issue = issue_queries.get_issue(session, 1)
     assert issue is not None
     assert issue.status == Status.DOING
     assert issue.status_note == "started"
@@ -189,9 +189,9 @@ def test_deleting_what_the_screen_is_about_falls_out_to_the_parent(db: Engine) -
     _seed_tt(db)
     # Empty the project of live issues and archive it, so ``delete`` is runnable.
     with platform_db.transaction(db) as tx:
-        issue = issue_queries.for_project(tx, "tt")[0]
+        issue = issue_queries.list_issues(tx, "tt")[0]
         issue.deleted_at = datetime.now(UTC)
-        archived = project_queries.by_slug(tx, "tt")
+        archived = project_queries.get_project(tx, "tt")
         assert archived is not None
         archived.status = ProjectStatus.ARCHIVED
 
@@ -211,7 +211,7 @@ def test_deleting_what_the_screen_is_about_falls_out_to_the_parent(db: Engine) -
 
     assert state.screen == Projects()
     with platform_db.reading(db) as session:
-        assert project_queries.by_slug(session, "tt") is None
+        assert project_queries.get_project(session, "tt") is None
 
 
 def _value(state: State, index: int) -> str:

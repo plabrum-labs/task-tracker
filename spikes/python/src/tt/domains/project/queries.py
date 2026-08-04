@@ -1,4 +1,4 @@
-"""Reads against the projects table.
+"""Reads against the projects table: the live list, and one project by slug.
 
 Every read loads the issues with ``selectinload``, because a project's counts are
 read straight off that collection and a hook that reads them runs after the
@@ -13,10 +13,12 @@ from tt.domains.project.models import Project
 _loaded = select(Project).options(selectinload(Project.issues)).order_by(Project.created_at.asc())
 
 
-def live(db: Session) -> list[Project]:
+def list_projects(db: Session) -> list[Project]:
     """Live projects in creation order, each carrying its loaded issues."""
     return list(db.scalars(_loaded.where(Project.deleted_at.is_(None))))
 
 
-def by_slug(db: Session, slug: str) -> Project | None:
+def get_project(db: Session, slug: str) -> Project | None:
+    """The one live project of a slug, or ``None`` — at most one, since the partial
+    unique index covers live rows."""
     return db.scalars(_loaded.where(Project.deleted_at.is_(None), Project.slug == slug)).first()
