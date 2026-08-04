@@ -25,6 +25,7 @@ objects directly.
 import enum
 import inspect
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from importlib.metadata import version as package_version
@@ -116,6 +117,26 @@ def _project_write(engine: Engine, slug: Any, key: str, payload: dict[str, Any])
 
 def _issue_write(engine: Engine, issue_id: Any, key: str, payload: dict[str, Any]) -> str:
     return issue_api.issue_action(engine, key, payload, issue_id).message
+
+
+def _project_init(
+    engine: Engine, slug: str, title: str | None, body: str | None, path: str | None
+) -> str:
+    """``createProject`` with the directory it binds filled in.
+
+    ``init`` names the ``createProject`` key rather than being generated like the
+    object actions: a top-level create has no address to hang a subcommand on, and
+    ``init``'s point is a default no generated command could supply. The project
+    binds to the current directory unless ``--path`` overrides it, so bare ``tt``
+    resolves and opens it there afterwards.
+    """
+    directory = os.path.abspath(os.path.expanduser(path)) if path is not None else os.getcwd()
+    payload: dict[str, Any] = {"slug": slug, "path": directory}
+    if title is not None:
+        payload["title"] = title
+    if body is not None:
+        payload["body"] = body
+    return _project_write(engine, None, "createProject", payload)
 
 
 # --- the reads ------------------------------------------------------------
@@ -426,6 +447,25 @@ def _project_action_command(
     ] = None,
 ) -> None:
     _report(lambda: _project_write(_engine(ctx), slug, key, _blob(payload)))
+
+
+@project_app.command(
+    "init", help="Create a project bound to a directory, the current one by default."
+)
+def _project_init_command(
+    ctx: typer.Context,
+    slug: Annotated[str, typer.Argument(help="The short name the project is addressed by.")],
+    title: Annotated[str | None, typer.Option("--title", help="What to call the project.")] = None,
+    body: Annotated[str | None, typer.Option("--body", help="What the project is about.")] = None,
+    path: Annotated[
+        str | None,
+        typer.Option(
+            "--path",
+            help="The directory bare tt opens this project in. Defaults to the current directory.",
+        ),
+    ] = None,
+) -> None:
+    _report(lambda: _project_init(_engine(ctx), slug, title, body, path))
 
 
 @issue_app.command("ls", help="List live issues.")

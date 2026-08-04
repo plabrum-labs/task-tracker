@@ -52,11 +52,13 @@ def _names(app: object) -> list[str]:
 def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> None:
     assert _names(cli.issue_app) == ["ls", "show", "action", "edit", "setStatus", "delete"]
     # ``createProject`` is top-level — no address to hang a subcommand on — so it is
-    # reached through the raw ``action`` path rather than generated here.
+    # reached through the raw ``action`` path, or the hand-written ``init`` convenience,
+    # rather than generated here.
     assert _names(cli.project_app) == [
         "ls",
         "show",
         "action",
+        "init",
         "edit",
         "delete",
         "setPath",
@@ -235,6 +237,40 @@ def test_create_project_is_reached_through_the_top_level_action_path(database: s
     dup = invoke(database, "project", "action", "createProject", '{"slug":"new"}')
     assert dup.exit_code == cli.REFUSED
     assert "already exists" in dup.output
+
+
+def test_init_binds_a_project_to_the_directory_it_is_given(database: str, tmp_path: Path) -> None:
+    here = str(tmp_path)
+    made = invoke(database, "project", "init", "web", "--title", "Web", "--path", here)
+    assert made.exit_code == 0
+    assert "project web: created" in made.output
+    shown = json.loads(invoke(database, "project", "show", "web").output)
+    assert shown["project"]["path"] == here
+
+
+def test_init_defaults_the_binding_to_the_current_directory(
+    database: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With no ``--path``, ``init`` binds the working directory, which is the whole
+    # point of an ``init`` over the raw ``createProject`` path.
+    here = str(tmp_path)
+    monkeypatch.setattr("tt.frontend.cli.os.getcwd", lambda: here)
+    made = invoke(database, "project", "init", "web")
+    assert made.exit_code == 0
+    shown = json.loads(invoke(database, "project", "show", "web").output)
+    assert shown["project"]["path"] == here
+
+
+def test_init_refuses_a_directory_another_project_already_owns(
+    database: str, tmp_path: Path
+) -> None:
+    # Binding a directory a live project already owns is the object's refusal (123),
+    # not a usage error.
+    here = str(tmp_path)
+    assert invoke(database, "project", "init", "web", "--path", here).exit_code == 0
+    clash = invoke(database, "project", "init", "app", "--path", here)
+    assert clash.exit_code == cli.REFUSED
+    assert "already belongs" in clash.output
 
 
 def test_an_unknown_object_or_malformed_json_is_invalid_rather_than_a_crash(database: str) -> None:
