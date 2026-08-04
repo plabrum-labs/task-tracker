@@ -1289,21 +1289,34 @@ def _list_overlay_widget(overlay: ListOverlay) -> Container:
 def _form_overlay_widget(form: FormOverlay) -> Container:
     rows: list[Static] = [Static(f"[b {TEXT}]{_esc(form.label)}[/]", id="ov-header")]
     for i, entry in enumerate(form.entries):
-        pointer = f"[{ACCENT}]▌[/]" if i == form.focus else " "
-        label = _esc(entry.field.description or entry.field.name)
-        mark = f"[{HIGH}]*[/]" if entry.field.required else ""
-        value = _esc(control_value(entry.control)) or f"[{FAINT}]·[/]"
-        rows.append(
-            Static(
-                f"{pointer} [{MUTED}]{_esc(entry.field.name)}{mark}[/]  "
-                f"[{TEXT}]{value}[/]   [{FAINT}]{label}[/]",
-                classes="f-row",
-            )
-        )
+        focused = i == form.focus
+        mark = f" [{HIGH}]*[/]" if entry.field.required else ""
+        desc = f"  [{FAINT}]{_esc(entry.field.description)}[/]" if entry.field.description else ""
+        rows.append(Static(f"[{MUTED}]{_esc(entry.field.name)}[/]{mark}{desc}", classes="f-label"))
+        rows.append(_form_input_widget(entry.control, focused))
     rows.append(
         Static(f"[{FAINT}]tab move · ←/→ choose · enter submit · esc cancel[/]", id="ov-foot")
     )
     return Container(Vertical(*rows, id="menu"), id="overlay")
+
+
+def _form_input_widget(control: Control, focused: bool) -> Static:
+    match control:
+        case Editing(text=text):
+            value = _esc(text)
+            if focused:
+                return Static(f"[{TEXT}]{value}[/][{ACCENT}]▎[/]", classes="f-box focus")
+            return Static(value or f"[{FAINT}]·[/]", classes="f-val")
+        case Choosing(values=values, index=index):
+            options = " ".join(
+                f"[reverse {ACCENT}] {_esc(option)} [/]"
+                if slot == index
+                else f"[{FAINT}]{_esc(option)}[/]"
+                for slot, option in enumerate(values)
+            )
+            classes = "f-enum focus" if focused else "f-enum"
+            return Static(options, classes=classes)
+    assert_never(control)
 
 
 def _capture_overlay_widget(capture: CaptureOverlay) -> Container:
@@ -1436,7 +1449,12 @@ class TrackerApp(App[None]):
     .act.hot { background: #8B8CF0 14%; }
     .a-name { width: 1fr; }
     .a-hint { width: 6; text-align: right; }
-    .f-row { height: 1; padding: 0 1; }
+    .f-label { height: 1; padding: 0 1; }
+    .f-val { height: 1; padding: 0 2; }
+    .f-box { width: 1fr; height: 3; padding: 0 1; margin: 0 1; border: round #23262E; }
+    .f-box.focus { border: round #8B8CF0; }
+    .f-enum { height: 1; padding: 0 2; }
+    .f-enum.focus { padding: 0 1; }
     .cheat { height: 1; padding: 0 1; }
     """
 
