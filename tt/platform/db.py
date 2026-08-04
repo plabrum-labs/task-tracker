@@ -39,12 +39,27 @@ def connect(url: str) -> Engine:
     else:
         engine = create_engine(url)
 
-    # A foreign key's cascade is only enforced on a connection that turned the
-    # pragma on, so every connection this engine opens does.
+    # Pragmas every connection this engine opens must set for itself.
+    #
+    # foreign_keys: a cascade is only enforced on a connection that turned it on.
+    #
+    # busy_timeout: a connection that finds the file locked waits and retries for
+    # up to this long rather than erroring "database is locked" at once (the
+    # default is 0). This is what lets two processes — an agent driving the MCP
+    # server while the TUI holds the same tt.db open — coexist.
+    #
+    # journal_mode=WAL: readers and a writer proceed without blocking each other,
+    # for file databases only. It is meaningless for the single-connection
+    # in-memory database a test holds open, which is never contended.
+    file_backed = url != "sqlite://"
+
     @event.listens_for(engine, "connect")
-    def _enable_foreign_keys(dbapi_connection: object, _record: object) -> None:
+    def _configure_connection(dbapi_connection: object, _record: object) -> None:
         cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        if file_backed:
+            cursor.execute("PRAGMA journal_mode=WAL")
         cursor.close()
 
     return engine

@@ -21,7 +21,8 @@ import tt.domains.issue.models  # noqa: F401  (registers the issues table)
 import tt.domains.project.models  # noqa: F401  (registers the projects table)
 from tt.platform.db import BaseDBModel
 
-_ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
+# alembic.ini sits at the repo root, one level above the tt package.
+_ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
 def create_all(engine: Engine) -> None:
