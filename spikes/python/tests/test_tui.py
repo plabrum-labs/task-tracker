@@ -39,10 +39,10 @@ from tt.platform import db as platform_db
 def _seed_tt(engine: Engine) -> None:
     """One project ``tt`` titled "task tracker" with one high-priority issue "ship
     the mvp", seeded through the same ``api`` a frontend takes."""
-    with platform_db.transaction(engine) as tx:
-        project_api.trigger(tx, "createProject", {"slug": "tt", "title": "task tracker"})
-    with platform_db.transaction(engine) as tx:
-        project_api.trigger(tx, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt")
+    project_api.project_action(engine, "createProject", {"slug": "tt", "title": "task tracker"})
+    project_api.project_action(
+        engine, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt"
+    )
 
 
 @pytest.fixture

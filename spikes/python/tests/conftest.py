@@ -28,8 +28,7 @@ def db() -> Engine:
 
 
 def a_project(engine: Engine, slug: str) -> Project:
-    with platform_db.transaction(engine) as tx:
-        project_api.trigger(tx, "createProject", {"slug": slug, "title": slug})
+    project_api.project_action(engine, "createProject", {"slug": slug, "title": slug})
     with platform_db.reading(engine) as session:
         project = project_queries.by_slug(session, slug)
         assert project is not None
@@ -39,10 +38,9 @@ def a_project(engine: Engine, slug: str) -> Project:
 def an_issue(
     engine: Engine, project: Project, title: str, priority: Priority = Priority.NORMAL
 ) -> Issue:
-    with platform_db.transaction(engine) as tx:
-        response = project_api.trigger(
-            tx, "addIssue", {"title": title, "priority": priority.name.lower()}, project.slug
-        )
+    response = project_api.project_action(
+        engine, "addIssue", {"title": title, "priority": priority.name.lower()}, project.slug
+    )
     assert response.created_id is not None
     with platform_db.reading(engine) as session:
         issue = issue_queries.get(session, response.created_id)

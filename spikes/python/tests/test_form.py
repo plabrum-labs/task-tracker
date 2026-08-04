@@ -16,7 +16,6 @@ from conftest import a_project, an_issue
 from tt.domains.issue import api as issue_api
 from tt.domains.issue import schemas as issue_schemas
 from tt.domains.project import schemas as project_schemas
-from tt.platform import db as platform_db
 from tt.platform.actions import Empty, Enum, Field, Invalid, OptionalText, Text, fields_of, payload
 
 
@@ -26,8 +25,7 @@ def _seeded(engine: Engine) -> None:
 
 
 def _dispatch_issue(engine: Engine, key: str, values: dict[str, Any]) -> str:
-    with platform_db.transaction(engine) as tx:
-        return issue_api.trigger(tx, key, values, 1).message
+    return issue_api.issue_action(engine, key, values, 1).message
 
 
 def test_an_enum_field_becomes_a_selector_over_the_member_names() -> None:
@@ -80,8 +78,7 @@ def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engin
     # issue back shows the null cleared the note.
     _seeded(db)
     _dispatch_issue(db, "editStatus", built)
-    with platform_db.reading(db) as session:
-        issue = issue_api.get_issue(session, 1)
+    issue = issue_api.issue_get(db, 1)
     assert issue is not None
     assert issue.status_note is None
 

@@ -53,20 +53,18 @@ def main() -> None:
     # before any project exists.
     _show("no projects yet", project_api.top_level_offers())
 
-    # Make one, then add an issue under it — each a real dispatch inside its own
-    # transaction, exactly as a frontend would run it.
-    with db.transaction(engine) as tx:
-        project_api.trigger(tx, "createProject", {"slug": "tt", "title": "task tracker"})
+    # Make one, then add an issue under it — each a real dispatch the ``api`` wraps
+    # in its own transaction, exactly as a frontend would run it.
+    project_api.project_action(engine, "createProject", {"slug": "tt", "title": "task tracker"})
+    project_api.project_action(
+        engine, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt"
+    )
 
-    with db.transaction(engine) as tx:
-        project_api.trigger(tx, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt")
-
-    with db.reading(engine) as session:
-        _, project_offers = project_api.show(session, "tt")
-        _show("the project, with one issue to do", project_offers)
-        for item in issue_api.list_issues(session, "tt"):
-            _, issue_offers = issue_api.show(session, item.id)
-            _show("the issue", issue_offers)
+    _, project_offers = project_api.project_detail(engine, "tt")
+    _show("the project, with one issue to do", project_offers)
+    for item in issue_api.issue_list(engine, "tt"):
+        _, issue_offers = issue_api.issue_detail(engine, item.id)
+        _show("the issue", issue_offers)
 
 
 if __name__ == "__main__":

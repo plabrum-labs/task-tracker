@@ -325,53 +325,50 @@ def _do_rows(offers: list[Offer]) -> list[Row]:
 
 def load(engine: Engine, screen: Screen) -> tuple[str, list[Row]]:
     """One screen, read fresh. The header is what the screen is about and the rows
-    are what can be done from it, in that order. Raises a refusal when the object
-    the screen is about has gone, which is what ``_reload`` turns into falling out
-    to the parent."""
-    with db.reading(engine) as session:
-        match screen:
-            case Projects():
-                rows = _do_rows(project_api.top_level_offers())
-                rows.extend(
-                    Go(
-                        label=(
-                            f"{p.slug:<12} {p.title:<24} {p.status:<8} {p.todo}/{p.doing}/{p.done}"
-                        ),
-                        to=Issues(p.slug),
-                    )
-                    for p in project_api.list_projects(session)
+    are what can be done from it, in that order. The ``api`` opens each read's
+    transaction, so this manages no session. Raises a refusal when the object the
+    screen is about has gone, which is what ``_reload`` turns into falling out to
+    the parent."""
+    match screen:
+        case Projects():
+            rows = _do_rows(project_api.top_level_offers())
+            rows.extend(
+                Go(
+                    label=f"{p.slug:<12} {p.title:<24} {p.status:<8} {p.todo}/{p.doing}/{p.done}",
+                    to=Issues(p.slug),
                 )
-                return ("projects", rows)
-            case Issues(slug=slug):
-                detail, offers = project_api.show(session, slug)
-                rows = _do_rows(offers)
-                rows.extend(
-                    Go(
-                        label=f"{i.id:<4} {i.status:<8} {i.priority:<6} {i.title}",
-                        to=Detail(project=slug, id=i.id),
-                    )
-                    for i in issue_api.list_issues(session, slug)
+                for p in project_api.project_list(engine)
+            )
+            return ("projects", rows)
+        case Issues(slug=slug):
+            detail, offers = project_api.project_detail(engine, slug)
+            rows = _do_rows(offers)
+            rows.extend(
+                Go(
+                    label=f"{i.id:<4} {i.status:<8} {i.priority:<6} {i.title}",
+                    to=Detail(project=slug, id=i.id),
                 )
-                return (f"project {slug}: {detail.title}", rows)
-            case Detail(id=issue_id):
-                detail, offers = issue_api.show(session, issue_id)
-                return (f"issue {detail.id}: {detail.title}", _do_rows(offers))
+                for i in issue_api.issue_list(engine, slug)
+            )
+            return (f"project {slug}: {detail.title}", rows)
+        case Detail(id=issue_id):
+            detail, offers = issue_api.issue_detail(engine, issue_id)
+            return (f"issue {detail.id}: {detail.title}", _do_rows(offers))
     assert_never(screen)
 
 
 def _write(engine: Engine, screen: Screen, key: str, payload: dict[str, object]) -> str:
-    """Load, then dispatch, inside one transaction. Each screen is about one object,
-    so there is no group-by-group pairing to write here, only which ``api`` the
-    screen dispatches through. A refusal propagates out and the transaction rolls
-    back."""
-    with db.transaction(engine) as tx:
-        match screen:
-            case Projects():
-                return project_api.trigger(tx, key, payload).message
-            case Issues(slug=slug):
-                return project_api.trigger(tx, key, payload, slug).message
-            case Detail(id=issue_id):
-                return issue_api.trigger(tx, key, payload, issue_id).message
+    """Dispatch through the screen's ``api``, which opens the transaction itself.
+    Each screen is about one object, so there is no group-by-group pairing to write
+    here, only which ``api`` the screen dispatches through. A refusal propagates out
+    and the transaction rolls back."""
+    match screen:
+        case Projects():
+            return project_api.project_action(engine, key, payload).message
+        case Issues(slug=slug):
+            return project_api.project_action(engine, key, payload, slug).message
+        case Detail(id=issue_id):
+            return issue_api.issue_action(engine, key, payload, issue_id).message
     assert_never(screen)
 
 

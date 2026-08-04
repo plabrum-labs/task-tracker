@@ -31,10 +31,10 @@ def database(tmp_path: Path) -> str:
     url = f"sqlite:///{tmp_path / 'tt.db'}"
     schema.upgrade(url)
     engine = db.connect(url)
-    with db.transaction(engine) as tx:
-        project_api.trigger(tx, "createProject", {"slug": "tt", "title": "task tracker"})
-    with db.transaction(engine) as tx:
-        project_api.trigger(tx, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt")
+    project_api.project_action(engine, "createProject", {"slug": "tt", "title": "task tracker"})
+    project_api.project_action(
+        engine, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt"
+    )
     engine.dispose()
     return url
 

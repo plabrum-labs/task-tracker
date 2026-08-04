@@ -14,9 +14,11 @@ its columns and its eagerly-loaded relationships once the ``with`` block that
 loaded it has closed.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
+from functools import wraps
+from typing import Concatenate
 
 from sqlalchemy import DateTime, Engine, create_engine, event, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -68,6 +70,27 @@ def transaction(engine: Engine) -> Iterator[Session]:
             yield session
     finally:
         session.close()
+
+
+def with_transaction[**P, R](
+    fn: Callable[Concatenate[Session, P], R],
+) -> Callable[Concatenate[Engine, P], R]:
+    """Turn a backend call that takes a live ``Session`` into one that takes an
+    ``Engine`` and opens the transaction itself.
+
+    This is what keeps session management out of the frontends: a decorated ``api``
+    function is called with the engine and nothing else, and one call is one
+    transaction — the same boundary the frontend used to draw by hand around every
+    ``with db.transaction(...)``. A read commits nothing, so wrapping reads and
+    writes alike is safe; a refusal raised inside rolls the whole call back.
+    """
+
+    @wraps(fn)
+    def wrapper(engine: Engine, *args: P.args, **kwargs: P.kwargs) -> R:
+        with transaction(engine) as tx:
+            return fn(tx, *args, **kwargs)
+
+    return wrapper
 
 
 class BaseDBModel(DeclarativeBase):

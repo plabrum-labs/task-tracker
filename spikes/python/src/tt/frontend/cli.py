@@ -102,57 +102,49 @@ def _pretty(value: Any) -> str:
 
 # --- the writes -----------------------------------------------------------
 #
-# One transaction each, so ``api.trigger`` stays the only path to a write, the
-# hooks are checked against the row as it is now rather than as some earlier
-# ``show`` reported it, and a refusal after rows are written rolls the whole call
-# back. A project write carries an optional slug — an object action passes one,
-# the top-level ``createProject`` passes ``None``.
+# The ``api`` opens the transaction, so one call is one write with no ``with``
+# here: the hooks are checked against the row as it is now rather than as some
+# earlier detail view reported it, and a refusal after rows are written rolls the
+# whole call back. A project write carries an optional slug — an object action
+# passes one, the top-level ``createProject`` passes ``None``.
 
 
 def _project_write(engine: Engine, slug: Any, key: str, payload: dict[str, Any]) -> str:
-    with db.transaction(engine) as tx:
-        return project_api.trigger(tx, key, payload, slug).message
+    return project_api.project_action(engine, key, payload, slug).message
 
 
 def _issue_write(engine: Engine, issue_id: Any, key: str, payload: dict[str, Any]) -> str:
-    with db.transaction(engine) as tx:
-        return issue_api.trigger(tx, key, payload, issue_id).message
+    return issue_api.issue_action(engine, key, payload, issue_id).message
 
 
 # --- the reads ------------------------------------------------------------
 
 
 def _project_ls(engine: Engine) -> str:
-    with db.reading(engine) as session:
-        return "\n".join(_project_line(p) for p in project_api.list_projects(session))
+    return "\n".join(_project_line(p) for p in project_api.project_list(engine))
 
 
 def _issue_ls(engine: Engine, project_slug: str | None) -> str:
-    with db.reading(engine) as session:
-        if project_slug is not None:
-            if project_api.get_project(session, project_slug) is None:
-                raise Invalid(f"no project {project_slug!r}")
-            slugs = [project_slug]
-        else:
-            slugs = [p.slug for p in project_api.list_projects(session)]
-        lines = [
-            _issue_line(issue) for slug in slugs for issue in issue_api.list_issues(session, slug)
-        ]
+    if project_slug is not None:
+        if project_api.project_get(engine, project_slug) is None:
+            raise Invalid(f"no project {project_slug!r}")
+        slugs = [project_slug]
+    else:
+        slugs = [p.slug for p in project_api.project_list(engine)]
+    lines = [_issue_line(issue) for slug in slugs for issue in issue_api.issue_list(engine, slug)]
     return "\n".join(lines)
 
 
 def _project_show(engine: Engine, slug: str) -> str:
-    with db.reading(engine) as session:
-        detail, offers = project_api.show(session, slug)
-        actions = [_offer_json(offer) for offer in offers]
-        return _pretty({"project": detail.model_dump(mode="json"), "actions": actions})
+    detail, offers = project_api.project_detail(engine, slug)
+    actions = [_offer_json(offer) for offer in offers]
+    return _pretty({"project": detail.model_dump(mode="json"), "actions": actions})
 
 
 def _issue_show(engine: Engine, issue_id: int) -> str:
-    with db.reading(engine) as session:
-        detail, offers = issue_api.show(session, issue_id)
-        actions = [_offer_json(offer) for offer in offers]
-        return _pretty({"issue": detail.model_dump(mode="json"), "actions": actions})
+    detail, offers = issue_api.issue_detail(engine, issue_id)
+    actions = [_offer_json(offer) for offer in offers]
+    return _pretty({"issue": detail.model_dump(mode="json"), "actions": actions})
 
 
 # --- the arguments a typed-in command carries -----------------------------

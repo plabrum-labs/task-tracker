@@ -1,11 +1,10 @@
 """The issue domain's one public surface.
 
-A frontend imports this and nothing else of the domain: the reads return the
-output schemas in ``schemas``, ``show`` says what an issue offers, ``trigger``
-takes a key and a blob and writes, and ``action_schemas`` lists what the CLI
-turns into subcommands. Each is a thin call onto ``issue_actions``, the group the
-actions register with, so the routing lives in one place next to the actions it
-drives.
+As ``../project/api.py``: a frontend hands it an engine, never a session, and
+every database call is wrapped in ``@with_transaction`` so one public call is one
+transaction. ``issue_list``/``issue_get``/``issue_detail`` read, ``issue_action``
+writes, and ``action_schemas`` lists what the CLI turns into subcommands. Each is
+a thin call onto ``issue_actions``, the group the actions register with.
 """
 
 from typing import Any
@@ -16,6 +15,7 @@ from tt.domains.issue import queries, schemas
 from tt.domains.issue.actions import issue_actions
 from tt.domains.issue.models import Issue
 from tt.platform.actions import ActionDeps, ActionResponse, Field, Invalid, Offer, name_of
+from tt.platform.db import with_transaction
 
 # --- reads ----------------------------------------------------------------
 
@@ -44,19 +44,22 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
     )
 
 
-def list_issues(db: Session, project_slug: str) -> list[schemas.IssueListItem]:
-    return [_list_item(issue) for issue in queries.for_project(db, project_slug)]
+@with_transaction
+def issue_list(tx: Session, project_slug: str) -> list[schemas.IssueListItem]:
+    return [_list_item(issue) for issue in queries.for_project(tx, project_slug)]
 
 
-def get_issue(db: Session, issue_id: int) -> schemas.IssueDetail | None:
-    issue = queries.get(db, issue_id)
+@with_transaction
+def issue_get(tx: Session, issue_id: int) -> schemas.IssueDetail | None:
+    issue = queries.get(tx, issue_id)
     return _detail(issue) if issue is not None else None
 
 
-def show(db: Session, issue_id: int) -> tuple[schemas.IssueDetail, list[Offer]]:
-    """An issue and what it offers, for a detail view — the two reads a ``show``
+@with_transaction
+def issue_detail(tx: Session, issue_id: int) -> tuple[schemas.IssueDetail, list[Offer]]:
+    """An issue and what it offers, for a detail view — the two reads a detail view
     makes at once, so a caller does not load the row twice."""
-    issue = queries.get(db, issue_id)
+    issue = queries.get(tx, issue_id)
     if issue is None:
         raise Invalid(f"no issue {issue_id}")
     return _detail(issue), issue_actions.offers(issue)
@@ -65,9 +68,10 @@ def show(db: Session, issue_id: int) -> tuple[schemas.IssueDetail, list[Offer]]:
 # --- write ----------------------------------------------------------------
 
 
-def trigger(tx: Session, key: str, payload: Any, issue_id: int) -> ActionResponse:
+@with_transaction
+def issue_action(tx: Session, key: str, payload: Any, issue_id: int) -> ActionResponse:
     """Run an action by key against the addressed issue. Availability is enforced
-    against the live row, so what a ``show`` reported stays a snapshot."""
+    against the live row, so what a detail view reported stays a snapshot."""
     return issue_actions.trigger(ActionDeps(tx), key, payload, issue_id)
 
 

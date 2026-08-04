@@ -1,9 +1,12 @@
 """The project domain's one public surface.
 
-As ``../issue/api.py``, plus ``top_level_offers``: the project group has one
-action with no object to address — ``createProject`` — so a caller that has no
-project yet still has something to offer. ``trigger`` routes both, an address for
-an object action and ``None`` for the top-level one.
+A frontend imports this and nothing else of the domain, and hands it an engine —
+never a session. Every call that touches the database is wrapped in
+``@with_transaction``, so one public call is one transaction and the frontend
+draws no ``with`` block of its own. The names are the flat surface an MCP or an
+HTTP edge exposes: ``project_list``/``project_get``/``project_detail`` read, and
+``project_action`` writes. ``top_level_offers`` and ``action_schemas`` ask nothing
+of the database, so they take no engine.
 """
 
 from typing import Any
@@ -14,6 +17,7 @@ from tt.domains.project import queries, schemas
 from tt.domains.project.actions import project_actions
 from tt.domains.project.models import Project
 from tt.platform.actions import ActionDeps, ActionResponse, Field, Invalid, Offer, name_of
+from tt.platform.db import with_transaction
 
 # --- reads ----------------------------------------------------------------
 
@@ -43,18 +47,21 @@ def _detail(project: Project) -> schemas.ProjectDetail:
     )
 
 
-def list_projects(db: Session) -> list[schemas.ProjectListItem]:
-    return [_list_item(project) for project in queries.live(db)]
+@with_transaction
+def project_list(tx: Session) -> list[schemas.ProjectListItem]:
+    return [_list_item(project) for project in queries.live(tx)]
 
 
-def get_project(db: Session, slug: str) -> schemas.ProjectDetail | None:
-    project = queries.by_slug(db, slug)
+@with_transaction
+def project_get(tx: Session, slug: str) -> schemas.ProjectDetail | None:
+    project = queries.by_slug(tx, slug)
     return _detail(project) if project is not None else None
 
 
-def show(db: Session, slug: str) -> tuple[schemas.ProjectDetail, list[Offer]]:
+@with_transaction
+def project_detail(tx: Session, slug: str) -> tuple[schemas.ProjectDetail, list[Offer]]:
     """A project and what it offers, for a detail view."""
-    project = queries.by_slug(db, slug)
+    project = queries.by_slug(tx, slug)
     if project is None:
         raise Invalid(f"no project {slug!r}")
     return _detail(project), project_actions.offers(project)
@@ -68,7 +75,8 @@ def top_level_offers() -> list[Offer]:
 # --- write ----------------------------------------------------------------
 
 
-def trigger(tx: Session, key: str, payload: Any, slug: str | None = None) -> ActionResponse:
+@with_transaction
+def project_action(tx: Session, key: str, payload: Any, slug: str | None = None) -> ActionResponse:
     """Run an action by key. An object action passes the project's slug as its
     address; the top-level ``createProject`` passes ``None`` and queries for
     itself."""

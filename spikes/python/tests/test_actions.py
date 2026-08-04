@@ -382,16 +382,15 @@ def test_an_offer_carries_its_label() -> None:
 
 def test_dispatch_refuses_what_availability_refused(db: Engine) -> None:
     a_project(db, "tt")
-    with platform_db.transaction(db) as tx, pytest.raises(Conflict):
-        project_api.trigger(tx, "delete", {}, "tt")
+    with pytest.raises(Conflict):
+        project_api.project_action(db, "delete", {}, "tt")
 
 
 def test_the_api_agrees_with_the_typed_path() -> None:
     erased = _fresh()
     tt = a_project(erased, "tt")
     seeded = an_issue(erased, tt, "old")
-    with platform_db.transaction(erased) as tx:
-        via_api = issue_api.trigger(tx, "editTitle", {"title": " new "}, seeded.id).message
+    via_api = issue_api.issue_action(erased, "editTitle", {"title": " new "}, seeded.id).message
 
     typed = _fresh()
     tt = a_project(typed, "tt")
@@ -405,8 +404,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
     # The same for a creator, whose execute writes a different table.
     erased = _fresh()
     a_project(erased, "tt")
-    with platform_db.transaction(erased) as tx:
-        via_api = project_api.trigger(tx, "addIssue", {"title": "one"}, "tt").message
+    via_api = project_api.project_action(erased, "addIssue", {"title": "one"}, "tt").message
 
     typed = _fresh()
     a_project(typed, "tt")
@@ -428,19 +426,18 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
         {"title": 5},  # wrong type
         {"title": "x", "bogus": 1},  # not advertised
     ]:
-        with platform_db.transaction(db) as tx, pytest.raises(Invalid):
-            issue_api.trigger(tx, "editTitle", payload, 1)
+        with pytest.raises(Invalid):
+            issue_api.issue_action(db, "editTitle", payload, 1)
     # A value outside the enum, the one the schema could have told the caller
     # about in advance.
-    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
-        issue_api.trigger(tx, "editStatus", {"status": "shipped"}, 1)
+    with pytest.raises(Invalid):
+        issue_api.issue_action(db, "editStatus", {"status": "shipped"}, 1)
 
 
 def test_an_action_with_no_arguments_takes_an_empty_object_and_not_null(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
-    with platform_db.transaction(db) as tx:
-        assert issue_api.trigger(tx, "delete", {}, seeded.id).message == "issue 1: deleted"
+    assert issue_api.issue_action(db, "delete", {}, seeded.id).message == "issue 1: deleted"
     # ``null`` is refused where an empty object is not — the decode is the same one
     # a dispatch runs.
     assert decode(issue_actions.Delete, {}) == Empty()
@@ -451,10 +448,10 @@ def test_an_action_with_no_arguments_takes_an_empty_object_and_not_null(db: Engi
 def test_an_unknown_key_is_invalid(db: Engine) -> None:
     tt = a_project(db, "tt")
     an_issue(db, tt, "here")
-    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
-        issue_api.trigger(tx, "explode", {}, 1)
-    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
-        project_api.trigger(tx, "explode", {})
+    with pytest.raises(Invalid):
+        issue_api.issue_action(db, "explode", {}, 1)
+    with pytest.raises(Invalid):
+        project_api.project_action(db, "explode", {})
 
 
 def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db: Engine) -> None:
@@ -466,10 +463,10 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
         assert key in issue_keys and key in project_keys
 
     # A project status through the issue's editStatus.
-    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
-        issue_api.trigger(tx, "editStatus", {"status": "archived"}, made.id)
+    with pytest.raises(Invalid):
+        issue_api.issue_action(db, "editStatus", {"status": "archived"}, made.id)
     # An issue status, and an issue-only field, through the project's.
-    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
-        project_api.trigger(tx, "editStatus", {"status": "doing"}, "tt")
-    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
-        project_api.trigger(tx, "editStatus", {"status": "active", "note": "why"}, "tt")
+    with pytest.raises(Invalid):
+        project_api.project_action(db, "editStatus", {"status": "doing"}, "tt")
+    with pytest.raises(Invalid):
+        project_api.project_action(db, "editStatus", {"status": "active", "note": "why"}, "tt")
