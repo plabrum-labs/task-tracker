@@ -172,6 +172,18 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
         assert pane.detail is not None and pane.detail.id == second.id
 
 
+async def test_detail_pane_stacks_below_the_list_when_narrow(seeded: Engine) -> None:
+    wide = _app(seeded)
+    async with wide.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert not _main(wide).query_one("#content").has_class("below")  # beside: room for both
+
+    narrow = _app(seeded)
+    async with narrow.run_test(size=(70, 30)) as pilot:
+        await pilot.pause()
+        assert _main(narrow).query_one("#content").has_class("below")  # stacked under the list
+
+
 async def test_board_only_appears_at_width_90(seeded: Engine) -> None:
     wide = _app(seeded)
     async with wide.run_test(size=(100, 30)) as pilot:

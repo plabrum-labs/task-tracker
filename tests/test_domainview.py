@@ -6,6 +6,8 @@ the cursor lands after a move, cwd matching, and the command a menu draws from a
 offer. No database, no widget, no event loop.
 """
 
+import os
+
 from tt.domains.issue.schemas import IssueListItem
 from tt.frontend.tui import domainview as dv
 from tt.platform.actions import Offer, Refused, Runnable
@@ -75,6 +77,13 @@ def test_fits_and_next_layout() -> None:
     assert dv.next_layout("board", 100, 30) == "list"
 
 
+def test_pane_split_stacks_below_when_thin() -> None:
+    assert dv.pane_split(100) == "beside"
+    assert dv.pane_split(dv.DETAIL_BESIDE_MIN_WIDTH) == "beside"  # exactly wide enough
+    assert dv.pane_split(dv.DETAIL_BESIDE_MIN_WIDTH - 1) == "below"  # one short stacks
+    assert dv.pane_split(60) == "below"
+
+
 # --- cwd resolution -------------------------------------------------------
 
 
@@ -85,6 +94,13 @@ def test_match_path_takes_the_longest_ancestor() -> None:
     assert dv.match_path(candidates, "/elsewhere") is None  # outside every project
     # The deepest matching path wins, not the first.
     assert dv.match_path([("outer", "/repo"), ("inner", "/repo/tt")], "/repo/tt/x") == "inner"
+
+
+def test_match_path_expands_a_stored_tilde() -> None:
+    home = os.path.expanduser("~")
+    # A path stored with a literal ``~`` still matches the expanded working directory.
+    assert dv.match_path([("tt", "~/repos/tt")], f"{home}/repos/tt") == "tt"
+    assert dv.match_path([("tt", "~/repos/tt")], f"{home}/repos/tt/sub") == "tt"
 
 
 # --- the visual vocabulary ------------------------------------------------

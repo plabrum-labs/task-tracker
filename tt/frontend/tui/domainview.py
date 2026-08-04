@@ -91,6 +91,18 @@ type Scope = ProjectScope | AllScope
 type Layout = Literal["list", "board"]
 LAYOUTS: tuple[Layout, ...] = ("list", "board")
 
+type Split = Literal["beside", "below"]
+
+# The detail pane is 52 columns wide; under this the list left beside it is too
+# cramped to read, so the pane stacks below the list rather than to its right.
+DETAIL_BESIDE_MIN_WIDTH = 88
+
+
+def pane_split(width: int) -> Split:
+    """How the detail pane sits against the list: ``beside`` it when the column is
+    wide enough for both, stacked ``below`` it when the column is too thin."""
+    return "beside" if width >= DETAIL_BESIDE_MIN_WIDTH else "below"
+
 
 def fits(layout: Layout, width: int, height: int) -> bool:
     """Whether a layout has the room it needs. ``list`` always does; ``board`` wants
@@ -201,12 +213,12 @@ def index_of(issues: list[IssueListItem], selected_id: int | None) -> int:
 def match_path(candidates: list[tuple[str, str | None]], cwd: str) -> str | None:
     """The slug of the project whose path is the longest ancestor of ``cwd`` (or
     equal to it). ``None`` when the shell is not inside any project's directory."""
-    here = os.path.normpath(cwd)
+    here = os.path.normpath(os.path.expanduser(cwd))
     best: tuple[int, str] | None = None
     for slug, path in candidates:
         if path is None:
             continue
-        root = os.path.normpath(path)
+        root = os.path.normpath(os.path.expanduser(path))
         inside = here == root or here.startswith(root + os.sep)
         if inside and (best is None or len(root) > best[0]):
             best = (len(root), slug)

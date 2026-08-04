@@ -30,6 +30,20 @@ DetailPane {
     padding: 1 2;
     border-left: solid $border;
 }
+
+/* On a thin column the ``#content`` row becomes a stack: the pane drops under the
+   list, taking the full width and only the height its detail needs (up to half),
+   its dividing border moving from the left edge to the top. */
+#content.below {
+    layout: vertical;
+}
+#content.below DetailPane {
+    width: 1fr;
+    height: auto;
+    max-height: 50%;
+    border-left: none;
+    border-top: solid $border;
+}
 .d-header {
     height: auto;
     padding-bottom: 1;

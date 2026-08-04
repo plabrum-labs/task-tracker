@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import Engine
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -38,12 +39,14 @@ from tt.frontend.tui.domainview import (
     ProjectTarget,
     RunAction,
     Scope,
+    Split,
     index_of,
     issue_commands,
     issue_ref,
     move_selection,
     next_layout,
     next_status,
+    pane_split,
     project_commands,
     surviving_id,
     switcher_commands,
@@ -106,6 +109,7 @@ class MainScreen(Screen[None]):
     # ``layout`` is a property, and a reactive of that name would shadow it.
     scope: reactive[Scope] = reactive[Scope](AllScope())
     view_layout: reactive[Layout] = reactive[Layout]("list")
+    split: reactive[Split] = reactive[Split]("beside")
     projects: reactive[list[ProjectListItem]] = reactive(list)
     issues: reactive[list[IssueListItem]] = reactive(list)
     selected_id: reactive[int | None] = reactive[int | None](None)
@@ -128,6 +132,7 @@ class MainScreen(Screen[None]):
     def on_mount(self) -> None:
         self.scope = data.initial_scope(self.engine)
         self.reload()
+        self.split = pane_split(self.size.width)
         self._ready = True
         self._paint_all()
         # Browse mode holds no focus, so every keystroke reaches the bindings rather
@@ -173,6 +178,12 @@ class MainScreen(Screen[None]):
         self._paint_body()
         self._paint_detail()
         self._paint_footer()
+        self._apply_split()
+
+    def _apply_split(self) -> None:
+        # The container is a ``Horizontal``; the class flips it to a vertical stack so
+        # the detail pane sits under the list rather than beside it on a thin column.
+        self.query_one("#content").set_class(self.split == "below", "below")
 
     def _paint_topbar(self) -> None:
         self.query_one(TopBar).show(
@@ -203,6 +214,10 @@ class MainScreen(Screen[None]):
         if self._ready:
             self._paint_topbar()
             self._paint_body()
+
+    def watch_split(self) -> None:
+        if self._ready:
+            self._apply_split()
 
     def watch_projects(self) -> None:
         if self._ready:
@@ -496,6 +511,11 @@ class MainScreen(Screen[None]):
         self.status = BROWSING
 
     # --- lifecycle --------------------------------------------------------
+
+    def on_resize(self, event: events.Resize) -> None:
+        # The pane sits beside the list when the terminal is wide, and drops to a
+        # stack below it when the column narrows past what the two need side by side.
+        self.split = pane_split(event.size.width)
 
     def action_refresh(self) -> None:
         self.reload()
