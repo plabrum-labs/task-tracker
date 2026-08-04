@@ -20,6 +20,7 @@ from tt.frontend.tui import (
     CaptureOverlay,
     Choosing,
     CloseOverlay,
+    Editing,
     FormOverlay,
     Ignored,
     ListOverlay,
@@ -196,6 +197,26 @@ def test_a_key_means_a_move_while_browsing_and_a_letter_in_a_menu(seeded: Engine
     assert tui.on_key(menu, "down") == OverlayMove(1)
     assert tui.on_key(menu, "enter") == OverlayPick()
     assert tui.on_key(menu, "escape") == CloseOverlay()
+
+
+def test_the_spacebar_reaches_a_form_as_a_character(seeded: Engine) -> None:
+    """The terminal maps the spacebar to the character itself, not a named ``space``
+    key that every text handler drops. It stays the issue-menu accelerator while
+    browsing, and types a literal space into a form field."""
+    from textual import events
+
+    space = events.Key("space", " ")
+    assert tui._key_string(space) == " "  # not the named "space"
+
+    state = tui.start(seeded, ProjectScope("tt"))
+    assert tui.on_key(state, " ") == OpenOverlay("issue")
+
+    form = press(seeded, state, "e")  # editTitle
+    key = tui._key_string(space)
+    assert key is not None
+    form = tui.apply(seeded, form, tui.on_key(form, key))
+    assert isinstance(form.overlay, FormOverlay)
+    assert form.overlay.entries[0].control == Editing(" ")
 
 
 def test_the_issue_menu_lists_exactly_what_the_issue_offers(seeded: Engine) -> None:

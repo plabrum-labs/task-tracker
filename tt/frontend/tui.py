@@ -720,7 +720,7 @@ def _browse_key(state: State, key: str) -> Intent:
             return ShiftProject(-1)
         case "]":
             return ShiftProject(1)
-        case "enter" | "x" | "space":
+        case "enter" | "x" | " ":
             return OpenOverlay("issue")
         case "X":
             return OpenOverlay("project")
@@ -1373,7 +1373,6 @@ _NAMED_KEYS = frozenset(
         "escape",
         "tab",
         "backspace",
-        "space",
         "shift+tab",
         "ctrl+d",
         "ctrl+u",
