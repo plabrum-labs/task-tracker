@@ -85,6 +85,34 @@ def test_a_runnable_write_persists(db: Engine) -> None:
     assert read.status.name.lower() == "doing"
 
 
+def test_an_object_write_returns_the_updated_object(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    seeded = an_issue(db, tt, "one")
+
+    result = mcp.dispatch(
+        db,
+        "issue_edit",
+        {"id": seeded.id, "title": "renamed", "body": "b", "status": "doing", "priority": "high"},
+    )
+    assert result.is_error is not True
+    payload = json.loads(_text(result))
+    assert payload["message"] == "issue 1: saved"
+    # The whole updated issue comes back beside the message — the SaaS shape.
+    assert payload["issue"]["title"] == "renamed"
+    assert payload["issue"]["status"] == "doing"
+    assert payload["issue"]["priority"] == "high"
+
+
+def test_a_delete_returns_the_message_alone(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    seeded = an_issue(db, tt, "gone")
+
+    # The row is gone, so there is nothing to re-read: the message stands alone.
+    result = mcp.dispatch(db, "issue_delete", {"id": seeded.id})
+    assert result.is_error is not True
+    assert json.loads(_text(result)) == {"message": "issue 1: deleted"}
+
+
 def test_a_refused_write_is_a_tool_error_and_not_a_crash(db: Engine) -> None:
     a_project(db, "tt")
     # An active project refuses ``delete`` — the object's answer, mapped to an

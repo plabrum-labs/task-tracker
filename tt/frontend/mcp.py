@@ -18,10 +18,16 @@ no event loop; the two SDK handlers are thin adapters that unwrap the request
 params and wrap the sync results in the SDK result types. So no asyncio test
 plugin is needed — the async edge is never what a test drives.
 
-MCP has one flat tool namespace, but ``editTitle``/``editStatus``/``delete`` live
-on both domains, so every generated name is ``{domain}_{KEY}`` — a uniform rule
-that names no key by hand. ``project_createProject`` reads redundantly; it is that
-same rule applied to the one top-level action, left uniform on purpose.
+MCP has one flat tool namespace, but ``edit``/``delete`` live on both domains, so
+every generated name is ``{domain}_{KEY}`` — a uniform rule that names no key by
+hand. ``project_createProject`` reads redundantly; it is that same rule applied to
+the one top-level action, left uniform on purpose.
+
+The SaaS shape: an object-addressed write re-reads its target and hands the whole
+updated object back beside the message, so an agent that edits an issue gets the
+issue rather than a bare "saved". A write that removed the row (``delete``) has
+nothing to re-read, so it reports its message alone; the top-level ``createProject``
+has no address to re-read by, so it too reports only its message.
 """
 
 import json
@@ -33,6 +39,7 @@ import anyio
 import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
+from pydantic import BaseModel
 from sqlalchemy import Engine
 
 from tt.domains.issue import api as issue_api
@@ -53,6 +60,10 @@ from tt.platform.actions import (
 # What a write tool hands its address and payload to — ``project_action`` or
 # ``issue_action`` with the arguments reordered to (engine, address, key, payload).
 type Writer = Callable[[Engine, Any, str, dict[str, Any]], ActionResponse]
+
+# How a write re-reads the object it addressed, so the tool can hand it back: a
+# domain's ``*_get`` by address, ``None`` once the row is gone.
+type Reader = Callable[[Engine, Any], BaseModel | None]
 
 # What a tool does with the open engine and the arguments a client sent: a read
 # renders JSON, a write runs the action and reports its message. Both return the
@@ -112,6 +123,14 @@ def _issue_write(
     engine: Engine, issue_id: Any, key: str, payload: dict[str, Any]
 ) -> ActionResponse:
     return issue_api.issue_action(engine, key, payload, issue_id)
+
+
+def _project_read(engine: Engine, slug: Any) -> BaseModel | None:
+    return project_api.project_get(engine, slug)
+
+
+def _issue_read(engine: Engine, issue_id: Any) -> BaseModel | None:
+    return issue_api.issue_get(engine, issue_id)
 
 
 # --- the reads ------------------------------------------------------------
@@ -204,14 +223,24 @@ def _input_schema(fields: list[Field], address: _Address | None) -> dict[str, An
     return schema
 
 
-def _write_handler(writer: Writer, key: str, address: _Address | None) -> Handler:
-    """Split the address off the arguments and route the rest as the payload. A
-    top-level create has no address, so its slug is ``None``."""
+def _write_handler(
+    writer: Writer, key: str, address: _Address | None, reader: Reader | None, domain: str
+) -> Handler:
+    """Split the address off the arguments and route the rest as the payload, then
+    re-read the addressed object and hand it back beside the message. A write that
+    removed the row reads ``None``, so it returns the message alone; a top-level
+    create has no address to re-read by (``reader`` is ``None``), so it does too."""
 
     def run(engine: Engine, arguments: dict[str, Any]) -> str:
         payload = dict(arguments)
-        value = payload.pop(address.name) if address is not None else None
-        return writer(engine, value, key, payload).message
+        if address is None or reader is None:
+            return writer(engine, None, key, payload).message
+        value = payload.pop(address.name)
+        message = writer(engine, value, key, payload).message
+        obj = reader(engine, value)
+        if obj is None:
+            return _dump({"message": message})
+        return _dump({"message": message, domain: obj.model_dump(mode="json")})
 
     return run
 
@@ -220,18 +249,20 @@ def _write_tools(
     domain: str,
     writer: Writer,
     address: _Address,
+    reader: Reader,
     schemas: list[tuple[str, list[Field]]],
     top_level: list[Offer],
 ) -> list[_Tool]:
     """A tool per object action, addressed, then a tool per top-level action, not.
     The name is ``{domain}_{KEY}`` throughout; the description is generated from the
-    key, so nothing here is hand-written per action."""
+    key, so nothing here is hand-written per action. An object write re-reads
+    through ``reader``; a top-level create has no address, so it passes none."""
     tools = [
         _Tool(
             name=f"{domain}_{key}",
             description=f"Run the {key} action on a {domain} addressed by {address.name}.",
             input_schema=_input_schema(fields, address),
-            run=_write_handler(writer, key, address),
+            run=_write_handler(writer, key, address, reader, domain),
         )
         for key, fields in schemas
     ]
@@ -240,7 +271,7 @@ def _write_tools(
             name=f"{domain}_{offer.key}",
             description=f"Run the {offer.key} action.",
             input_schema=_input_schema(offer.fields, None),
-            run=_write_handler(writer, offer.key, None),
+            run=_write_handler(writer, offer.key, None, None, domain),
         )
         for offer in top_level
     ]
@@ -293,10 +324,11 @@ def _tools() -> list[_Tool]:
             "project",
             _project_write,
             _SLUG,
+            _project_read,
             project_api.action_schemas(),
             project_api.top_level_offers(),
         ),
-        *_write_tools("issue", _issue_write, _ID, issue_api.action_schemas(), []),
+        *_write_tools("issue", _issue_write, _ID, _issue_read, issue_api.action_schemas(), []),
     ]
 
 
