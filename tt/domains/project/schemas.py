@@ -60,6 +60,7 @@ class ProjectListItem(BaseModel):
     title: str
     status: str
     path: str | None
+    planning: int
     todo: int
     doing: int
     done: int
@@ -71,6 +72,7 @@ class ProjectDetail(BaseModel):
     body: str
     status: str
     path: str | None
+    planning: int
     todo: int
     doing: int
     done: int

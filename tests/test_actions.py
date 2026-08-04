@@ -198,7 +198,7 @@ def test_set_status_is_always_offered() -> None:
 def test_set_status_moves_to_each_status(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
-    for status in [Status.DOING, Status.DONE, Status.TODO]:
+    for status in [Status.REQUIRES_PLANNING, Status.DOING, Status.DONE, Status.TODO]:
         response = run_issue(
             db,
             issue_actions.SetStatus,

@@ -11,6 +11,7 @@ from enum import StrEnum, auto
 
 
 class Status(StrEnum):
+    REQUIRES_PLANNING = auto()
     TODO = auto()
     DOING = auto()
     DONE = auto()

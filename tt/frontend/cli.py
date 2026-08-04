@@ -62,7 +62,8 @@ type Writer = Callable[[Engine, Any, str, dict[str, Any]], str]
 
 
 def _project_line(p: ProjectListItem) -> str:
-    return f"{p.slug:<12} {p.title:<24} {p.status:<8} {p.todo} todo, {p.doing} doing, {p.done} done"
+    counts = f"{p.planning} planning, {p.todo} todo, {p.doing} doing, {p.done} done"
+    return f"{p.slug:<12} {p.title:<24} {p.status:<8} {counts}"
 
 
 def _issue_line(i: IssueListItem) -> str:
