@@ -28,9 +28,16 @@ def _dispatch_issue(engine: Engine, key: str, values: dict[str, Any]) -> str:
     return issue_api.issue_action(engine, key, values, 1).message
 
 
-def test_an_enum_field_becomes_a_selector_over_the_member_names() -> None:
-    fields = fields_of(issue_schemas.EditStatusPayload)
+def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
+    fields = fields_of(issue_schemas.EditIssuePayload)
     assert fields == [
+        Field(name="title", required=True, kind=Text(), description="What to call the issue."),
+        Field(
+            name="body",
+            required=True,
+            kind=Text(),
+            description="The issue's description. Blank clears it.",
+        ),
         Field(
             name="status",
             required=True,
@@ -38,10 +45,16 @@ def test_an_enum_field_becomes_a_selector_over_the_member_names() -> None:
             description="Where the issue is up to.",
         ),
         Field(
-            name="note",
+            name="status_note",
             required=False,
             kind=OptionalText(),
             description="What to record about the move.",
+        ),
+        Field(
+            name="priority",
+            required=True,
+            kind=Enum(["normal", "high"]),
+            description="How far up the list the issue sorts.",
         ),
     ]
 
@@ -69,15 +82,27 @@ def test_a_field_the_form_cannot_render_fails_the_whole_form() -> None:
 
 
 def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engine) -> None:
-    fields = fields_of(issue_schemas.EditStatusPayload)
-    values = [(fields[0], "doing"), (fields[1], "")]
+    fields = fields_of(issue_schemas.EditIssuePayload)
+    values = [
+        (fields[0], "keep"),  # title
+        (fields[1], ""),  # body
+        (fields[2], "doing"),  # status
+        (fields[3], ""),  # status_note — the blank optional
+        (fields[4], "normal"),  # priority
+    ]
     built = payload(values)
-    assert built == {"status": "doing", "note": None}
+    assert built == {
+        "title": "keep",
+        "body": "",
+        "status": "doing",
+        "status_note": None,
+        "priority": "normal",
+    }
 
     # And the decoder accepts exactly that: the dispatch writes, so reading the
     # issue back shows the null cleared the note.
     _seeded(db)
-    _dispatch_issue(db, "editStatus", built)
+    _dispatch_issue(db, "edit", built)
     issue = issue_api.issue_get(db, 1)
     assert issue is not None
     assert issue.status_note is None
@@ -86,17 +111,24 @@ def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engin
 def test_a_blank_required_text_field_is_submitted_and_refused(db: Engine) -> None:
     # The form does not second-guess ``execute``; a form that did would be a
     # second place that has to agree.
-    fields = fields_of(issue_schemas.EditTitlePayload)
-    built = payload([(fields[0], "")])
-    assert built == {"title": ""}
+    fields = fields_of(issue_schemas.EditIssuePayload)
+    built = payload(
+        [
+            (fields[0], ""),
+            (fields[1], ""),
+            (fields[2], "todo"),
+            (fields[3], ""),
+            (fields[4], "normal"),
+        ]
+    )
+    assert built["title"] == ""
     _seeded(db)
     with pytest.raises(Invalid):
-        _dispatch_issue(db, "editTitle", built)
+        _dispatch_issue(db, "edit", built)
 
 
 def test_text_and_enum_are_the_two_controls_a_field_derives() -> None:
     # The kind is what ``tui`` reads to choose between a text box and a selector.
-    title = fields_of(issue_schemas.EditTitlePayload)[0]
-    assert title.kind == Text()
-    priority = fields_of(issue_schemas.EditPriorityPayload)[0]
-    assert priority.kind == Enum(["normal", "high"])
+    fields = fields_of(issue_schemas.EditIssuePayload)
+    assert fields[0].kind == Text()  # title
+    assert fields[4].kind == Enum(["normal", "high"])  # priority

@@ -50,16 +50,7 @@ def _names(app: object) -> list[str]:
 
 
 def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> None:
-    assert _names(cli.issue_app) == [
-        "ls",
-        "show",
-        "action",
-        "editTitle",
-        "editBody",
-        "editStatus",
-        "editPriority",
-        "delete",
-    ]
+    assert _names(cli.issue_app) == ["ls", "show", "action", "edit", "delete"]
     # ``createProject`` is top-level — no address to hang a subcommand on — so it is
     # reached through the raw ``action`` path rather than generated here.
     assert _names(cli.project_app) == [
@@ -95,22 +86,37 @@ def test_a_subcommand_does_not_open_the_tui(database: str, monkeypatch: pytest.M
 
 
 def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(database: str) -> None:
-    # ``--status`` comes from the schema, so a missing one is a usage error rather
-    # than a payload the decoder refuses further in.
-    assert invoke(database, "issue", "editStatus", "1").exit_code == USAGE
+    full = ["--title", "x", "--body", "", "--status", "todo", "--priority", "normal"]
+    # The required options come from the schema, so an edit missing them is a usage
+    # error rather than a payload the decoder refuses further in.
+    assert invoke(database, "issue", "edit", "1").exit_code == USAGE
     # A value outside the enum is a usage error listing the alternatives.
-    assert invoke(database, "issue", "editStatus", "1", "--status", "shipped").exit_code == USAGE
+    bad_enum = ["--title", "x", "--body", "", "--status", "shipped", "--priority", "normal"]
+    assert invoke(database, "issue", "edit", "1", *bad_enum).exit_code == USAGE
     # A blank title gets past the parser — what a title has to contain is the
     # action's business — so this is a refusal (123), not a usage error (2).
-    blank = invoke(database, "issue", "editTitle", "1", "--title", "")
+    blank = invoke(
+        database,
+        "issue",
+        "edit",
+        "1",
+        "--title",
+        "",
+        "--body",
+        "",
+        "--status",
+        "todo",
+        "--priority",
+        "normal",
+    )
     assert blank.exit_code == cli.REFUSED
     assert "title is required" in blank.output
     # An option the schema does not advertise is rejected.
-    assert invoke(database, "issue", "editTitle", "1", "--bogus", "x").exit_code == USAGE
+    assert invoke(database, "issue", "edit", "1", *full, "--bogus", "x").exit_code == USAGE
 
 
 def test_the_help_text_carries_the_field_doc_and_the_enum_values(database: str) -> None:
-    result = invoke(database, "issue", "editStatus", "--help")
+    result = invoke(database, "issue", "edit", "--help")
     assert result.exit_code == 0
     assert "Where the issue is up to." in result.output
     # Typer renders the closed choice inline rather than clap's "[possible values:
@@ -120,9 +126,29 @@ def test_the_help_text_carries_the_field_doc_and_the_enum_values(database: str) 
 
 
 def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
-    spelled = invoke(database, "issue", "editStatus", "1", "--status", "doing")
+    spelled = invoke(
+        database,
+        "issue",
+        "edit",
+        "1",
+        "--title",
+        "x",
+        "--body",
+        "",
+        "--status",
+        "doing",
+        "--priority",
+        "normal",
+    )
     assert spelled.exit_code == 0
-    blob = invoke(database, "issue", "action", "1", "editStatus", '{"status":"doing"}')
+    blob = invoke(
+        database,
+        "issue",
+        "action",
+        "1",
+        "edit",
+        '{"title":"x","body":"","status":"doing","priority":"normal"}',
+    )
     assert blob.exit_code == 0
     assert spelled.output == blob.output
 
@@ -143,9 +169,9 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
     assert value["issue"]["priority"] == "high"
 
     keys = [action["key"] for action in value["actions"]]
-    assert keys == ["editTitle", "editBody", "editStatus", "editPriority", "delete"]
+    assert keys == ["edit", "delete"]
     # Each offer carries a human label alongside its key.
-    assert value["actions"][0]["label"] == "Edit title"
+    assert value["actions"][0]["label"] == "Edit"
     # Each action carries its fields, descriptions and all, for an agent to fill in.
     title = value["actions"][0]["arguments"][0]
     assert title == {

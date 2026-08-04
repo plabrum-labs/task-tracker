@@ -211,7 +211,8 @@ def test_the_spacebar_reaches_a_form_as_a_character(seeded: Engine) -> None:
     state = tui.start(seeded, ProjectScope("tt"))
     assert tui.on_key(state, " ") == OpenOverlay("issue")
 
-    form = press(seeded, state, "e")  # editTitle
+    state = press(seeded, state, "x")  # issue menu
+    form = press(seeded, state, "enter")  # pick Edit; the title box is focused first
     key = tui._key_string(space)
     assert key is not None
     form = tui.apply(seeded, form, tui.on_key(form, key))
@@ -224,24 +225,30 @@ def test_the_issue_menu_lists_exactly_what_the_issue_offers(seeded: Engine) -> N
     state = press(seeded, state, "x")
     assert isinstance(state.overlay, ListOverlay)
     labels = [c.label for c in state.overlay.commands]
-    assert labels == ["Edit title", "Edit body", "Edit status", "Edit priority", "Delete"]
+    assert labels == ["Edit", "Delete"]
 
 
 # --- reducer: writes ------------------------------------------------------
 
 
-def test_the_status_accelerator_opens_a_picker_and_the_submit_writes(seeded: Engine) -> None:
+def test_editing_an_issue_status_through_the_menu_writes(seeded: Engine) -> None:
     state = tui.start(seeded, ProjectScope("tt"))
     issue_id = state.selected_id
     assert issue_id is not None
 
-    state = press(seeded, state, "s")
+    state = press(seeded, state, "x")  # issue menu
+    state = press(seeded, state, "enter")  # pick Edit
     assert isinstance(state.overlay, FormOverlay)
-    assert state.overlay.key == "editStatus"
-    assert state.overlay.entries[0].control == Choosing(values=["todo", "doing", "done"], index=0)
-
+    assert state.overlay.key == "edit"
+    # The whole object is one form: title, body, status, note, priority in order.
+    for char in "keep":  # a non-blank title so the edit is submittable
+        state = press(seeded, state, char)
+    state = press(seeded, state, "down")  # body
+    state = press(seeded, state, "down")  # status
+    assert isinstance(state.overlay, FormOverlay)
+    assert state.overlay.entries[2].control == Choosing(values=["todo", "doing", "done"], index=0)
     state = press(seeded, state, "right")  # todo -> doing
-    state = press(seeded, state, "enter")  # submit, note left blank
+    state = press(seeded, state, "enter")  # submit
     assert state.overlay is None
 
     detail = issue_api.issue_get(seeded, issue_id)
@@ -262,7 +269,8 @@ def test_capture_adds_an_issue_to_the_scoped_project(seeded: Engine) -> None:
 
 def test_a_blank_edit_is_refused_and_leaves_the_form_up(seeded: Engine) -> None:
     state = tui.start(seeded, ProjectScope("tt"))
-    state = press(seeded, state, "e")  # editTitle
+    state = press(seeded, state, "x")  # issue menu
+    state = press(seeded, state, "enter")  # pick Edit
     assert isinstance(state.overlay, FormOverlay)
     state = press(seeded, state, "enter")  # submit with the title still blank
     assert isinstance(state.overlay, FormOverlay), "the form stays up on a refusal"

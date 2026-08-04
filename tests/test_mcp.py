@@ -40,7 +40,7 @@ def test_the_tool_list_is_the_reads_plus_a_tool_per_registered_action() -> None:
 
 
 def test_an_enum_field_carries_its_wire_choices() -> None:
-    status = _tool("issue_editStatus").input_schema["properties"]["status"]
+    status = _tool("issue_edit").input_schema["properties"]["status"]
     assert status == {
         "type": "string",
         "enum": ["todo", "doing", "done"],
@@ -49,12 +49,12 @@ def test_an_enum_field_carries_its_wire_choices() -> None:
 
 
 def test_an_object_tool_prepends_its_address_as_a_required_property() -> None:
-    schema = _tool("issue_editStatus").input_schema
+    schema = _tool("issue_edit").input_schema
     assert schema["properties"]["id"] == {"type": "integer", "description": "The issue's id."}
-    # The address and the required payload field are both demanded; the optional
-    # note is not.
-    assert set(schema["required"]) == {"id", "status"}
-    assert "note" in schema["properties"]
+    # The address and every required payload field are demanded; the optional
+    # status note is not.
+    assert set(schema["required"]) == {"id", "title", "body", "status", "priority"}
+    assert "status_note" in schema["properties"]
 
 
 def test_create_project_has_no_address_property() -> None:
@@ -71,9 +71,13 @@ def test_a_runnable_write_persists(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
 
-    result = mcp.dispatch(db, "issue_editStatus", {"id": seeded.id, "status": "doing"})
+    result = mcp.dispatch(
+        db,
+        "issue_edit",
+        {"id": seeded.id, "title": "one", "body": "", "status": "doing", "priority": "normal"},
+    )
     assert result.is_error is not True
-    assert _text(result) == "issue 1: saved"
+    assert "issue 1: saved" in _text(result)
 
     with platform_db.reading(db) as session:
         read = issue_queries.get_issue(session, seeded.id)
@@ -108,13 +112,7 @@ def test_a_read_renders_the_offers_an_agent_picks_from(db: Engine) -> None:
 
     shown = json.loads(_text(mcp.dispatch(db, "issue_show", {"id": 1})))
     assert shown["issue"]["project"] == "tt"
-    assert [action["key"] for action in shown["actions"]] == [
-        "editTitle",
-        "editBody",
-        "editStatus",
-        "editPriority",
-        "delete",
-    ]
+    assert [action["key"] for action in shown["actions"]] == ["edit", "delete"]
 
 
 def test_an_unknown_object_is_a_tool_error(db: Engine) -> None:

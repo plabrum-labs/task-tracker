@@ -6,8 +6,8 @@ cases that run an action load their object in the transaction they write — the
 a frontend does — then assert both the response and the row's new state.
 
 Per the root ``CLAUDE.md`` every action key gets two cases: the menu withholds it
-and the write refuses it. No issue action refuses anything, so for those the
-honest pair is "always offered" and the refusal ``execute`` states.
+and the write refuses it. The issue edit refuses nothing at the menu, so for it the
+honest pair is "always offered" and the blank-title refusal ``execute`` states.
 """
 
 from typing import Any
@@ -127,6 +127,20 @@ def doing_issues(n: int) -> list[Issue]:
 # --- issues: the menu never withholds anything ----------------------------
 
 
+def _edit(**over: Any) -> issue_schemas.EditIssuePayload:
+    """A whole-object edit payload, defaulting to a no-op so a case names only the
+    field it exercises."""
+    fields: dict[str, Any] = {
+        "title": "a title",
+        "body": "",
+        "status": Status.TODO,
+        "status_note": None,
+        "priority": Priority.NORMAL,
+    }
+    fields.update(over)
+    return issue_schemas.EditIssuePayload(**fields)
+
+
 def test_every_issue_edit_is_always_offered() -> None:
     for status in Status:
         for priority in Priority:
@@ -139,52 +153,53 @@ def test_every_issue_edit_is_always_offered() -> None:
                 priority=priority,
                 status_note=None,
             )
-            assert issue_actions.EditTitle.availability(seeded) == Runnable()
-            assert issue_actions.EditBody.availability(seeded) == Runnable()
-            assert issue_actions.EditStatus.availability(seeded) == Runnable()
-            assert issue_actions.EditPriority.availability(seeded) == Runnable()
+            assert issue_actions.EditIssue.availability(seeded) == Runnable()
             assert issue_actions.Delete.availability(seeded) == Runnable()
 
 
-def test_edit_title_trims_saves_and_refuses_a_blank_title(db: Engine) -> None:
+def test_edit_sets_every_field_at_once(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "old")
 
     response = run_issue(
-        db, issue_actions.EditTitle, seeded.id, issue_schemas.EditTitlePayload(title=" new ")
+        db,
+        issue_actions.EditIssue,
+        seeded.id,
+        _edit(
+            title=" new ",
+            body="details",
+            status=Status.DOING,
+            status_note="started",
+            priority=Priority.HIGH,
+        ),
     )
     assert response.message == "issue 1: saved"
     with platform_db.reading(db) as s:
         read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
-    assert read.title == "new"
+    assert read.title == "new"  # trimmed
+    assert read.body == "details"
+    assert read.status == Status.DOING
+    assert read.status_note == "started"
+    assert read.priority == Priority.HIGH
+
+
+def test_edit_trims_and_refuses_a_blank_title(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    seeded = an_issue(db, tt, "old")
 
     with pytest.raises(Invalid):
-        run_issue(
-            db, issue_actions.EditTitle, seeded.id, issue_schemas.EditTitlePayload(title="   ")
-        )
+        run_issue(db, issue_actions.EditIssue, seeded.id, _edit(title="   "))
 
 
-def test_edit_body_accepts_the_blank_that_edit_title_refuses(db: Engine) -> None:
-    tt = a_project(db, "tt")
-    seeded = an_issue(db, tt, "one")
-
-    run_issue(db, issue_actions.EditBody, seeded.id, issue_schemas.EditBodyPayload(body=""))
-    with platform_db.reading(db) as s:
-        read = issue_queries.get_issue(s, seeded.id)
-    assert read is not None
-    assert read.body == ""
-
-
-def test_edit_status_replaces_the_note_it_arrived_with(db: Engine) -> None:
+def test_edit_carries_whatever_status_note_the_payload_holds(db: Engine) -> None:
+    # A whole-object edit does not auto-clear the note on a status move: the note is
+    # just another field, so it follows the payload rather than the move.
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
 
     run_issue(
-        db,
-        issue_actions.EditStatus,
-        seeded.id,
-        issue_schemas.EditStatusPayload(status=Status.DOING, note="started"),
+        db, issue_actions.EditIssue, seeded.id, _edit(status=Status.DOING, status_note="started")
     )
     with platform_db.reading(db) as s:
         noted = issue_queries.get_issue(s, seeded.id)
@@ -192,33 +207,21 @@ def test_edit_status_replaces_the_note_it_arrived_with(db: Engine) -> None:
     assert noted.status == Status.DOING
     assert noted.status_note == "started"
 
-    # Moving without one clears the old note.
+    # A move carrying a note keeps it — no auto-clear.
     run_issue(
-        db,
-        issue_actions.EditStatus,
-        seeded.id,
-        issue_schemas.EditStatusPayload(status=Status.DONE, note=None),
+        db, issue_actions.EditIssue, seeded.id, _edit(status=Status.DONE, status_note="finished")
     )
+    with platform_db.reading(db) as s:
+        kept = issue_queries.get_issue(s, seeded.id)
+    assert kept is not None
+    assert kept.status_note == "finished"
+
+    # A move carrying None clears it — the payload said so.
+    run_issue(db, issue_actions.EditIssue, seeded.id, _edit(status=Status.TODO))
     with platform_db.reading(db) as s:
         cleared = issue_queries.get_issue(s, seeded.id)
     assert cleared is not None
     assert cleared.status_note is None
-
-
-def test_edit_priority_sets_the_priority(db: Engine) -> None:
-    tt = a_project(db, "tt")
-    seeded = an_issue(db, tt, "one")
-
-    run_issue(
-        db,
-        issue_actions.EditPriority,
-        seeded.id,
-        issue_schemas.EditPriorityPayload(priority=Priority.HIGH),
-    )
-    with platform_db.reading(db) as s:
-        read = issue_queries.get_issue(s, seeded.id)
-    assert read is not None
-    assert read.priority == Priority.HIGH
 
 
 def test_delete_hides_an_issue(db: Engine) -> None:
@@ -352,13 +355,7 @@ def _keys(offered: list[Any]) -> list[str]:
 
 
 def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
-    assert _keys(issue_group.offers(issue())) == [
-        "editTitle",
-        "editBody",
-        "editStatus",
-        "editPriority",
-        "delete",
-    ]
+    assert _keys(issue_group.offers(issue())) == ["edit", "delete"]
     # An active project with two issues doing: editStatus and delete come back
     # refused, addIssue is runnable — one list, told apart by what each execute
     # writes rather than by which registration it sat in.
@@ -376,7 +373,7 @@ def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
 
 def test_an_offer_carries_its_label() -> None:
     by_key = {offer.key: offer.label for offer in issue_group.offers(issue())}
-    assert by_key["editStatus"] == "Edit status"
+    assert by_key["edit"] == "Edit"
     assert by_key["delete"] == "Delete"
     assert project_group.top_level_offers()[0].label == "Create project"
 
@@ -391,14 +388,13 @@ def test_the_api_agrees_with_the_typed_path() -> None:
     erased = _fresh()
     tt = a_project(erased, "tt")
     seeded = an_issue(erased, tt, "old")
-    via_api = issue_api.issue_action(erased, "editTitle", {"title": " new "}, seeded.id).message
+    wire = {"title": " new ", "body": "", "status": "todo", "priority": "normal"}
+    via_api = issue_api.issue_action(erased, "edit", wire, seeded.id).message
 
     typed = _fresh()
     tt = a_project(typed, "tt")
     seeded = an_issue(typed, tt, "old")
-    via_typed = run_issue(
-        typed, issue_actions.EditTitle, seeded.id, issue_schemas.EditTitlePayload(title=" new ")
-    ).message
+    via_typed = run_issue(typed, issue_actions.EditIssue, seeded.id, _edit(title=" new ")).message
 
     assert via_api == via_typed == "issue 1: saved"
 
@@ -423,16 +419,18 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
     tt = a_project(db, "tt")
     an_issue(db, tt, "one")
     for payload in [
-        {},  # missing a required field
-        {"title": 5},  # wrong type
-        {"title": "x", "bogus": 1},  # not advertised
+        {},  # missing required fields
+        {"title": 5, "body": "", "status": "todo", "priority": "normal"},  # wrong type
+        {"title": "x", "body": "", "status": "todo", "priority": "normal", "bogus": 1},  # extra
     ]:
         with pytest.raises(Invalid):
-            issue_api.issue_action(db, "editTitle", payload, 1)
+            issue_api.issue_action(db, "edit", payload, 1)
     # A value outside the enum, the one the schema could have told the caller
     # about in advance.
     with pytest.raises(Invalid):
-        issue_api.issue_action(db, "editStatus", {"status": "shipped"}, 1)
+        issue_api.issue_action(
+            db, "edit", {"title": "x", "body": "", "status": "shipped", "priority": "normal"}, 1
+        )
 
 
 def test_an_action_with_no_arguments_takes_an_empty_object_and_not_null(db: Engine) -> None:
@@ -455,18 +453,19 @@ def test_an_unknown_key_is_invalid(db: Engine) -> None:
         project_api.project_action(db, "explode", {})
 
 
-def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db: Engine) -> None:
+def test_a_key_decodes_against_the_group_it_was_dispatched_on(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "one")
-    issue_keys = _keys(issue_group.offers(issue()))
-    project_keys = _keys(project_group.offers(project()))
-    for key in ["editTitle", "editBody", "editStatus"]:
-        assert key in issue_keys and key in project_keys
 
-    # A project status through the issue's editStatus.
+    # A project status through the issue's edit — the issue enum has no ``archived``.
     with pytest.raises(Invalid):
-        issue_api.issue_action(db, "editStatus", {"status": "archived"}, made.id)
-    # An issue status, and an issue-only field, through the project's.
+        issue_api.issue_action(
+            db,
+            "edit",
+            {"title": "x", "body": "", "status": "archived", "priority": "normal"},
+            made.id,
+        )
+    # An issue status, and an issue-only field, through the project's editStatus.
     with pytest.raises(Invalid):
         project_api.project_action(db, "editStatus", {"status": "doing"}, "tt")
     with pytest.raises(Invalid):

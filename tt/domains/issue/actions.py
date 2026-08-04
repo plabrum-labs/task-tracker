@@ -6,10 +6,10 @@ columns, a delete stamps ``deleted_at``. The flush is the group's, once, so an
 ``execute`` only says what it changed. The payload shapes are in ``schemas``, one
 model per action.
 
-None of the four edits refuses anything. Many issues may be ``doing`` at once,
-there is no WIP rule, so both hooks are the default in every case and the refusals
-are all ``execute``'s. Each action registers by decorating itself with
-``issue_actions``.
+Neither the edit nor the delete refuses anything. Many issues may be ``doing`` at
+once, there is no WIP rule, so both hooks are the default in every case and the
+only refusal is the blank title ``execute`` states. Each action registers by
+decorating itself with ``issue_actions``.
 """
 
 from datetime import UTC, datetime
@@ -29,66 +29,26 @@ issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.get_issu
 
 
 @issue_actions
-class EditTitle(ObjectAction[Issue, schemas.EditTitlePayload]):
-    KEY = "editTitle"
-    LABEL = "Edit title"
-    Payload = schemas.EditTitlePayload
+class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
+    # One whole-object edit: the payload carries every editable field and each is
+    # set. ``status_note`` is just another field the caller controls, so a status
+    # move that carries no note clears it and a move that carries one keeps it.
+    KEY = "edit"
+    LABEL = "Edit"
+    Payload = schemas.EditIssuePayload
+    SEED_FROM_TARGET = True
 
     @classmethod
     def execute(
-        cls, obj: Issue, payload: schemas.EditTitlePayload, deps: ActionDeps
+        cls, obj: Issue, payload: schemas.EditIssuePayload, deps: ActionDeps
     ) -> ActionResponse:
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")
         obj.title = title
-        return ActionResponse(message=f"{obj.subject()}: saved")
-
-
-@issue_actions
-class EditBody(ObjectAction[Issue, schemas.EditBodyPayload]):
-    # The same payload shape as ``editTitle`` and a different rule: a blank body is
-    # how you clear one. Two actions the schema cannot tell apart.
-    KEY = "editBody"
-    LABEL = "Edit body"
-    Payload = schemas.EditBodyPayload
-
-    @classmethod
-    def execute(
-        cls, obj: Issue, payload: schemas.EditBodyPayload, deps: ActionDeps
-    ) -> ActionResponse:
         obj.body = payload.body
-        return ActionResponse(message=f"{obj.subject()}: saved")
-
-
-@issue_actions
-class EditStatus(ObjectAction[Issue, schemas.EditStatusPayload]):
-    # The note describes the status it arrived with, so moving without one clears
-    # the old note rather than leaving it to describe a state the issue is no
-    # longer in.
-    KEY = "editStatus"
-    LABEL = "Edit status"
-    Payload = schemas.EditStatusPayload
-
-    @classmethod
-    def execute(
-        cls, obj: Issue, payload: schemas.EditStatusPayload, deps: ActionDeps
-    ) -> ActionResponse:
         obj.status = payload.status
-        obj.status_note = payload.note
-        return ActionResponse(message=f"{obj.subject()}: saved")
-
-
-@issue_actions
-class EditPriority(ObjectAction[Issue, schemas.EditPriorityPayload]):
-    KEY = "editPriority"
-    LABEL = "Edit priority"
-    Payload = schemas.EditPriorityPayload
-
-    @classmethod
-    def execute(
-        cls, obj: Issue, payload: schemas.EditPriorityPayload, deps: ActionDeps
-    ) -> ActionResponse:
+        obj.status_note = payload.status_note
         obj.priority = payload.priority
         return ActionResponse(message=f"{obj.subject()}: saved")
 
