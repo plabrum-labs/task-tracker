@@ -5,6 +5,11 @@ default:
 sync:
     uv sync
 
+# Put `tt`/`tt-mcp` on your PATH (~/.local/bin) as an editable uv tool, so the
+# working copy stays live. Mutates the global tool env, unlike the rest here.
+install:
+    uv tool install --editable .
+
 # The domain, the wire, the frontends, and the SQL edge against real SQLite.
 test:
     uv run pytest
