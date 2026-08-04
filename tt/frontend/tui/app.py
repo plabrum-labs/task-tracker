@@ -43,3 +43,8 @@ class TrackerApp(App[None]):
 
     def on_mount(self) -> None:
         self.push_screen(MainScreen(self._engine))
+
+
+def run(engine: Engine) -> None:
+    """Open the terminal UI on ``engine``. The one call ``cli.py`` makes."""
+    TrackerApp(engine).run()
