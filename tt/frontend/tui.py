@@ -1005,10 +1005,11 @@ def _submit_capture(engine: Engine, state: State) -> State:
 def _shift_project(engine: Engine, state: State, n: int) -> State:
     if not state.projects:
         return state
-    slugs = [p.slug for p in state.projects]
-    current = _slug_of(state)
-    base = slugs.index(current) if current in slugs else 0
-    state.scope = ProjectScope(slugs[(base + n) % len(slugs)])
+    # All-projects is a stop on the cycle, so ``]`` off the last project lands
+    # back on it rather than skipping straight to the first.
+    scopes: list[Scope] = [AllScope(), *(ProjectScope(p.slug) for p in state.projects)]
+    base = next((i for i, s in enumerate(scopes) if s == state.scope), 0)
+    state.scope = scopes[(base + n) % len(scopes)]
     state.selected_id = None
     state.status = BROWSING
     return _reload(engine, state)

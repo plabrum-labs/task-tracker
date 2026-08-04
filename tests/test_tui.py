@@ -330,6 +330,18 @@ def test_shift_project_moves_the_scope_to_the_next_project(db: Engine) -> None:
     assert state.scope == ProjectScope("web")
 
 
+def test_shift_project_cycles_back_through_all_projects(db: Engine) -> None:
+    _seed(db)
+    project_api.project_action(db, "createProject", {"slug": "web", "title": "website"})
+    state = tui.start(db, ProjectScope("web"))
+    # ``]`` off the last project lands on all-projects, not back on the first.
+    state = press(db, state, "]")
+    assert state.scope == AllScope()
+    # And ``[`` off all-projects wraps round to the last project.
+    state = press(db, state, "[")
+    assert state.scope == ProjectScope("web")
+
+
 def test_switching_to_a_missing_project_falls_out_to_all_projects(db: Engine) -> None:
     _seed(db)
     state = tui.start(db, ProjectScope("tt"))
