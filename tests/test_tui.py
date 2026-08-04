@@ -31,11 +31,16 @@ from tt.frontend.tui import (
     OverlayType,
     ProjectScope,
     RunAccelerator,
+    SettingsCommit,
+    SettingsCycle,
+    SettingsMove,
+    SettingsOverlay,
     ShiftProject,
     StartFilter,
     State,
 )
 from tt.platform.actions import Offer, Refused, Runnable
+from tt.platform.config import ThemeName
 
 # --- helpers --------------------------------------------------------------
 
@@ -145,7 +150,7 @@ def test_match_path_takes_the_longest_ancestor() -> None:
 
 
 def test_glyph_marker_and_ref() -> None:
-    assert tui.glyph("doing")[0] == "◐"
+    assert tui.glyph("doing") == "◐"
     assert tui.marker("high") == "▲"
     assert tui.marker("normal") is None
     assert tui.issue_ref("tt", 4) == "TT-4"
@@ -375,3 +380,65 @@ def test_switching_to_a_missing_project_falls_out_to_all_projects(db: Engine) ->
     project_api.project_action(db, "delete", {}, "tt")
     state = press(db, state, "R")
     assert state.scope == AllScope()
+
+
+# --- reducer: settings ----------------------------------------------------
+
+
+def test_comma_opens_the_settings_modal_on_the_current_theme(seeded: Engine) -> None:
+    state = tui.start(seeded, ProjectScope("tt"))
+    assert tui.on_key(state, ",") == OpenOverlay("settings")
+    state = press(seeded, state, ",")
+    assert isinstance(state.overlay, SettingsOverlay)
+    theme = next(s for s in state.overlay.settings if s.key == "theme")
+    assert theme.options == ("Dark", "Light")
+    assert theme.index == 0  # the default theme is dark, so the modal opens on Dark
+
+
+def test_settings_keys_move_cycle_and_commit(seeded: Engine) -> None:
+    state = tui.start(seeded, ProjectScope("tt"))
+    state = press(seeded, state, ",")
+    assert isinstance(state.overlay, SettingsOverlay)
+    assert tui.on_key(state, "up") == SettingsMove(-1)
+    assert tui.on_key(state, "left") == SettingsCycle(-1)
+    assert tui.on_key(state, "right") == SettingsCycle(1)
+    assert tui.on_key(state, "enter") == SettingsCommit()
+
+
+def test_cycling_and_committing_flips_the_theme_and_closes(seeded: Engine) -> None:
+    state = tui.start(seeded, ProjectScope("tt"))
+    assert state.theme == ThemeName.DARK
+    state = press(seeded, state, ",")
+    state = press(seeded, state, "right")  # Dark -> Light
+    state = press(seeded, state, "enter")  # commit
+    assert state.overlay is None
+    assert state.theme == ThemeName.LIGHT
+
+
+def test_cycling_wraps_and_is_pure_until_committed(seeded: Engine) -> None:
+    state = tui.start(seeded, ProjectScope("tt"))
+    state = press(seeded, state, ",")
+    state = press(seeded, state, "left")  # index 0 wraps back to the last option
+    assert isinstance(state.overlay, SettingsOverlay)
+    assert state.overlay.settings[0].index == 1  # showing Light
+    assert state.theme == ThemeName.DARK  # but nothing is committed yet
+
+
+def test_escape_leaves_the_theme_unchanged(seeded: Engine) -> None:
+    state = tui.start(seeded, ProjectScope("tt"))
+    state = press(seeded, state, ",")
+    state = press(seeded, state, "right")  # move the selection to Light
+    state = press(seeded, state, "escape")  # cancel without committing
+    assert state.overlay is None
+    assert state.theme == ThemeName.DARK
+
+
+def test_startup_theme_prefers_the_env_override_over_the_persisted_preference() -> None:
+    from tt.platform.config import Prefs
+
+    light_pref = Prefs(theme=ThemeName.LIGHT)
+    # TEXTUAL_THEME wins when it names one of ours.
+    assert tui._startup_theme(light_pref, "tt-dark") == ThemeName.DARK
+    # Unset, or a theme this app does not paint for, falls through to the preference.
+    assert tui._startup_theme(light_pref, None) == ThemeName.LIGHT
+    assert tui._startup_theme(light_pref, "textual-dark") == ThemeName.LIGHT

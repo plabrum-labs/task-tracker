@@ -22,7 +22,7 @@ widget tree from the new ``State``.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, assert_never
 
 from rich.markup import escape as _esc
@@ -30,12 +30,14 @@ from sqlalchemy import Engine
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.theme import Theme
 from textual.widgets import Static
 
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
+from tt.platform import config
 from tt.platform.actions import (
     REFUSALS,
     Enum,
@@ -48,15 +50,51 @@ from tt.platform.actions import (
 from tt.platform.actions import (
     payload as build_payload,
 )
+from tt.platform.config import Prefs, ThemeName
 
 # --- the visual vocabulary ------------------------------------------------
 
-ACCENT = "#8B8CF0"
-TEXT = "#E7E9EE"
-MUTED = "#8A8F99"
-FAINT = "#565B66"
-HIGH = "#F0883E"
-STATUS_COLOR = {"todo": "#8A8F99", "doing": "#E3B341", "done": "#3FB950"}
+# The two themes, the one source of truth for every colour. Standard tokens carry
+# the semantic colours; the ``variables`` block pins the exact hex the app has
+# always drawn and adds ``priority-high``, the one token with no standard name.
+# These are the only hex literals in the file — the CSS and the markup both read
+# their colours back out of the active theme (via ``$`` variables and ``Palette``
+# respectively), never repeating them.
+TT_DARK = Theme(
+    name=ThemeName.DARK.value,
+    dark=True,
+    primary="#8B8CF0",
+    foreground="#E7E9EE",
+    warning="#E3B341",
+    success="#3FB950",
+    background="#0B0C0F",
+    surface="#1B1E25",
+    panel="#1B1E25",
+    variables={
+        "text-muted": "#8A8F99",
+        "text-disabled": "#565B66",
+        "border": "#23262E",
+        "priority-high": "#F0883E",
+    },
+)
+TT_LIGHT = Theme(
+    name=ThemeName.LIGHT.value,
+    dark=False,
+    primary="#5457D6",
+    foreground="#1A1D23",
+    warning="#B7791F",
+    success="#1F883D",
+    background="#FFFFFF",
+    surface="#F0F1F4",
+    panel="#F0F1F4",
+    variables={
+        "text-muted": "#5A606B",
+        "text-disabled": "#9AA0AB",
+        "border": "#D5D8DE",
+        "priority-high": "#B5540B",
+    },
+)
+
 STATUS_GLYPH = {"todo": "○", "doing": "◐", "done": "●"}
 
 # The status columns of the board, in the order they read left to right.
@@ -66,9 +104,37 @@ HALF = 8  # rows a half-page jump moves; the terminal height is not pure.
 FAR = 10**6  # a move large enough to reach either end after clamping.
 
 
-def glyph(status: str) -> tuple[str, str]:
-    """The character and colour a status draws as."""
-    return STATUS_GLYPH.get(status, "·"), STATUS_COLOR.get(status, MUTED)
+@dataclass(frozen=True)
+class Palette:
+    """The concrete hex the markup sites interpolate. ``$theme-variables`` resolve
+    in the ``CSS`` block but not inside ``Static`` content markup, so a render helper
+    is handed a palette of already-resolved colours rather than variable names. Built
+    once per recompose from the active theme, and passed in explicitly so the render
+    helpers stay pure functions of their inputs."""
+
+    accent: str
+    text: str
+    muted: str
+    faint: str
+    high: str
+    status: dict[str, str]
+
+    @classmethod
+    def of(cls, app: App[None]) -> Palette:
+        v = app.get_css_variables()
+        return cls(
+            accent=v["primary"],
+            text=v["foreground"],
+            muted=v["text-muted"],
+            faint=v["text-disabled"],
+            high=v["priority-high"],
+            status={"todo": v["text-muted"], "doing": v["warning"], "done": v["success"]},
+        )
+
+
+def glyph(status: str) -> str:
+    """The character a status draws as; its colour comes from the palette."""
+    return STATUS_GLYPH.get(status, "·")
 
 
 def marker(priority: str) -> str | None:
@@ -432,7 +498,46 @@ class CheatsheetOverlay:
     pass
 
 
-type Overlay = ListOverlay | FormOverlay | CaptureOverlay | CheatsheetOverlay | None
+@dataclass(frozen=True)
+class Setting:
+    """One row of the settings modal: a stable ``key``, the label it shows, the
+    options it cycles, and which one is selected."""
+
+    key: str
+    name: str
+    options: tuple[str, ...]
+    index: int
+
+
+@dataclass
+class SettingsOverlay:
+    settings: list[Setting]
+    focus: int
+
+
+type Overlay = (
+    ListOverlay | FormOverlay | CaptureOverlay | CheatsheetOverlay | SettingsOverlay | None
+)
+
+
+# The theme options the modal offers, each paired with the name it persists as.
+_THEME_OPTIONS: tuple[tuple[str, ThemeName], ...] = (
+    ("Dark", ThemeName.DARK),
+    ("Light", ThemeName.LIGHT),
+)
+
+
+def _settings_overlay(theme: ThemeName) -> SettingsOverlay:
+    """The modal seeded from the current preference — one setting today, structured
+    as a list so a second is additive."""
+    index = next(i for i, (_, name) in enumerate(_THEME_OPTIONS) if name == theme)
+    setting = Setting(
+        key="theme",
+        name="Theme",
+        options=tuple(label for label, _ in _THEME_OPTIONS),
+        index=index,
+    )
+    return SettingsOverlay(settings=[setting], focus=0)
 
 
 # --- state ----------------------------------------------------------------
@@ -453,6 +558,7 @@ class State:
     status: str
     size: tuple[int, int]
     quit: bool
+    theme: ThemeName
 
 
 def _empty() -> State:
@@ -468,6 +574,7 @@ def _empty() -> State:
         status=BROWSING,
         size=(80, 24),
         quit=False,
+        theme=ThemeName.DARK,
     )
 
 
@@ -527,7 +634,7 @@ class ShiftProject:
 
 @dataclass(frozen=True)
 class OpenOverlay:
-    kind: Literal["issue", "project", "palette", "switcher", "cheatsheet"]
+    kind: Literal["issue", "project", "palette", "switcher", "cheatsheet", "settings"]
 
 
 @dataclass(frozen=True)
@@ -625,6 +732,21 @@ class FilterClear:
     pass
 
 
+@dataclass(frozen=True)
+class SettingsMove:
+    n: int
+
+
+@dataclass(frozen=True)
+class SettingsCycle:
+    n: int
+
+
+@dataclass(frozen=True)
+class SettingsCommit:
+    pass
+
+
 type Intent = (
     Ignored
     | Quit
@@ -653,6 +775,9 @@ type Intent = (
     | FilterType
     | FilterRub
     | FilterClear
+    | SettingsMove
+    | SettingsCycle
+    | SettingsCommit
 )
 
 
@@ -710,6 +835,24 @@ def _capture_key(key: str) -> Intent:
             return Ignored()
 
 
+def _settings_key(key: str) -> Intent:
+    match key:
+        case "escape":
+            return CloseOverlay()
+        case "up":
+            return SettingsMove(-1)
+        case "down":
+            return SettingsMove(1)
+        case "left":
+            return SettingsCycle(-1)
+        case "right":
+            return SettingsCycle(1)
+        case "enter":
+            return SettingsCommit()
+        case _:
+            return Ignored()
+
+
 def _filter_key(key: str) -> Intent:
     match key:
         case "escape":
@@ -760,6 +903,8 @@ def _browse_key(state: State, key: str) -> Intent:
             return OpenOverlay("switcher")
         case "?":
             return OpenOverlay("cheatsheet")
+        case ",":
+            return OpenOverlay("settings")
         case "/":
             return StartFilter()
         case "R":
@@ -789,6 +934,8 @@ def on_key(state: State, key: str) -> Intent:
             return _capture_key(key)
         case CheatsheetOverlay():
             return CloseOverlay()
+        case SettingsOverlay():
+            return _settings_key(key)
         case None:
             return _browse_key(state, key)
     assert_never(state.overlay)
@@ -889,6 +1036,9 @@ def _open_overlay(engine: Engine, state: State, kind: str) -> State:
     match kind:
         case "cheatsheet":
             state.overlay = CheatsheetOverlay()
+            return state
+        case "settings":
+            state.overlay = _settings_overlay(state.theme)
             return state
         case "switcher":
             offers = project_api.top_level_offers()
@@ -1123,6 +1273,36 @@ def _form_rub(state: State) -> State:
     return state
 
 
+def _settings_move(state: State, n: int) -> State:
+    if isinstance(state.overlay, SettingsOverlay) and state.overlay.settings:
+        state.overlay.focus = (state.overlay.focus + n) % len(state.overlay.settings)
+    return state
+
+
+def _settings_cycle(state: State, n: int) -> State:
+    if not isinstance(state.overlay, SettingsOverlay):
+        return state
+    overlay = state.overlay
+    setting = overlay.settings[overlay.focus]
+    if setting.options:
+        index = (setting.index + n) % len(setting.options)
+        overlay.settings[overlay.focus] = replace(setting, index=index)
+    return state
+
+
+def _settings_commit(state: State) -> State:
+    overlay = state.overlay
+    if not isinstance(overlay, SettingsOverlay):
+        return state
+    state.theme = next(
+        (_THEME_OPTIONS[s.index][1] for s in overlay.settings if s.key == "theme"),
+        state.theme,
+    )
+    state.overlay = None
+    state.status = BROWSING
+    return state
+
+
 def _start_filter(state: State) -> State:
     state.filtering = not state.filtering
     state.status = f"/{state.filter}" if state.filtering else BROWSING
@@ -1207,6 +1387,12 @@ def _apply(engine: Engine, state: State, intent: Intent) -> State:
             state.status = BROWSING
             state.selected_id = _filtered_first(state)
             return state
+        case SettingsMove(n=n):
+            return _settings_move(state, n)
+        case SettingsCycle(n=n):
+            return _settings_cycle(state, n)
+        case SettingsCommit():
+            return _settings_commit(state)
     assert_never(intent)
 
 
@@ -1218,82 +1404,92 @@ def apply(engine: Engine, state: State, intent: Intent) -> State:
 # --- rendering ------------------------------------------------------------
 
 
-def _topbar(state: State) -> Static:
+def _topbar(state: State, palette: Palette) -> Static:
     slug = _slug_of(state)
     if slug is None:
-        name = f"[{ACCENT}]◆[/] [b {TEXT}]all projects[/]"
+        name = f"[{palette.accent}]◆[/] [b {palette.text}]all projects[/]"
     else:
         project = _project(state, slug)
-        title = f" [{MUTED}]{_esc(project.title)}[/]" if project and project.title else ""
-        name = f"[{ACCENT}]◆[/] [b {TEXT}]{_esc(slug)}[/]{title}"
-    count = f"[{MUTED}]{len(visible_issues(state))} issues[/]"
+        title = f" [{palette.muted}]{_esc(project.title)}[/]" if project and project.title else ""
+        name = f"[{palette.accent}]◆[/] [b {palette.text}]{_esc(slug)}[/]{title}"
+    count = f"[{palette.muted}]{len(visible_issues(state))} issues[/]"
     tabs = " ".join(
-        f"[b {ACCENT}]{name_}[/]" if name_ == state.layout else f"[{FAINT}]{name_}[/]"
+        f"[b {palette.accent}]{name_}[/]"
+        if name_ == state.layout
+        else f"[{palette.faint}]{name_}[/]"
         for name_ in LAYOUTS
     )
     return Static(f"  {name}   {count}    {tabs}", id="topbar")
 
 
-def _row(issue: IssueListItem, selected: bool) -> Horizontal:
-    char, color = glyph(issue.status)
-    bar = f"[{ACCENT}]▌[/]" if selected else " "
-    title_color = TEXT if issue.status != "done" else MUTED
+def _row(issue: IssueListItem, selected: bool, palette: Palette) -> Horizontal:
+    char = glyph(issue.status)
+    color = palette.status.get(issue.status, palette.muted)
+    bar = f"[{palette.accent}]▌[/]" if selected else " "
+    title_color = palette.text if issue.status != "done" else palette.muted
     pri = marker(issue.priority)
-    pri_markup = f"[{HIGH}]{pri} high[/]" if pri else ""
+    pri_markup = f"[{palette.high}]{pri} high[/]" if pri else ""
     return Horizontal(
         Static(bar, classes="c-bar"),
         Static(f"[{color}]{char}[/]", classes="c-glyph"),
-        Static(f"[{MUTED}]{_esc(issue_ref(issue.project, issue.id))}[/]", classes="c-id"),
+        Static(f"[{palette.muted}]{_esc(issue_ref(issue.project, issue.id))}[/]", classes="c-id"),
         Static(f"[{title_color}]{_esc(issue.title)}[/]", classes="c-title"),
         Static(pri_markup, classes="c-pri"),
         classes="row sel" if selected else "row",
     )
 
 
-def _card(issue: IssueListItem, selected: bool) -> Static:
+def _card(issue: IssueListItem, selected: bool, palette: Palette) -> Static:
     pri = marker(issue.priority)
-    tag = f"[{HIGH}]{pri}[/] " if pri else ""
-    ref = f"[{FAINT}]{_esc(issue_ref(issue.project, issue.id))}[/]"
-    body = f"{tag}{ref}\n[{TEXT}]{_esc(issue.title)}[/]"
+    tag = f"[{palette.high}]{pri}[/] " if pri else ""
+    ref = f"[{palette.faint}]{_esc(issue_ref(issue.project, issue.id))}[/]"
+    body = f"{tag}{ref}\n[{palette.text}]{_esc(issue.title)}[/]"
     return Static(body, classes="card sel" if selected else "card")
 
 
-def _board(state: State, shown: list[IssueListItem]) -> Horizontal:
+def _board(state: State, shown: list[IssueListItem], palette: Palette) -> Horizontal:
     panels: list[Vertical] = []
     for col in columns(shown, "board"):
-        char, color = glyph(col.status or "")
+        char = glyph(col.status or "")
+        color = palette.status.get(col.status or "", palette.muted)
+        count = f"[{palette.faint}]{len(col.issues)}[/]"
         head = Static(
-            f"[{color}]{char}[/] [{MUTED}]{col.title}[/]  [{FAINT}]{len(col.issues)}[/]",
+            f"[{color}]{char}[/] [{palette.muted}]{col.title}[/]  {count}",
             classes="col-h",
         )
-        cards = [_card(issue, issue.id == state.selected_id) for issue in col.issues]
+        cards = [_card(issue, issue.id == state.selected_id, palette) for issue in col.issues]
         panels.append(Vertical(head, *cards, classes="col"))
     return Horizontal(*panels, id="body")
 
 
-def _body(state: State) -> VerticalScroll | Horizontal:
+def _body(state: State, palette: Palette) -> VerticalScroll | Horizontal:
     shown = visible_issues(state)
     if not shown:
         empty = "no issues — n to add one" if _slug_of(state) else "no issues"
-        return VerticalScroll(Static(f"  [{FAINT}]{empty}[/]"), id="body")
+        return VerticalScroll(Static(f"  [{palette.faint}]{empty}[/]"), id="body")
     if state.layout == "board":
-        return _board(state, shown)
-    rows = [_row(issue, issue.id == state.selected_id) for issue in shown]
+        return _board(state, shown, palette)
+    rows = [_row(issue, issue.id == state.selected_id, palette) for issue in shown]
     return VerticalScroll(*rows, id="body")
 
 
-def _footer(state: State) -> Static:
+def _footer(state: State, palette: Palette) -> Static:
     if state.filtering:
-        return Static(f"  [{ACCENT}]/[/]{_esc(state.filter)}[{FAINT}]▎[/]", id="footer")
-    return Static(f"  [{FAINT}]{_esc(state.status)}[/]", id="footer")
+        return Static(
+            f"  [{palette.accent}]/[/]{_esc(state.filter)}[{palette.faint}]▎[/]", id="footer"
+        )
+    return Static(f"  [{palette.faint}]{_esc(state.status)}[/]", id="footer")
 
 
-def _command_row(command: Command, selected: bool) -> Horizontal:
+def _command_row(command: Command, selected: bool, palette: Palette) -> Horizontal:
     if command.reason is not None:
-        name = f"[{FAINT}]{_esc(command.label)}[/] [{FAINT} italic]— {_esc(command.reason)}[/]"
+        name = (
+            f"[{palette.faint}]{_esc(command.label)}[/] "
+            f"[{palette.faint} italic]— {_esc(command.reason)}[/]"
+        )
     else:
-        name = f"[{TEXT}]{_esc(command.label)}[/]"
-    hint = f"[{FAINT}]{command.hint}[/]" if command.hint else ""
+        name = f"[{palette.text}]{_esc(command.label)}[/]"
+    hint = f"[{palette.faint}]{command.hint}[/]" if command.hint else ""
     return Horizontal(
         Static(name, classes="a-name"),
         Static(hint, classes="a-hint"),
@@ -1301,60 +1497,81 @@ def _command_row(command: Command, selected: bool) -> Horizontal:
     )
 
 
-def _list_overlay_widget(overlay: ListOverlay) -> Container:
+def _list_overlay_widget(overlay: ListOverlay, palette: Palette) -> Container:
     shown = visible(overlay.commands, overlay.query)
-    typed = f"{_esc(overlay.query)}[{ACCENT}]▎[/]"
-    search = typed if overlay.query else f"[{FAINT}]Search…[/]"
+    typed = f"{_esc(overlay.query)}[{palette.accent}]▎[/]"
+    search = typed if overlay.query else f"[{palette.faint}]Search…[/]"
     rows: list[Static | Horizontal] = [
-        Static(f"[{MUTED}]{_esc(overlay.header)}[/]", id="ov-header"),
+        Static(f"[{palette.muted}]{_esc(overlay.header)}[/]", id="ov-header"),
         Static(search, id="ov-search"),
     ]
     cursor = _clamp(overlay.index, 0, len(shown) - 1) if shown else 0
     for slot, command_index in enumerate(shown):
-        rows.append(_command_row(overlay.commands[command_index], selected=slot == cursor))
+        rows.append(_command_row(overlay.commands[command_index], slot == cursor, palette))
     if not shown:
-        rows.append(Static(f"  [{FAINT}]no matches[/]"))
+        rows.append(Static(f"  [{palette.faint}]no matches[/]"))
     return Container(Vertical(*rows, id="menu"), id="overlay")
 
 
-def _form_overlay_widget(form: FormOverlay) -> Container:
-    rows: list[Static] = [Static(f"[b {TEXT}]{_esc(form.label)}[/]", id="ov-header")]
+def _form_overlay_widget(form: FormOverlay, palette: Palette) -> Container:
+    rows: list[Static] = [Static(f"[b {palette.text}]{_esc(form.label)}[/]", id="ov-header")]
     for i, entry in enumerate(form.entries):
         focused = i == form.focus
-        mark = f" [{HIGH}]*[/]" if entry.field.required else ""
-        desc = f"  [{FAINT}]{_esc(entry.field.description)}[/]" if entry.field.description else ""
-        rows.append(Static(f"[{MUTED}]{_esc(entry.field.name)}[/]{mark}{desc}", classes="f-label"))
-        rows.append(_form_input_widget(entry.control, focused))
+        mark = f" [{palette.high}]*[/]" if entry.field.required else ""
+        desc = (
+            f"  [{palette.faint}]{_esc(entry.field.description)}[/]"
+            if entry.field.description
+            else ""
+        )
+        rows.append(
+            Static(f"[{palette.muted}]{_esc(entry.field.name)}[/]{mark}{desc}", classes="f-label")
+        )
+        rows.append(_form_input_widget(entry.control, focused, palette))
     rows.append(
-        Static(f"[{FAINT}]tab move · ←/→ choose · enter submit · esc cancel[/]", id="ov-foot")
+        Static(
+            f"[{palette.faint}]tab move · ←/→ choose · enter submit · esc cancel[/]", id="ov-foot"
+        )
     )
     return Container(Vertical(*rows, id="menu"), id="overlay")
 
 
-def _form_input_widget(control: Control, focused: bool) -> Static:
+def _form_input_widget(control: Control, focused: bool, palette: Palette) -> Static:
     match control:
         case Editing(text=text):
             value = _esc(text)
             if focused:
-                return Static(f"[{TEXT}]{value}[/][{ACCENT}]▎[/]", classes="f-box focus")
-            return Static(value or f"[{FAINT}]·[/]", classes="f-val")
+                return Static(
+                    f"[{palette.text}]{value}[/][{palette.accent}]▎[/]", classes="f-box focus"
+                )
+            return Static(value or f"[{palette.faint}]·[/]", classes="f-val")
         case Choosing(values=values, index=index):
-            options = " ".join(
-                f"[reverse {ACCENT}] {_esc(option)} [/]"
-                if slot == index
-                else f"[{FAINT}]{_esc(option)}[/]"
-                for slot, option in enumerate(values)
-            )
+            options = _option_strip(values, index, palette)
             classes = "f-enum focus" if focused else "f-enum"
             return Static(options, classes=classes)
     assert_never(control)
 
 
-def _capture_overlay_widget(capture: CaptureOverlay) -> Container:
+def _option_strip(options: tuple[str, ...] | list[str], index: int, palette: Palette) -> str:
+    """A row of options with the selected one reversed — the look a form enum and a
+    settings row both draw."""
+    return " ".join(
+        f"[reverse {palette.accent}] {_esc(option)} [/]"
+        if slot == index
+        else f"[{palette.faint}]{_esc(option)}[/]"
+        for slot, option in enumerate(options)
+    )
+
+
+def _capture_overlay_widget(capture: CaptureOverlay, palette: Palette) -> Container:
     return Container(
         Vertical(
-            Static(f"[{MUTED}]New issue in [b {TEXT}]{_esc(capture.slug)}[/][/]", id="ov-header"),
-            Static(f"[{TEXT}]{_esc(capture.text)}[/][{ACCENT}]▎[/]", id="ov-search"),
+            Static(
+                f"[{palette.muted}]New issue in [b {palette.text}]{_esc(capture.slug)}[/][/]",
+                id="ov-header",
+            ),
+            Static(
+                f"[{palette.text}]{_esc(capture.text)}[/][{palette.accent}]▎[/]", id="ov-search"
+            ),
             id="menu",
         ),
         id="overlay",
@@ -1374,34 +1591,53 @@ _CHEATS: list[tuple[str, str]] = [
     ("d", "delete issue"),
     ("n", "new issue"),
     ("/", "filter"),
+    (",", "settings"),
     ("P", "switch project"),
     ("R", "refresh"),
     ("q", "quit"),
 ]
 
 
-def _cheatsheet_widget() -> Container:
-    rows: list[Static] = [Static(f"[b {TEXT}]Keys[/]", id="ov-header")]
+def _cheatsheet_widget(palette: Palette) -> Container:
+    rows: list[Static] = [Static(f"[b {palette.text}]Keys[/]", id="ov-header")]
     rows.extend(
-        Static(f"  [{ACCENT}]{keys:<14}[/] [{MUTED}]{what}[/]", classes="cheat")
+        Static(f"  [{palette.accent}]{keys:<14}[/] [{palette.muted}]{what}[/]", classes="cheat")
         for keys, what in _CHEATS
     )
-    rows.append(Static(f"  [{FAINT}]any key to close[/]", classes="cheat"))
+    rows.append(Static(f"  [{palette.faint}]any key to close[/]", classes="cheat"))
     return Container(Vertical(*rows, id="menu"), id="overlay")
 
 
-def _overlay_widget(state: State) -> Container | None:
+def _settings_overlay_widget(overlay: SettingsOverlay, palette: Palette) -> Container:
+    rows: list[Static] = [Static(f"[b {palette.text}]Settings[/]", id="ov-header")]
+    for i, setting in enumerate(overlay.settings):
+        focused = i == overlay.focus
+        label_color = palette.text if focused else palette.muted
+        rows.append(Static(f"[{label_color}]{_esc(setting.name)}[/]", classes="f-label"))
+        classes = "f-enum focus" if focused else "f-enum"
+        rows.append(Static(_option_strip(setting.options, setting.index, palette), classes=classes))
+    rows.append(
+        Static(
+            f"[{palette.faint}]↑/↓ setting · ←/→ choose · enter save · esc cancel[/]", id="ov-foot"
+        )
+    )
+    return Container(Vertical(*rows, id="menu"), id="overlay")
+
+
+def _overlay_widget(state: State, palette: Palette) -> Container | None:
     match state.overlay:
         case None:
             return None
         case ListOverlay():
-            return _list_overlay_widget(state.overlay)
+            return _list_overlay_widget(state.overlay, palette)
         case FormOverlay():
-            return _form_overlay_widget(state.overlay)
+            return _form_overlay_widget(state.overlay, palette)
         case CaptureOverlay():
-            return _capture_overlay_widget(state.overlay)
+            return _capture_overlay_widget(state.overlay, palette)
         case CheatsheetOverlay():
-            return _cheatsheet_widget()
+            return _cheatsheet_widget(palette)
+        case SettingsOverlay():
+            return _settings_overlay_widget(state.overlay, palette)
     assert_never(state.overlay)
 
 
@@ -1438,15 +1674,18 @@ class TrackerApp(App[None]):
     maps each keypress through ``on_key`` then ``apply``, and rebuilds the tree from
     the result. No domain logic lives here."""
 
+    # No hex here: every colour is a ``$`` variable the active theme resolves, so a
+    # theme switch re-paints on the next recompose. ``ansi_default`` lets the
+    # terminal's own background show through rather than painting one over it.
     CSS = """
-    Screen { background: #0B0C0F; layers: base overlay; }
+    Screen { background: ansi_default; layers: base overlay; }
     #screen { layer: base; width: 100%; height: 100%; }
     #topbar { height: 1; padding: 0 1; margin: 1 0 0 0; }
     #body { height: 1fr; padding: 1 0; }
-    #footer { dock: bottom; height: 1; border-top: solid #23262E; padding: 0 1; }
+    #footer { dock: bottom; height: 1; border-top: solid $border; padding: 0 1; }
 
     .row { height: 1; }
-    .row.sel { background: #8B8CF0 14%; }
+    .row.sel { background: $primary 14%; }
     .c-bar { width: 2; }
     .c-glyph { width: 2; }
     .c-id { width: 8; }
@@ -1456,34 +1695,34 @@ class TrackerApp(App[None]):
     .col { width: 1fr; height: auto; padding: 0 1; }
     .col-h { padding-bottom: 1; }
     .card { padding: 0 1; margin-bottom: 1; height: auto; }
-    .card.sel { background: #8B8CF0 14%; }
+    .card.sel { background: $primary 14%; }
 
     #overlay {
         layer: overlay;
         width: 100%;
         height: 100%;
         align: center top;
-        background: #0B0C0F 55%;
+        background: $background 55%;
     }
     #menu {
         width: 56;
         height: auto;
         margin-top: 3;
         padding: 1 1;
-        background: #1B1E25;
-        border: round #8B8CF0;
+        background: $panel;
+        border: round $primary;
     }
     #ov-header { padding: 0 1; height: 1; }
-    #ov-search { padding: 0 1; height: 1; color: #565B66; }
+    #ov-search { padding: 0 1; height: 1; color: $text-disabled; }
     #ov-foot { padding: 1 1 0 1; }
     .act { height: 1; padding: 0 1; }
-    .act.hot { background: #8B8CF0 14%; }
+    .act.hot { background: $primary 14%; }
     .a-name { width: 1fr; }
     .a-hint { width: 6; text-align: right; }
     .f-label { height: 1; padding: 0 1; }
     .f-val { height: 1; padding: 0 2; }
-    .f-box { width: 1fr; height: 3; padding: 0 1; margin: 0 1; border: round #23262E; }
-    .f-box.focus { border: round #8B8CF0; }
+    .f-box { width: 1fr; height: 3; padding: 0 1; margin: 0 1; border: round $border; }
+    .f-box.focus { border: round $primary; }
     .f-enum { height: 1; padding: 0 2; }
     .f-enum.focus { padding: 0 1; }
     .cheat { height: 1; padding: 0 1; }
@@ -1493,14 +1732,20 @@ class TrackerApp(App[None]):
         super().__init__()
         self._engine = engine
         self._state = state
+        # Register before the first ``compose`` — ``on_mount`` fires too late — so the
+        # persisted theme is already active when the opening palette is derived.
+        self.register_theme(TT_DARK)
+        self.register_theme(TT_LIGHT)
+        self.theme = state.theme.value
 
     def compose(self) -> ComposeResult:
         state = self._state
+        palette = Palette.of(self)
         with Container(id="screen"):
-            yield _topbar(state)
-            yield _body(state)
-            yield _footer(state)
-        overlay = _overlay_widget(state)
+            yield _topbar(state, palette)
+            yield _body(state, palette)
+            yield _footer(state, palette)
+        overlay = _overlay_widget(state, palette)
         if overlay is not None:
             yield overlay
 
@@ -1516,6 +1761,11 @@ class TrackerApp(App[None]):
         if self._state.quit:
             self.exit()
             return
+        # A committed settings change is the only thing that moves the theme; persist
+        # it and re-point Textual before the recompose re-derives the palette.
+        if self.theme != self._state.theme.value:
+            self.theme = self._state.theme.value
+            config.save(Prefs(theme=self._state.theme))
         await self.recompose()
 
 
@@ -1525,5 +1775,18 @@ def _initial_scope(engine: Engine) -> Scope:
     return ProjectScope(slug) if slug is not None else AllScope()
 
 
+def _startup_theme(prefs: Prefs, env_theme: str | None) -> ThemeName:
+    """The theme the app opens on. ``TEXTUAL_THEME`` wins when it names one of ours —
+    a per-session override that is not written back — otherwise the persisted
+    preference. Anything else (unset, or a built-in theme this app does not paint for)
+    falls through to the preference."""
+    try:
+        return ThemeName(env_theme)
+    except ValueError:
+        return prefs.theme
+
+
 def run(engine: Engine) -> None:
-    TrackerApp(engine, start(engine, _initial_scope(engine))).run()
+    state = start(engine, _initial_scope(engine))
+    state.theme = _startup_theme(config.load(), os.environ.get("TEXTUAL_THEME"))
+    TrackerApp(engine, state).run()

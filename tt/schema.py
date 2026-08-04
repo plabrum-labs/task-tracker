@@ -24,6 +24,7 @@ from tt.platform.db import BaseDBModel
 
 # alembic.ini sits at the repo root, one level above the tt package.
 _ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+_REPO_ROOT = _ALEMBIC_INI.parent
 
 
 def create_all(engine: Engine) -> None:
@@ -36,6 +37,11 @@ def upgrade(url: str) -> None:
     is left untouched."""
     config = Config(str(_ALEMBIC_INI))
     config.set_main_option("sqlalchemy.url", url)
+    # alembic.ini's ``script_location`` and ``prepend_sys_path`` are relative, so
+    # Alembic would resolve them against the current directory. The CLI and TUI run
+    # from wherever the user is, not the repo root, so anchor both to the repo here.
+    config.set_main_option("script_location", str(_REPO_ROOT / "alembic"))
+    config.set_main_option("prepend_sys_path", str(_REPO_ROOT))
     command.upgrade(config, "head")
 
 
