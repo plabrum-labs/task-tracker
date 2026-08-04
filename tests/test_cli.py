@@ -180,6 +180,25 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
     }
 
 
+def test_ls_json_emits_a_structured_array_and_text_stays_the_default(database: str) -> None:
+    projects = invoke(database, "project", "ls", "--json")
+    assert projects.exit_code == 0
+    assert [p["slug"] for p in json.loads(projects.output)] == ["tt"]
+
+    issues = invoke(database, "issue", "ls", "--json")
+    assert issues.exit_code == 0
+    rows = json.loads(issues.output)
+    assert rows[0]["project"] == "tt"
+    assert rows[0]["priority"] == "high"
+
+    # Without the flag the reads stay the human text table, not JSON, so a person's
+    # ``ls`` is unchanged and only an agent that asks pays for the structure.
+    text = invoke(database, "project", "ls")
+    assert text.exit_code == 0
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(text.output)
+
+
 def test_create_project_is_reached_through_the_top_level_action_path(database: str) -> None:
     made = invoke(database, "project", "action", "createProject", '{"slug":"new","title":"New"}')
     assert made.exit_code == 0

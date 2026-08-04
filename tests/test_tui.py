@@ -155,19 +155,20 @@ def test_glyph_marker_and_ref() -> None:
 
 
 def test_a_runnable_offer_carries_its_accelerator_and_a_refused_one_its_reason() -> None:
-    runnable = Offer(key="editStatus", label="Edit status", state=Runnable(), fields=[])
+    runnable = Offer(key="delete", label="Delete", state=Runnable(), fields=[])
     refused = Offer(key="delete", label="Delete", state=Refused("archive it first"), fields=[])
 
-    change = tui.issue_commands([runnable], 1)[0]
-    assert change.reason is None
-    assert change.hint == "s"  # editStatus is the s accelerator
+    keep = tui.issue_commands([runnable], 1)[0]
+    assert keep.reason is None
+    assert keep.hint == "d"  # delete is the one remaining accelerator
 
     drop = tui.project_commands([refused], "tt")[0]
     assert drop.reason == "archive it first"
 
 
 def test_the_accelerators_name_the_actions_they_run() -> None:
-    assert ACCELERATORS == {"s": "editStatus", "p": "editPriority", "e": "editTitle", "d": "delete"}
+    # The per-field edits collapsed into the menu's ``Edit``; only delete keeps a key.
+    assert ACCELERATORS == {"d": "delete"}
 
 
 # --- reducer: loading -----------------------------------------------------
@@ -186,7 +187,8 @@ def test_a_key_means_a_move_while_browsing_and_a_letter_in_a_menu(seeded: Engine
     state = tui.start(seeded, ProjectScope("tt"))
     assert tui.on_key(state, "j") == MoveRow(1)
     assert tui.on_key(state, "x") == OpenOverlay("issue")
-    assert tui.on_key(state, "s") == RunAccelerator("editStatus")
+    assert tui.on_key(state, "d") == RunAccelerator("delete")
+    assert tui.on_key(state, "s") == Ignored()  # the per-field accelerators are gone
     assert tui.on_key(state, "/") == StartFilter()
     assert tui.on_key(state, "]") == ShiftProject(1)
     assert tui.on_key(state, "z") == Ignored()
@@ -217,7 +219,8 @@ def test_the_spacebar_reaches_a_form_as_a_character(seeded: Engine) -> None:
     assert key is not None
     form = tui.apply(seeded, form, tui.on_key(form, key))
     assert isinstance(form.overlay, FormOverlay)
-    assert form.overlay.entries[0].control == Editing(" ")
+    # The title box opens pre-filled with the issue's title; the space appends to it.
+    assert form.overlay.entries[0].control == Editing("ship the mvp ")
 
 
 def test_the_issue_menu_lists_exactly_what_the_issue_offers(seeded: Engine) -> None:
@@ -231,29 +234,41 @@ def test_the_issue_menu_lists_exactly_what_the_issue_offers(seeded: Engine) -> N
 # --- reducer: writes ------------------------------------------------------
 
 
+def test_the_edit_form_opens_pre_filled_from_the_issue(seeded: Engine) -> None:
+    # The first issue is the high-priority "ship the mvp", still todo. The form seeds
+    # each control from its current value rather than a blank/index-0 default.
+    state = tui.start(seeded, ProjectScope("tt"))
+    state = press(seeded, state, "x")  # issue menu
+    state = press(seeded, state, "enter")  # pick Edit
+    assert isinstance(state.overlay, FormOverlay)
+    entries = state.overlay.entries  # title, body, status, status_note, priority
+    assert entries[0].control == Editing("ship the mvp")
+    assert entries[2].control == Choosing(["todo", "doing", "done"], 0)  # todo
+    assert entries[4].control == Choosing(["normal", "high"], 1)  # high, not index 0
+
+
 def test_editing_an_issue_status_through_the_menu_writes(seeded: Engine) -> None:
     state = tui.start(seeded, ProjectScope("tt"))
     issue_id = state.selected_id
     assert issue_id is not None
 
     state = press(seeded, state, "x")  # issue menu
-    state = press(seeded, state, "enter")  # pick Edit
+    state = press(seeded, state, "enter")  # pick Edit — the form is pre-filled
     assert isinstance(state.overlay, FormOverlay)
     assert state.overlay.key == "edit"
     # The whole object is one form: title, body, status, note, priority in order.
-    for char in "keep":  # a non-blank title so the edit is submittable
-        state = press(seeded, state, char)
-    state = press(seeded, state, "down")  # body
-    state = press(seeded, state, "down")  # status
+    state = press(seeded, state, "down")  # title -> body
+    state = press(seeded, state, "down")  # body -> status
     assert isinstance(state.overlay, FormOverlay)
     assert state.overlay.entries[2].control == Choosing(values=["todo", "doing", "done"], index=0)
     state = press(seeded, state, "right")  # todo -> doing
-    state = press(seeded, state, "enter")  # submit
+    state = press(seeded, state, "enter")  # submit; the title was pre-filled, so no refusal
     assert state.overlay is None
 
     detail = issue_api.issue_get(seeded, issue_id)
     assert detail is not None
     assert detail.status == "doing"
+    assert detail.title == "ship the mvp"  # the pre-filled title round-tripped untouched
 
 
 def test_capture_adds_an_issue_to_the_scoped_project(seeded: Engine) -> None:
@@ -270,9 +285,11 @@ def test_capture_adds_an_issue_to_the_scoped_project(seeded: Engine) -> None:
 def test_a_blank_edit_is_refused_and_leaves_the_form_up(seeded: Engine) -> None:
     state = tui.start(seeded, ProjectScope("tt"))
     state = press(seeded, state, "x")  # issue menu
-    state = press(seeded, state, "enter")  # pick Edit
+    state = press(seeded, state, "enter")  # pick Edit — title box focused and pre-filled
     assert isinstance(state.overlay, FormOverlay)
-    state = press(seeded, state, "enter")  # submit with the title still blank
+    for _ in "ship the mvp":  # clear the seeded title
+        state = press(seeded, state, "backspace")
+    state = press(seeded, state, "enter")  # submit with the title now blank
     assert isinstance(state.overlay, FormOverlay), "the form stays up on a refusal"
     assert "title is required" in state.status
 

@@ -6,8 +6,10 @@ never leave. Status and priority read as glyphs and colour; everything you can d
 to what the cursor is on lives in a command menu that is nothing but the object's
 offered actions. Nothing here names an action key to build a menu — a row is a
 row because the object offered it, and its form has the fields its payload
-derived; only the handful of single-key accelerators name a key, and they run
-through the same offers so availability can never diverge.
+derived; only the single-key ``d`` (delete) accelerator names a key, and it runs
+through the same offers so availability can never diverge. The menu's ``Edit``
+opens a form seeded from the object it addresses, so an edit begins from the
+current values rather than blank.
 
 The state machine — ``State``, ``on_key``, ``apply`` and the pure helpers around
 them — is framework-free Python, driven in ``tests/test_tui.py`` with an in-memory
@@ -21,7 +23,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal, assert_never
+from typing import Any, Literal, assert_never
 
 from rich.markup import escape as _esc
 from sqlalchemy import Engine
@@ -226,10 +228,10 @@ def match_path(candidates: list[tuple[str, str | None]], cwd: str) -> str | None
 
 # --- commands (the rows of every list overlay) ----------------------------
 
+# The single-key accelerators, each naming an action that runs against the selected
+# issue. The per-field edits collapsed into one ``Edit`` reached through the menu, so
+# only the fieldless ``delete`` keeps an accelerator.
 ACCELERATORS: dict[str, str] = {
-    "s": "editStatus",
-    "p": "editPriority",
-    "e": "editTitle",
     "d": "delete",
 }
 _HINT = {action_key: keystroke for keystroke, action_key in ACCELERATORS.items()}
@@ -256,11 +258,14 @@ type Target = IssueTarget | ProjectTarget | RootTarget
 @dataclass(frozen=True)
 class RunAction:
     """Picking this command runs an action against ``target``: straight away when it
-    has no fields, through a form when it does."""
+    has no fields, through a form when it does. ``seed`` is the target's current
+    values (the detail dumped to JSON) when the action edits its target, so the form
+    opens pre-filled; ``None`` for a create, whose form opens blank."""
 
     target: Target
     key: str
     fields: list[Field]
+    seed: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -286,22 +291,29 @@ class Command:
     run: CommandRun
 
 
-def _offer_command(offer: Offer, target: Target) -> Command:
+def _offer_command(offer: Offer, target: Target, detail: dict[str, Any] | None = None) -> Command:
+    # An offer that seeds from its target carries the target's current values into
+    # its form; one that does not (a create) carries none, so its form opens blank.
+    seed = detail if offer.seed else None
     reason = offer.state.reason if isinstance(offer.state, Refused) else None
     return Command(
         label=offer.label,
         reason=reason,
         hint=_HINT.get(offer.key),
-        run=RunAction(target=target, key=offer.key, fields=offer.fields),
+        run=RunAction(target=target, key=offer.key, fields=offer.fields, seed=seed),
     )
 
 
-def issue_commands(offers: list[Offer], issue_id: int) -> list[Command]:
-    return [_offer_command(offer, IssueTarget(issue_id)) for offer in offers]
+def issue_commands(
+    offers: list[Offer], issue_id: int, detail: dict[str, Any] | None = None
+) -> list[Command]:
+    return [_offer_command(offer, IssueTarget(issue_id), detail) for offer in offers]
 
 
-def project_commands(offers: list[Offer], slug: str) -> list[Command]:
-    return [_offer_command(offer, ProjectTarget(slug)) for offer in offers]
+def project_commands(
+    offers: list[Offer], slug: str, detail: dict[str, Any] | None = None
+) -> list[Command]:
+    return [_offer_command(offer, ProjectTarget(slug), detail) for offer in offers]
 
 
 def switcher_commands(projects: list[ProjectListItem], create: Offer | None) -> list[Command]:
@@ -359,6 +371,24 @@ def _control_of(kind: Text | OptionalText | Enum) -> Control:
         case Enum(values=values):
             return Choosing(list(values), 0)
     assert_never(kind)
+
+
+def _control_from(kind: Text | OptionalText | Enum, value: Any) -> Control:
+    """A control pre-filled from the target's current value: a text box holding the
+    string (a null becomes blank), a selector positioned on the current member."""
+    match kind:
+        case Text() | OptionalText():
+            return Editing(str(value or ""))
+        case Enum(values=values):
+            options = list(values)
+            return Choosing(options, options.index(value))
+    assert_never(kind)
+
+
+def _entry_of(field: Field, seed: dict[str, Any] | None) -> Entered:
+    if seed is None:
+        return Entered(field=field, control=_control_of(field.kind))
+    return Entered(field=field, control=_control_from(field.kind, seed[field.name]))
 
 
 @dataclass
@@ -817,7 +847,7 @@ def _run_or_form(engine: Engine, state: State, run: RunAction, label: str) -> St
             target=run.target,
             key=run.key,
             label=label,
-            entries=[Entered(field=f, control=_control_of(f.kind)) for f in run.fields],
+            entries=[_entry_of(f, run.seed) for f in run.fields],
             focus=0,
         )
         return state
@@ -885,10 +915,10 @@ def _open_issue_menu(engine: Engine, state: State) -> State:
     if issue is None:
         state.status = "no issue selected"
         return state
-    _, offers = issue_api.issue_detail(engine, issue.id)
+    detail, offers = issue_api.issue_detail(engine, issue.id)
     state.overlay = ListOverlay(
         header=f"{issue_ref(issue.project, issue.id)} · {issue.title}",
-        commands=issue_commands(offers, issue.id),
+        commands=issue_commands(offers, issue.id, detail.model_dump(mode="json")),
         query="",
         index=0,
     )
@@ -900,10 +930,10 @@ def _open_project_menu(engine: Engine, state: State) -> State:
     if slug is None:
         state.status = "pick a project first (P)"
         return state
-    _, offers = project_api.project_detail(engine, slug)
+    detail, offers = project_api.project_detail(engine, slug)
     state.overlay = ListOverlay(
         header=f"Project · {slug}",
-        commands=project_commands(offers, slug),
+        commands=project_commands(offers, slug, detail.model_dump(mode="json")),
         query="",
         index=0,
     )
@@ -914,12 +944,12 @@ def _open_palette(engine: Engine, state: State) -> State:
     commands: list[Command] = []
     issue = _selected_issue(state)
     if issue is not None:
-        _, offers = issue_api.issue_detail(engine, issue.id)
-        commands.extend(issue_commands(offers, issue.id))
+        detail, offers = issue_api.issue_detail(engine, issue.id)
+        commands.extend(issue_commands(offers, issue.id, detail.model_dump(mode="json")))
     slug = _slug_of(state)
     if slug is not None:
-        _, offers = project_api.project_detail(engine, slug)
-        commands.extend(project_commands(offers, slug))
+        project_detail, offers = project_api.project_detail(engine, slug)
+        commands.extend(project_commands(offers, slug, project_detail.model_dump(mode="json")))
     commands.extend(
         [
             Command("Switch project", None, "P", Navigate("switcher")),
@@ -1341,7 +1371,7 @@ _CHEATS: list[tuple[str, str]] = [
     ("x / space", "issue actions"),
     ("X", "project actions"),
     (":", "command palette"),
-    ("s / p / e / d", "status / priority / title / delete"),
+    ("d", "delete issue"),
     ("n", "new issue"),
     ("/", "filter"),
     ("P", "switch project"),

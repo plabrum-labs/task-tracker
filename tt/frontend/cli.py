@@ -118,19 +118,24 @@ def _issue_write(engine: Engine, issue_id: Any, key: str, payload: dict[str, Any
 # --- the reads ------------------------------------------------------------
 
 
-def _project_ls(engine: Engine) -> str:
-    return "\n".join(_project_line(p) for p in project_api.project_list(engine))
+def _project_ls(engine: Engine, as_json: bool) -> str:
+    items = project_api.project_list(engine)
+    if as_json:
+        return _pretty([item.model_dump(mode="json") for item in items])
+    return "\n".join(_project_line(p) for p in items)
 
 
-def _issue_ls(engine: Engine, project_slug: str | None) -> str:
+def _issue_ls(engine: Engine, project_slug: str | None, as_json: bool) -> str:
     if project_slug is not None:
         if project_api.project_get(engine, project_slug) is None:
             raise Invalid(f"no project {project_slug!r}")
         slugs = [project_slug]
     else:
         slugs = [p.slug for p in project_api.project_list(engine)]
-    lines = [_issue_line(issue) for slug in slugs for issue in issue_api.issue_list(engine, slug)]
-    return "\n".join(lines)
+    items = [issue for slug in slugs for issue in issue_api.issue_list(engine, slug)]
+    if as_json:
+        return _pretty([item.model_dump(mode="json") for item in items])
+    return "\n".join(_issue_line(i) for i in items)
 
 
 def _project_show(engine: Engine, slug: str) -> str:
@@ -330,8 +335,13 @@ issue_app = typer.Typer(help="Issues.", no_args_is_help=True)
 
 
 @project_app.command("ls", help="List live projects.")
-def _project_ls_command(ctx: typer.Context) -> None:
-    _report(lambda: _project_ls(_engine(ctx)))
+def _project_ls_command(
+    ctx: typer.Context,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
+    ] = False,
+) -> None:
+    _report(lambda: _project_ls(_engine(ctx), as_json))
 
 
 @project_app.command("show", help="Print a project and what it offers.")
@@ -359,8 +369,11 @@ def _project_action_command(
 def _issue_ls_command(
     ctx: typer.Context,
     project: Annotated[str | None, typer.Option("--project", help="Only this project.")] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
+    ] = False,
 ) -> None:
-    _report(lambda: _issue_ls(_engine(ctx), project))
+    _report(lambda: _issue_ls(_engine(ctx), project, as_json))
 
 
 @issue_app.command("show", help="Print an issue and what it offers.")
