@@ -1,20 +1,26 @@
 """The two themes the TUI paints in, and how the opening one is chosen.
 
-The themes are the one source of truth for every colour. Standard tokens carry the
-semantic colours; the ``variables`` block pins the exact hex the app draws and adds
-``priority-high``, the one token with no standard name. These are the only hex
-literals in the frontend — the ``style.tcss`` and the content markup both read their
-colours back through ``$`` variables, so a theme switch repaints with no hardcoded
-hex anywhere else.
+The themes are the one source of truth for every colour, and each colour is one of
+two kinds. Text follows the terminal: ``foreground`` and the muted/disabled tiers
+are ANSI names (``ansi_default``, ``ansi_bright_black``), so the body text adopts
+whatever scheme the terminal is themed in and inherits its contrast — the lazygit
+approach. Identity is pinned: the accents (``primary``, the status glyphs,
+``priority-high``) stay truecolor hex so the ``◆`` and the priority marker read the
+same everywhere. ``style.tcss`` and the content markup read every colour back
+through ``$`` variables, so nothing downstream carries a literal.
+
+Keeping ``primary``/``background`` as hex is also what lets the selection tint
+(``$primary 14%``) and the modal dim (``$background 55%``) composite — an alpha
+blend needs a concrete base colour, which an ANSI name does not give.
 
 ``ansi=True`` is what lets the terminal's own background show through: it disables
 Textual's truecolor filter so an ``ansi_default`` background is emitted as the
-terminal's default rather than resolved to opaque black, while the truecolor hex
-above still paints on top. It also switches on the ``:ansi`` pseudo-class, whose
-stock ``Screen``/``App`` CSS references ``$ansi-background``/``$ansi-foreground`` —
-variables only the built-in ANSI themes define, so we must supply them here or CSS
-parsing fails. They surface only as inline-mode border colours, which this
-fullscreen app never draws; the foreground/background hex is the honest value.
+terminal's default rather than resolved to opaque black, while the pinned hex still
+paints on top and the ANSI text names resolve against the terminal palette. It also
+switches on the ``:ansi`` pseudo-class, whose stock ``Screen``/``App`` CSS
+references ``$ansi-background``/``$ansi-foreground`` — variables only the built-in
+ANSI themes define, so we must supply them here or CSS parsing fails. They surface
+only as inline-mode border colours, which this fullscreen app never draws.
 """
 
 from __future__ import annotations
@@ -32,15 +38,15 @@ TT_DARK = Theme(
     dark=True,
     ansi=True,
     primary="#8B8CF0",
-    foreground="#E7E9EE",
+    foreground="ansi_default",
     warning="#E3B341",
     success="#3FB950",
     background="#0B0C0F",
     surface="#1B1E25",
     panel="#1B1E25",
     variables={
-        "text-muted": "#8A8F99",
-        "text-disabled": "#565B66",
+        "text-muted": "ansi_bright_black",
+        "text-disabled": "ansi_bright_black",
         "border": "#23262E",
         "priority-high": "#F0883E",
         **_ANSI_VARS_DARK,
@@ -51,15 +57,15 @@ TT_LIGHT = Theme(
     dark=False,
     ansi=True,
     primary="#5457D6",
-    foreground="#1A1D23",
+    foreground="ansi_default",
     warning="#B7791F",
     success="#1F883D",
     background="#FFFFFF",
     surface="#F0F1F4",
     panel="#F0F1F4",
     variables={
-        "text-muted": "#5A606B",
-        "text-disabled": "#9AA0AB",
+        "text-muted": "ansi_bright_black",
+        "text-disabled": "ansi_bright_black",
         "border": "#D5D8DE",
         "priority-high": "#B5540B",
         **_ANSI_VARS_LIGHT,
