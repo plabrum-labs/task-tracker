@@ -6,10 +6,10 @@ every editable column, a delete stamps ``deleted_at``. The flush is the group's,
 once, so an ``execute`` only says what it changed. The payload shapes are in
 ``schemas``, one model per action.
 
-Neither the edit nor the delete refuses anything. Many issues may be ``doing`` at
-once, there is no WIP rule, so both hooks are the default in every case and the
-only refusal is the blank title ``execute`` states. Each action registers by
-decorating itself with ``issue_actions``.
+Nothing an issue offers refuses anything. Many issues may be ``doing`` at once,
+there is no WIP rule and no status machine, so every action's hooks are the
+default and the only refusal is the blank title ``EditIssue.execute`` states. Each
+action registers by decorating itself with ``issue_actions``.
 """
 
 from datetime import UTC, datetime
@@ -31,7 +31,8 @@ issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.get_issu
 @issue_actions
 class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
     # One whole-object edit: the payload carries every editable field and each is
-    # set. Status rides along here like any other field.
+    # set. Status rides along here like any other field; the focused move is
+    # ``SetStatus``.
     KEY = "edit"
     LABEL = "Edit"
     Payload = schemas.EditIssuePayload
@@ -49,6 +50,24 @@ class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
         obj.status = payload.status
         obj.priority = payload.priority
         return ActionResponse(message=f"{obj.subject()}: saved")
+
+
+@issue_actions
+class SetStatus(ObjectAction[Issue, schemas.SetStatusPayload]):
+    # The direct status move. The whole-object edit still carries status; this is
+    # the one-field verb a frontend binds to a quick key. No transition rules —
+    # any status may follow any other, exactly as the edit allows.
+    KEY = "setStatus"
+    LABEL = "Set status"
+    Payload = schemas.SetStatusPayload
+    SEED_FROM_TARGET = True
+
+    @classmethod
+    def execute(
+        cls, obj: Issue, payload: schemas.SetStatusPayload, deps: ActionDeps
+    ) -> ActionResponse:
+        obj.status = payload.status
+        return ActionResponse(message=f"{obj.subject()}: {payload.status}")
 
 
 @issue_actions

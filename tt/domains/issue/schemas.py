@@ -52,6 +52,14 @@ class EditIssuePayload(BaseModel):
     priority: WirePriority = Field(description="How far up the list the issue sorts.")
 
 
+class SetStatusPayload(BaseModel):
+    # The focused status move: the one field the whole-object edit also carries,
+    # sent on its own for the frequent workflow action a frontend binds to a key.
+    model_config = ConfigDict(extra="forbid")
+
+    status: Status = Field(description="Where the issue is up to.")
+
+
 class IssueListItem(BaseModel):
     id: int
     project: str

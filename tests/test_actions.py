@@ -186,6 +186,43 @@ def test_edit_trims_and_refuses_a_blank_title(db: Engine) -> None:
         run_issue(db, issue_actions.EditIssue, seeded.id, _edit(title="   "))
 
 
+def test_set_status_is_always_offered() -> None:
+    # No status machine: the focused move applies from and to every status.
+    for status in Status:
+        seeded = Issue(
+            id=1, project_id=1, title="a title", body="", status=status, priority=Priority.NORMAL
+        )
+        assert issue_actions.SetStatus.availability(seeded) == Runnable()
+
+
+def test_set_status_moves_to_each_status(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    seeded = an_issue(db, tt, "one")
+    for status in [Status.DOING, Status.DONE, Status.TODO]:
+        response = run_issue(
+            db,
+            issue_actions.SetStatus,
+            seeded.id,
+            issue_schemas.SetStatusPayload(status=status),
+        )
+        assert response.message == f"issue 1: {status}"
+        with platform_db.reading(db) as s:
+            read = issue_queries.get_issue(s, seeded.id)
+        assert read is not None
+        assert read.status == status
+
+
+def test_set_status_refuses_an_unknown_status_or_an_extra_field(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "one")
+    # A value outside the enum is Invalid, the schema having advertised the closed set.
+    with pytest.raises(Invalid):
+        issue_api.issue_action(db, "setStatus", {"status": "shipped"}, made.id)
+    # And ``extra="forbid"`` refuses a field the payload does not advertise.
+    with pytest.raises(Invalid):
+        issue_api.issue_action(db, "setStatus", {"status": "doing", "title": "x"}, made.id)
+
+
 def test_delete_hides_an_issue(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
@@ -345,7 +382,7 @@ def _keys(offered: list[Any]) -> list[str]:
 
 
 def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
-    assert _keys(issue_group.offers(issue())) == ["edit", "delete"]
+    assert _keys(issue_group.offers(issue())) == ["edit", "setStatus", "delete"]
     # An active project with two issues doing: edit is runnable (its archive
     # precondition is in execute now), delete comes back refused, addIssue runnable
     # — one list, told apart by what each execute writes rather than by which

@@ -50,7 +50,7 @@ def _names(app: object) -> list[str]:
 
 
 def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> None:
-    assert _names(cli.issue_app) == ["ls", "show", "action", "edit", "delete"]
+    assert _names(cli.issue_app) == ["ls", "show", "action", "edit", "setStatus", "delete"]
     # ``createProject`` is top-level — no address to hang a subcommand on — so it is
     # reached through the raw ``action`` path rather than generated here.
     assert _names(cli.project_app) == [
@@ -151,6 +151,18 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
     assert spelled.output == blob.output
 
 
+def test_set_status_is_its_own_subcommand_taking_only_status(database: str) -> None:
+    # The focused verb grows a subcommand like any other action; its one option is
+    # the status, and it writes the move at once.
+    moved = invoke(database, "issue", "setStatus", "1", "--status", "doing")
+    assert moved.exit_code == 0
+    assert "issue 1: doing" in moved.output
+    shown = invoke(database, "issue", "show", "1")
+    assert json.loads(shown.output)["issue"]["status"] == "doing"
+    # A value outside the closed set is a usage error listing the alternatives.
+    assert invoke(database, "issue", "setStatus", "1", "--status", "shipped").exit_code == USAGE
+
+
 def test_a_refusal_comes_back_from_the_live_row_and_not_from_the_parser(database: str) -> None:
     # ``delete`` is a subcommand on an active project, because the tree is built
     # before any row has been read; the refusal comes from the live object.
@@ -167,7 +179,7 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
     assert value["issue"]["priority"] == "high"
 
     keys = [action["key"] for action in value["actions"]]
-    assert keys == ["edit", "delete"]
+    assert keys == ["edit", "setStatus", "delete"]
     # Each offer carries a human label alongside its key.
     assert value["actions"][0]["label"] == "Edit"
     # Each action carries its fields, descriptions and all, for an agent to fill in.

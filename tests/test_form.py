@@ -54,6 +54,17 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
     ]
 
 
+def test_the_set_status_payload_derives_a_single_status_enum_field() -> None:
+    assert fields_of(issue_schemas.SetStatusPayload) == [
+        Field(
+            name="status",
+            required=True,
+            kind=Enum(["todo", "doing", "done"]),
+            description="Where the issue is up to.",
+        ),
+    ]
+
+
 def test_the_fields_are_in_the_order_the_payload_declares_them() -> None:
     # Alphabetically this would be body, priority, title. ``model_fields`` is in
     # declaration order and a dict preserves it.
