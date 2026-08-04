@@ -97,6 +97,12 @@ def test_glyph_marker_and_ref() -> None:
     assert dv.issue_ref("tt", 4) == "TT-4"
 
 
+def test_status_var_names_the_theme_variable_and_falls_back_to_muted() -> None:
+    assert dv.status_var("doing") == "$warning"
+    assert dv.status_var("done") == "$success"
+    assert dv.status_var("archived") == "$text-muted"  # unrecognised status
+
+
 # --- an offer becomes a command -------------------------------------------
 
 

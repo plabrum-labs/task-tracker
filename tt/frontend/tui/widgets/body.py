@@ -17,12 +17,15 @@ from textual.reactive import reactive
 from textual.widgets import Static
 
 from tt.domains.issue.schemas import IssueListItem
-from tt.frontend.tui.domainview import Column, Layout, columns, glyph, issue_ref, marker
-
-# The theme variable a status's glyph is drawn in. The flat row carries the same
-# mapping as CSS ``st-*`` component classes; a board header mixes the glyph colour
-# into a single markup string, so it names the variable directly here.
-_STATUS_VAR = {"todo": "$text-muted", "doing": "$warning", "done": "$success"}
+from tt.frontend.tui.domainview import (
+    Column,
+    Layout,
+    columns,
+    glyph,
+    issue_ref,
+    marker,
+    status_var,
+)
 
 
 class IssueRow(Horizontal):
@@ -74,7 +77,7 @@ class BoardColumn(Vertical):
     def compose(self) -> ComposeResult:
         col = self._column
         status = col.status or ""
-        var = _STATUS_VAR.get(status, "$text-muted")
+        var = status_var(status)
         head = (
             f"[{var}]{glyph(status)}[/] [$text-muted]{esc(col.title)}[/]  "
             f"[$text-disabled]{len(col.issues)}[/]"

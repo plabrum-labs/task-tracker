@@ -26,6 +26,11 @@ from tt.platform.actions import (
 
 STATUS_GLYPH = {"todo": "○", "doing": "◐", "done": "●"}
 
+# The theme variable a status's glyph is drawn in, for the places that mix the
+# glyph colour into a single markup string (the board header, the detail pane)
+# rather than carrying it in a CSS component class. The flat row uses ``st-*``.
+STATUS_VAR = {"todo": "$text-muted", "doing": "$warning", "done": "$success"}
+
 # The status columns of the board, in the order they read left to right.
 BOARD_STATUSES = ("todo", "doing", "done")
 
@@ -45,6 +50,12 @@ FAR = 10**6  # a move large enough to reach either end after clamping.
 def glyph(status: str) -> str:
     """The character a status draws as; its colour comes from the palette."""
     return STATUS_GLYPH.get(status, "·")
+
+
+def status_var(status: str) -> str:
+    """The theme variable a status's glyph is drawn in when its colour is mixed
+    into one markup string; the muted colour for an unrecognised status."""
+    return STATUS_VAR.get(status, "$text-muted")
 
 
 def marker(priority: str) -> str | None:
