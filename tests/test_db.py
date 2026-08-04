@@ -1,6 +1,6 @@
 """The pragmas ``connect`` sets, and the default location ``default_url`` resolves.
 
-A file-backed database is what the CLI, the TUI and the MCP server share, so it
+A file-backed database is what the CLI and the TUI share, so it
 runs in WAL with a busy timeout: two processes can hold one ``tt.db`` without one
 erroring "database is locked" the instant the other is mid-write. The in-memory
 database a test opens is a single connection held by a ``StaticPool`` and never

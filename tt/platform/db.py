@@ -64,8 +64,8 @@ def connect(url: str) -> Engine:
     #
     # busy_timeout: a connection that finds the file locked waits and retries for
     # up to this long rather than erroring "database is locked" at once (the
-    # default is 0). This is what lets two processes — an agent driving the MCP
-    # server while the TUI holds the same tt.db open — coexist.
+    # default is 0). This is what lets two processes — an agent driving the CLI
+    # while the TUI holds the same tt.db open — coexist.
     #
     # journal_mode=WAL: readers and a writer proceed without blocking each other,
     # for file databases only. It is meaningless for the single-connection

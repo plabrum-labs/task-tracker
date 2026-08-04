@@ -3,8 +3,8 @@
 A frontend imports this and nothing else of the domain, and hands it an engine —
 never a session. Every call that touches the database is wrapped in
 ``@with_transaction``, so one public call is one transaction and the frontend
-draws no ``with`` block of its own. The names are the flat surface an MCP or an
-HTTP edge exposes: ``project_list``/``project_get``/``project_detail`` read, and
+draws no ``with`` block of its own. The names are the flat surface a frontend
+exposes: ``project_list``/``project_get``/``project_detail`` read, and
 ``project_action`` writes. ``top_level_offers`` and ``action_schemas`` ask nothing
 of the database, so they take no engine.
 """

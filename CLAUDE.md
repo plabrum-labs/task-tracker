@@ -84,9 +84,9 @@ Dependency flow: `frontend` (`cli`/`tui`) → domain `api` → `platform` → SQ
   transaction, the base every table maps on), `enums`, and `actions/`
   (`base`, `deps`, `form`, `group`, `registry`) — the action framework the
   domains register into.
-- `tt/frontend/` — `cli` (Typer), `tui` (Textual), and `mcp` (the MCP
-  server an agent drives). No frontend names an action key; the subcommands
-  and forms are derived from the registered action schemas.
+- `tt/frontend/` — `cli` (Typer) and `tui` (Textual). No frontend names an
+  action key; the subcommands and forms are derived from the registered action
+  schemas. An agent drives the tracker through the `cli` (see the `tt` skill).
 - `tt/schema.py` — `create_all` and the metadata that binds the domains'
   tables to one engine.
 - `alembic/` — the on-disk migration history. `alembic.ini` prepends the repo

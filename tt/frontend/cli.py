@@ -305,7 +305,7 @@ def _report(outcome: Callable[[], str]) -> None:
 # --- the command tree -----------------------------------------------------
 
 app = typer.Typer(
-    help="A small task tracker: a command line, a terminal UI, and an MCP server.",
+    help="A small task tracker: a command line and a terminal UI.",
     add_completion=False,
 )
 
@@ -416,16 +416,6 @@ _register_generated(
 
 app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
-
-
-# The MCP server is the same tracker with a different surface, so it is a
-# subcommand of the one binary rather than a separate entry point. The MCP SDK is
-# imported only when the command runs, so ``tt issue ls`` does not pay to load it.
-@app.command("mcp", help="Serve the tracker's actions as MCP tools over stdio.")
-def _mcp_command(ctx: typer.Context) -> None:
-    from tt.frontend import mcp
-
-    mcp.serve(_engine(ctx))
 
 
 def main() -> None:

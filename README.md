@@ -1,8 +1,9 @@
 # tt
 
-A small task tracker: an action framework over SQLite, with a CLI, a TUI, and
-an MCP server, in Python. Projects and issues share one per-user database; every
-frontend drives the same domain actions through the same availability checks.
+A small task tracker: an action framework over SQLite, with a CLI and a TUI, in
+Python. Projects and issues share one per-user database; every frontend drives
+the same domain actions through the same availability checks. An agent drives it
+through the CLI — see the `tt` skill under `.claude/skills/`.
 
 ## Requirements
 
@@ -20,7 +21,7 @@ just sync
 ```
 
 That builds the `tt` executable inside the project virtualenv, reachable through
-the recipes below (`just cli`, `just tui`, `just mcp`).
+the recipes below (`just cli`, `just tui`).
 
 To put `tt` on your PATH for use from any directory, install it as an editable
 uv tool:
@@ -49,27 +50,21 @@ answer, not a usage error.
 If you ran `just install`, the same commands work directly: `tt project ls`,
 `tt issue show 1`, and so on. Bare `tt` opens the terminal UI.
 
-## MCP server
+## Driving it from an agent
 
-`tt mcp` runs the MCP server over stdio, exposing the same projects, issues, and
-actions to an agent. It opens the shared per-user database, so an agent can
-drive it while the TUI holds the same file open.
-
-Register it with Claude Code once. With `tt` on your PATH (via `just install`),
-user scope makes it available in every project:
-
-```
-claude mcp add tt --scope user -- tt mcp
-```
-
-Without the global install, register the in-repo entry point instead (run from
-this directory):
+An agent drives `tt` through the CLI, not a separate server. The read/act loop is
+`ls --json` and `show` (which returns the object plus the actions it offers and
+their argument schemas), then `action KEY '<json>'` to write. The `tt` skill under
+`.claude/skills/tt/` teaches Claude Code that loop and the tracker's rules; install
+it globally with:
 
 ```
-claude mcp add tt -- uv run tt mcp
+just install-skill
 ```
 
-Then `claude mcp get tt` confirms it, and `/mcp` in Claude Code reconnects.
+That symlinks the in-repo skill into `~/.claude/skills/` so it is available in
+every project, tracking your working copy the way `just install` does for the
+binary.
 
 ## Develop
 

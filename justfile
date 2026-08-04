@@ -10,6 +10,13 @@ sync:
 install:
     uv tool install --editable .
 
+# Link the in-repo `tt` agent skill into ~/.claude/skills so Claude Code can use
+# it from any project, tracking your working copy. Mutates your global Claude
+# config, the way `install` mutates the global uv tool env.
+install-skill:
+    mkdir -p ~/.claude/skills
+    ln -sfn "{{ justfile_directory() }}/.claude/skills/tt" ~/.claude/skills/tt
+
 # The domain, the wire, the frontends, and the SQL edge against real SQLite.
 test:
     uv run pytest
@@ -18,8 +25,8 @@ test:
 #
 #     just cli project ls
 #     just cli issue show 1
-#     just cli issue editStatus 1 --status doing --note started
-#     just cli issue action 1 editStatus '{"status":"doing"}'
+#     just cli issue edit 1 --title ship --body "" --status doing --priority high
+#     just cli issue action 1 edit '{"title":"ship","body":"","status":"doing","priority":"high"}'
 
 # The command line, over the same groups. Takes a subcommand.
 cli *args:
@@ -29,12 +36,6 @@ cli *args:
 # Bare `tt` with no subcommand is the TUI.
 tui:
     uv run tt
-
-# The MCP server, over stdio, on the same groups. Register it once with
-# `claude mcp add tt -- uv run tt mcp` (run from this repo), then an agent lists
-# and drives the same actions the CLI does.
-mcp:
-    uv run tt mcp
 
 # Author a migration from a change to the models (autogenerate against the
 # default database, so upgrade it to head first).
