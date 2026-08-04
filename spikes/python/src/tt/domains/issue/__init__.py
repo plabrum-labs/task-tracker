@@ -1,6 +1,8 @@
-"""The issue domain: its types in ``models``, its reads in ``queries``, its
-entrypoints in ``services`` and its actions in ``actions``."""
+"""The issue domain: its vocabularies in ``enums``, its type in ``models``, its
+reads in ``queries``, its actions in ``actions`` and its public surface in
+``api``."""
 
-from tt.domains.issue.models import Draft, Issue, Priority, Status
+from tt.domains.issue.enums import Priority, Status
+from tt.domains.issue.models import Issue
 
-__all__ = ["Draft", "Issue", "Priority", "Status"]
+__all__ = ["Issue", "Priority", "Status"]

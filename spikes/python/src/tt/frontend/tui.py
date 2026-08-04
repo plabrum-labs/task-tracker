@@ -1,10 +1,10 @@
-"""The erased path with a person on the end of it.
+"""The domain with a person on the end of it.
 
-Same three calls as the CLI would make: ``wire.available`` for the menu,
-``form.of_schema`` for the arguments, ``wire.dispatch`` for the write. Nothing
-here names an action key — a row appears in a menu because the action is
-registered, and its form has the fields its payload model derived. Adding a fifth
-issue action changes no line of this file.
+Same handful of calls the CLI makes, through the same ``api``: what an object
+offers for the menu, the fields an action asks for, and the write. Nothing here
+names an action key — a row appears in a menu because the action is offered, and
+its form has the fields its payload derived. Adding a fifth issue action changes
+no line of this file.
 
 Every screen is one movable list of rows, and a row is either somewhere to go or
 something to do. That is what lets three screens share one cursor, one Enter and
@@ -27,7 +27,7 @@ terminal: it turns a Textual key event into one of our key strings, runs the pur
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, assert_never
+from typing import assert_never
 
 from sqlalchemy import Engine
 from textual import events
@@ -35,14 +35,20 @@ from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from tt import schema
-from tt.domains.issue import actions as issue_actions
-from tt.domains.issue import services as issue_services
-from tt.domains.project import actions as project_actions
-from tt.domains.project import services as project_services
-from tt.platform import db, form, wire
-from tt.platform.action import Offered, Refused, Runnable
-from tt.platform.error import Error, Invalid
-from tt.platform.form import FormError
+from tt.domains.issue import api as issue_api
+from tt.domains.project import api as project_api
+from tt.platform import actions, db
+from tt.platform.actions import (
+    REFUSALS,
+    Enum,
+    Field,
+    Offer,
+    Offered,
+    OptionalText,
+    Refused,
+    Runnable,
+    Text,
+)
 
 BROWSING = "up/down to move, enter to pick, esc to go back, q to quit"
 FILLING = "tab to move, left/right to choose, enter to submit, esc to go back"
@@ -100,14 +106,15 @@ class Go:
 
 @dataclass(frozen=True)
 class Do:
-    """Something to run. A ``Do`` carries the key it would run and nothing else —
-    no object and no store call. Each screen is about one object, and that object
-    is the whole of what determines its group, so the write loads the row again and
-    dispatches against the group the screen already implies."""
+    """Something to run. A ``Do`` carries the key it would run, its offered state
+    and the fields its form needs — no object and no store call. Each screen is
+    about one object, and that object is the whole of what determines its group, so
+    the write loads the row again and dispatches against the group the screen
+    already implies."""
 
     key: str
     offered: Offered
-    schema: dict[str, Any]
+    fields: list[Field]
 
 
 type Row = Go | Do
@@ -160,11 +167,11 @@ def control_value(control: Control) -> str:
 
 @dataclass
 class Entered:
-    """One rendered field: the schema-derived field and the control filling it.
-    Mutable because typing into it replaces the control in place, the way the Rust
-    reducer takes ``&mut`` to the focused entry."""
+    """One rendered field: the derived field and the control filling it. Mutable
+    because typing into it replaces the control in place, the way the Rust reducer
+    takes ``&mut`` to the focused entry."""
 
-    field: form.Field
+    field: Field
     control: Control
 
 
@@ -312,80 +319,59 @@ def on_key(state: State, key: str) -> Intent:
 # --- loading --------------------------------------------------------------
 
 
-def _action_rows[Obj](group: wire.Group[Obj], obj: Obj) -> list[Row]:
-    return [
-        Do(key=entry.key, offered=offered, schema=entry.schema)
-        for entry, offered in wire.available(group, obj)
-    ]
+def _do_rows(offers: list[Offer]) -> list[Row]:
+    return [Do(key=offer.key, offered=offer.state, fields=offer.fields) for offer in offers]
 
 
 def load(engine: Engine, screen: Screen) -> tuple[str, list[Row]]:
     """One screen, read fresh. The header is what the screen is about and the rows
-    are what can be done from it, in that order. Raises ``Error`` when the object
+    are what can be done from it, in that order. Raises a refusal when the object
     the screen is about has gone, which is what ``_reload`` turns into falling out
     to the parent."""
     with db.reading(engine) as session:
         match screen:
             case Projects():
-                projects = project_services.list_projects(session)
-                rows = _action_rows(project_actions.root(), projects)
+                rows = _do_rows(project_api.top_level_offers())
                 rows.extend(
                     Go(
                         label=(
-                            f"{p.slug:<12} {p.title:<24} {wire.name_of(p.status):<8} "
-                            f"{p.todo}/{p.doing}/{p.done}"
+                            f"{p.slug:<12} {p.title:<24} {p.status:<8} {p.todo}/{p.doing}/{p.done}"
                         ),
                         to=Issues(p.slug),
                     )
-                    for p in projects
+                    for p in project_api.list_projects(session)
                 )
                 return ("projects", rows)
             case Issues(slug=slug):
-                project = project_services.get_project(session, slug)
-                if project is None:
-                    raise Invalid(f"no project {slug!r}")
-                issues = issue_services.list_issues(session, slug)
-                rows = _action_rows(project_actions.group(), project)
+                detail, offers = project_api.show(session, slug)
+                rows = _do_rows(offers)
                 rows.extend(
                     Go(
-                        label=(
-                            f"{i.id:<4} {wire.name_of(i.status):<8} "
-                            f"{wire.name_of(i.priority):<6} {i.title}"
-                        ),
+                        label=f"{i.id:<4} {i.status:<8} {i.priority:<6} {i.title}",
                         to=Detail(project=slug, id=i.id),
                     )
-                    for i in issues
+                    for i in issue_api.list_issues(session, slug)
                 )
-                return (f"{project.subject()}: {project.title}", rows)
+                return (f"project {slug}: {detail.title}", rows)
             case Detail(id=issue_id):
-                issue = issue_services.get_issue(session, issue_id)
-                if issue is None:
-                    raise Invalid(f"no issue {issue_id}")
-                rows = _action_rows(issue_actions.group(), issue)
-                return (f"{issue.subject()}: {issue.title}", rows)
+                detail, offers = issue_api.show(session, issue_id)
+                return (f"issue {detail.id}: {detail.title}", _do_rows(offers))
     assert_never(screen)
 
 
-def _write(engine: Engine, screen: Screen, key: str, payload: dict[str, Any]) -> str:
+def _write(engine: Engine, screen: Screen, key: str, payload: dict[str, object]) -> str:
     """Load, then dispatch, inside one transaction. Each screen is about one object,
-    and that object is the whole of what determines its group — so there is no
-    group-by-group pairing left to write here, only which object the screen loads. A
-    refusal raised by ``dispatch`` propagates out and the transaction rolls back."""
+    so there is no group-by-group pairing to write here, only which ``api`` the
+    screen dispatches through. A refusal propagates out and the transaction rolls
+    back."""
     with db.transaction(engine) as tx:
         match screen:
             case Projects():
-                projects = project_services.list_projects(tx)
-                return wire.dispatch(project_actions.root(), projects, key, payload, tx)
+                return project_api.trigger(tx, key, payload).message
             case Issues(slug=slug):
-                project = project_services.get_project(tx, slug)
-                if project is None:
-                    raise Invalid(f"no project {slug!r}")
-                return wire.dispatch(project_actions.group(), project, key, payload, tx)
+                return project_api.trigger(tx, key, payload, slug).message
             case Detail(id=issue_id):
-                issue = issue_services.get_issue(tx, issue_id)
-                if issue is None:
-                    raise Invalid(f"no issue {issue_id}")
-                return wire.dispatch(issue_actions.group(), issue, key, payload, tx)
+                return issue_api.trigger(tx, key, payload, issue_id).message
     assert_never(screen)
 
 
@@ -395,7 +381,7 @@ def _reload(engine: Engine, state: State) -> State:
     it names no action key to do it."""
     try:
         header, rows = load(engine, state.screen)
-    except Error as e:
+    except REFUSALS as e:
         up = parent(state.screen)
         if up is None:
             state.status = str(e)
@@ -418,13 +404,13 @@ def start(engine: Engine) -> State:
 # --- applying -------------------------------------------------------------
 
 
-def _control_of(field_: form.Field) -> Control:
-    match field_.kind:
-        case form.Text() | form.OptionalText():
+def _control_of(field: Field) -> Control:
+    match field.kind:
+        case Text() | OptionalText():
             return Editing("")
-        case form.Enum(values=values):
+        case Enum(values=values):
             return Choosing(list(values), 0)
-    assert_never(field_.kind)
+    assert_never(field.kind)
 
 
 def _focused(state: State) -> Entered | None:
@@ -470,15 +456,7 @@ def _enter(engine: Engine, state: State) -> State:
         case Do(key=key, offered=Refused(reason=reason)):
             state.status = f"{key}: {reason}"
             return state
-        case Do(key=key, schema=action_schema):
-            # A schema the form cannot render is reported rather than approximated,
-            # so an action is never handed a payload missing half of what it asked
-            # for.
-            try:
-                fields = form.of_schema(action_schema)
-            except FormError as e:
-                state.status = f"{key}: {e}"
-                return state
+        case Do(key=key, fields=fields):
             state.form = Form(
                 key=key,
                 entries=[Entered(field=f, control=_control_of(f)) for f in fields],
@@ -493,10 +471,10 @@ def _submit(engine: Engine, state: State) -> State:
     if current is None:
         return state
     values = [(entry.field, control_value(entry.control)) for entry in current.entries]
-    payload = form.payload(values)
+    payload = actions.payload(values)
     try:
         message = _write(engine, state.screen, current.key, payload)
-    except Error as e:
+    except REFUSALS as e:
         # A refusal leaves the form up with its values intact, because that is
         # where the fix usually is.
         state.status = f"{current.key}: {e}"

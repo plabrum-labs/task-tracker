@@ -19,7 +19,7 @@ from sqlalchemy import Engine
 
 import tt.domains.issue.models  # noqa: F401  (registers the issues table)
 import tt.domains.project.models  # noqa: F401  (registers the projects table)
-from tt.platform.models import BaseDBModel
+from tt.platform.db import BaseDBModel
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 

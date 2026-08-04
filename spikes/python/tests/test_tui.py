@@ -6,15 +6,16 @@ services — the same three steps ``TrackerApp`` runs per keystroke, minus the
 terminal. That is what splitting the key handler from the write is for.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import Engine
 
-from tt.domains.issue import Draft as IssueDraft
-from tt.domains.issue import Priority, Status
-from tt.domains.issue import services as issue_services
-from tt.domains.project import Draft as ProjectDraft
+from tt.domains.issue import Status
+from tt.domains.issue import queries as issue_queries
 from tt.domains.project import Status as ProjectStatus
-from tt.domains.project import services as project_services
+from tt.domains.project import api as project_api
+from tt.domains.project import queries as project_queries
 from tt.frontend import tui
 from tt.frontend.tui import (
     Back,
@@ -37,13 +38,11 @@ from tt.platform import db as platform_db
 
 def _seed_tt(engine: Engine) -> None:
     """One project ``tt`` titled "task tracker" with one high-priority issue "ship
-    the mvp", seeded through the create services — the same path a frontend takes."""
+    the mvp", seeded through the same ``api`` a frontend takes."""
     with platform_db.transaction(engine) as tx:
-        project = project_services.create_project(
-            tx, ProjectDraft(slug="tt", title="task tracker", body="")
-        )
-        draft = IssueDraft(title="ship the mvp", body="", priority=Priority.HIGH)
-        issue_services.create_issue(tx, project, draft)
+        project_api.trigger(tx, "createProject", {"slug": "tt", "title": "task tracker"})
+    with platform_db.transaction(engine) as tx:
+        project_api.trigger(tx, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt")
 
 
 @pytest.fixture
@@ -165,7 +164,7 @@ def test_an_enum_field_is_a_cycling_selector_and_a_text_field_is_typed_into(
     state = press(seeded, state, "enter")
     assert state.form is None, "a successful write closes the form"
     with platform_db.reading(seeded) as session:
-        issue = issue_services.get_issue(session, 1)
+        issue = issue_queries.get(session, 1)
     assert issue is not None
     assert issue.status == Status.DOING
     assert issue.status_note == "started"
@@ -190,9 +189,9 @@ def test_deleting_what_the_screen_is_about_falls_out_to_the_parent(db: Engine) -
     _seed_tt(db)
     # Empty the project of live issues and archive it, so ``delete`` is runnable.
     with platform_db.transaction(db) as tx:
-        issue = issue_services.list_issues(tx, "tt")[0]
-        issue_services.delete_issue(tx, issue)
-        archived = project_services.get_project(tx, "tt")
+        issue = issue_queries.for_project(tx, "tt")[0]
+        issue.deleted_at = datetime.now(UTC)
+        archived = project_queries.by_slug(tx, "tt")
         assert archived is not None
         archived.status = ProjectStatus.ARCHIVED
 
@@ -212,7 +211,7 @@ def test_deleting_what_the_screen_is_about_falls_out_to_the_parent(db: Engine) -
 
     assert state.screen == Projects()
     with platform_db.reading(db) as session:
-        assert project_services.get_project(session, "tt") is None
+        assert project_queries.by_slug(session, "tt") is None
 
 
 def _value(state: State, index: int) -> str:

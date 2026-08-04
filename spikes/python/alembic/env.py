@@ -15,9 +15,8 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 import tt.schema  # noqa: F401  (registers every table on the shared metadata)
-from tt.domains.issue.models import PriorityRank
-from tt.platform.models import BaseDBModel
-from tt.platform.types import EnumText
+from tt.platform.db import BaseDBModel
+from tt.platform.enums import IntEnum, TextEnum
 
 config = context.config
 target_metadata = BaseDBModel.metadata
@@ -26,14 +25,14 @@ target_metadata = BaseDBModel.metadata
 def render_item(type_: str, obj: Any, autogen_context: object) -> str | bool:
     """Render the domain's column types as the SQLite types they actually are.
 
-    ``EnumText`` and ``PriorityRank`` are Python-side mappings — a migration only
-    needs the ``TEXT``/``INTEGER`` the column stores, and rendering the decorator
-    itself would need its enum imported and its argument reconstructed. Everything
-    else falls through to Alembic's default rendering."""
+    ``TextEnum`` and ``IntEnum`` are Python-side mappings — a migration only needs
+    the ``TEXT``/``INTEGER`` the column stores, and rendering the decorator itself
+    would need its enum imported and its argument reconstructed. Everything else
+    falls through to Alembic's default rendering."""
     if type_ == "type":
-        if isinstance(obj, EnumText):
+        if isinstance(obj, TextEnum):
             return "sa.Text()"
-        if isinstance(obj, PriorityRank):
+        if isinstance(obj, IntEnum):
             return "sa.Integer()"
     return False
 

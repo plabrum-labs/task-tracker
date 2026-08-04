@@ -4,8 +4,7 @@ The counts are the reason ``issues`` is a relationship and a read loads it
 eagerly: ``editStatus`` and ``delete`` both refuse on them, and an availability
 hook is a pure function of the object, so anything a hook reads has to be on the
 object. Counting the loaded issues is what stops a list from offering a menu it
-cannot justify — and it is the join the domain used to fake by importing the
-issue store.
+cannot justify.
 
 The partial unique index on ``slug`` covers live rows only, which is what makes a
 slug reusable once its project is deleted and the guarantee behind
@@ -14,22 +13,14 @@ slug reusable once its project is deleted and the guarantee behind
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum
-
 from sqlalchemy import Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.models import Issue
-from tt.domains.issue.models import Status as IssueStatus
-from tt.platform.deleted import Deleted
-from tt.platform.models import BaseDBModel
-from tt.platform.types import EnumText
-
-
-class Status(StrEnum):
-    ACTIVE = "active"
-    ARCHIVED = "archived"
+from tt.domains.project.enums import Status
+from tt.platform.db import BaseDBModel
+from tt.platform.enums import TextEnum
 
 
 class Project(BaseDBModel):
@@ -41,7 +32,7 @@ class Project(BaseDBModel):
     slug: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
-    status: Mapped[Status] = mapped_column(EnumText(Status))
+    status: Mapped[Status] = mapped_column(TextEnum(Status))
 
     issues: Mapped[list[Issue]] = relationship(
         back_populates="project",
@@ -73,26 +64,3 @@ class Project(BaseDBModel):
 
     def subject(self) -> str:
         return f"project {self.slug}"
-
-
-@dataclass(frozen=True)
-class Draft:
-    slug: str
-    title: str
-    body: str
-
-
-@dataclass(frozen=True)
-class Restorable:
-    """What ``restore`` is offered against.
-
-    The trash row alone is not enough: the partial unique index covers live rows
-    only, so a slug freed by a delete can be taken again and bringing the old
-    project back would then collide. A hook is a pure function of its object, so
-    the live list it must read is carried on the object — the same reason a
-    ``Project`` carries its counts. Without this the refusal is a UNIQUE
-    constraint violation with no sentence in it.
-    """
-
-    deleted: Deleted[Project]
-    live: list[Project]

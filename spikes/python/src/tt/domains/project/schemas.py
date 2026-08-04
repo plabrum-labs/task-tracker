@@ -1,15 +1,18 @@
-"""The payload shapes a project's actions accept — the wire contract, in one place.
+"""A project's wire contract: the payloads its actions accept, and the shapes its
+reads return.
 
-See ``../issue/schemas.py``: one model per action that takes arguments, each with
-``extra="forbid"`` and a ``description`` per field. ``addIssue`` carries an issue's
-priority, so this refers across to ``issue.Priority`` — the same direction
-``services.py`` already depends in.
+See ``../issue/schemas.py``: one input model per action that takes arguments,
+each with ``extra="forbid"`` and a ``description`` per field. ``addIssue`` carries
+an issue's priority, so it reaches across to ``issue``'s ``WirePriority`` — the
+same direction the actions already depend in.
 """
+
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tt.domains.issue import Priority
-from tt.domains.project import Status
+from tt.domains.issue.schemas import WirePriority
+from tt.domains.project.enums import Status
 
 
 class EditTitlePayload(BaseModel):
@@ -35,7 +38,7 @@ class AddIssuePayload(BaseModel):
 
     title: str = Field(description="What to call the issue.")
     body: str | None = Field(default=None, description="What the issue is about.")
-    priority: Priority | None = Field(
+    priority: WirePriority | None = Field(
         default=None, description="How far up the list it sorts. Defaults to normal."
     )
 
@@ -46,3 +49,24 @@ class CreateProjectPayload(BaseModel):
     slug: str = Field(description="The short name the project is addressed by.")
     title: str | None = Field(default=None, description="What to call the project.")
     body: str | None = Field(default=None, description="What the project is about.")
+
+
+class ProjectListItem(BaseModel):
+    slug: str
+    title: str
+    status: str
+    todo: int
+    doing: int
+    done: int
+
+
+class ProjectDetail(BaseModel):
+    slug: str
+    title: str
+    body: str
+    status: str
+    todo: int
+    doing: int
+    done: int
+    created_at: datetime
+    updated_at: datetime

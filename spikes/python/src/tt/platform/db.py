@@ -1,8 +1,8 @@
-"""The database, with no table in it.
+"""The database, and the base every table is mapped on.
 
-An engine, the way to open one, a read scope and a write transaction — and the
-narrowing of SQLAlchemy's error into the domain's ``Broken`` at the edge. A
-domain's ``queries`` names the tables; this file cannot.
+An engine, the way to open one, a read scope and a write transaction, and the one
+``BaseDBModel`` that carries the columns every row has. A domain's ``queries``
+names the tables; this file cannot.
 
 Sync SQLAlchemy on purpose. The tracker is one local single-user SQLite file, so
 there is no concurrency for async to buy — and a synchronous ``execute`` is a
@@ -16,13 +16,11 @@ loaded it has closed.
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 
-from sqlalchemy import Engine, create_engine, event
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy import DateTime, Engine, create_engine, event, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
-
-from tt.platform.error import Broken
 
 
 def connect(url: str) -> Engine:
@@ -61,17 +59,31 @@ def reading(engine: Engine) -> Iterator[Session]:
 def transaction(engine: Engine) -> Iterator[Session]:
     """One public call is one transaction. The body runs inside ``BEGIN``…``COMMIT``;
     any exception it raises — including a refusal after rows are written — rolls
-    the whole thing back. The frontends open this at their edge and hand the
-    session down to an action's ``execute``.
-
-    A driver-level failure is the machine saying no rather than the row, so it
-    reaches a caller as ``Broken`` rather than as one of the two refusals.
-    """
+    the whole thing back. A driver-level failure propagates as itself: it is the
+    machine saying no, not the object, and dressing it up as a refusal would put a
+    database error where a reason belongs."""
     session = Session(engine, expire_on_commit=False)
     try:
         with session.begin():
             yield session
-    except SQLAlchemyError as e:
-        raise Broken(str(e)) from e
     finally:
         session.close()
+
+
+class BaseDBModel(DeclarativeBase):
+    """id, timestamps and soft-delete stamp, shared by every mapped table.
+
+    One base, so one ``metadata`` — which is what Alembic diffs and a test
+    creates. A table adds its own columns and inherits these, so no model spells
+    them out and no write stamps them by hand. Setting ``deleted_at`` is the soft
+    delete; it is an ordinary column an action writes, not a method here.
+    """
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, index=True
+    )

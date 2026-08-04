@@ -1,132 +1,107 @@
-"""Everything an issue can be asked, in two registrations.
+"""Everything an issue can be asked.
 
-One action is one class: its object type, its key, its two hooks and its
-``execute``, which holds the open transaction and writes for itself — an edit
-mutates the loaded row and flushes, a delete stamps ``deleted_at``, and nothing
-outside the body says which. The payload shapes are in ``schemas``, one model per
-action.
-
-There is one group per object. ``group`` is everything a live issue offers — the
-four edits and the delete. ``deleted_group`` is offered against ``Deleted[Issue]``,
-so a deleted issue cannot be edited because an edit was never registered against
-its type.
+One action is one class: its object type, its key, its label, its two hooks and
+its ``execute``, which holds the deps and mutates the loaded row — an edit sets
+columns, a delete stamps ``deleted_at``. The flush is the group's, once, so an
+``execute`` only says what it changed. The payload shapes are in ``schemas``, one
+model per action.
 
 None of the four edits refuses anything. Many issues may be ``doing`` at once,
 there is no WIP rule, so both hooks are the default in every case and the refusals
-are all ``execute``'s.
+are all ``execute``'s. Each action registers by decorating itself with
+``issue_actions``.
 """
 
-from sqlalchemy.orm import Session
+from datetime import UTC, datetime
 
-from tt.domains.issue import schemas, services
+from tt.domains.issue import queries, schemas
 from tt.domains.issue.models import Issue
-from tt.platform.action import Action, Checked
-from tt.platform.deleted import Deleted
-from tt.platform.error import Invalid
-from tt.platform.wire import Empty, Group, entry_of
+from tt.platform.actions import (
+    ActionDeps,
+    ActionGroup,
+    ActionResponse,
+    Empty,
+    Invalid,
+    ObjectAction,
+)
+
+issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.get)
 
 
-def _saved(issue: Issue, tx: Session) -> str:
-    """Flush the edit and report it. ``updated_at`` is the database's to bump, so
-    an ``execute`` sets only the columns it changed."""
-    tx.flush()
-    return f"{issue.subject()}: saved"
-
-
-class EditTitle(Action[Issue, schemas.EditTitlePayload]):
+@issue_actions
+class EditTitle(ObjectAction[Issue, schemas.EditTitlePayload]):
     KEY = "editTitle"
+    LABEL = "Edit title"
     Payload = schemas.EditTitlePayload
 
     @classmethod
     def execute(
-        cls, obj: Issue, payload: schemas.EditTitlePayload, tx: Session, checked: Checked
-    ) -> str:
+        cls, obj: Issue, payload: schemas.EditTitlePayload, deps: ActionDeps
+    ) -> ActionResponse:
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")
         obj.title = title
-        return _saved(obj, tx)
+        return ActionResponse(message=f"{obj.subject()}: saved")
 
 
-class EditBody(Action[Issue, schemas.EditBodyPayload]):
+@issue_actions
+class EditBody(ObjectAction[Issue, schemas.EditBodyPayload]):
     # The same payload shape as ``editTitle`` and a different rule: a blank body is
     # how you clear one. Two actions the schema cannot tell apart.
     KEY = "editBody"
+    LABEL = "Edit body"
     Payload = schemas.EditBodyPayload
 
     @classmethod
     def execute(
-        cls, obj: Issue, payload: schemas.EditBodyPayload, tx: Session, checked: Checked
-    ) -> str:
+        cls, obj: Issue, payload: schemas.EditBodyPayload, deps: ActionDeps
+    ) -> ActionResponse:
         obj.body = payload.body
-        return _saved(obj, tx)
+        return ActionResponse(message=f"{obj.subject()}: saved")
 
 
-class EditStatus(Action[Issue, schemas.EditStatusPayload]):
+@issue_actions
+class EditStatus(ObjectAction[Issue, schemas.EditStatusPayload]):
     # The note describes the status it arrived with, so moving without one clears
     # the old note rather than leaving it to describe a state the issue is no
     # longer in.
     KEY = "editStatus"
+    LABEL = "Edit status"
     Payload = schemas.EditStatusPayload
 
     @classmethod
     def execute(
-        cls, obj: Issue, payload: schemas.EditStatusPayload, tx: Session, checked: Checked
-    ) -> str:
+        cls, obj: Issue, payload: schemas.EditStatusPayload, deps: ActionDeps
+    ) -> ActionResponse:
         obj.status = payload.status
         obj.status_note = payload.note
-        return _saved(obj, tx)
+        return ActionResponse(message=f"{obj.subject()}: saved")
 
 
-class EditPriority(Action[Issue, schemas.EditPriorityPayload]):
+@issue_actions
+class EditPriority(ObjectAction[Issue, schemas.EditPriorityPayload]):
     KEY = "editPriority"
+    LABEL = "Edit priority"
     Payload = schemas.EditPriorityPayload
 
     @classmethod
     def execute(
-        cls, obj: Issue, payload: schemas.EditPriorityPayload, tx: Session, checked: Checked
-    ) -> str:
+        cls, obj: Issue, payload: schemas.EditPriorityPayload, deps: ActionDeps
+    ) -> ActionResponse:
         obj.priority = payload.priority
-        return _saved(obj, tx)
+        return ActionResponse(message=f"{obj.subject()}: saved")
 
 
-class Delete(Action[Issue, Empty]):
+@issue_actions
+class Delete(ObjectAction[Issue, Empty]):
     # The soft delete, which is an update like any other — the column it sets is
-    # not one the edits touch, so the whole of the write is the store call.
+    # not one the edits touch, and every read filters it out, so the row vanishes.
     KEY = "delete"
+    LABEL = "Delete"
     Payload = Empty
 
     @classmethod
-    def execute(cls, obj: Issue, payload: Empty, tx: Session, checked: Checked) -> str:
-        subject = obj.subject()
-        services.delete_issue(tx, obj)
-        return f"{subject}: deleted"
-
-
-class Restore(Action[Deleted[Issue], Empty]):
-    KEY = "restore"
-    Payload = Empty
-
-    @classmethod
-    def execute(cls, obj: Deleted[Issue], payload: Empty, tx: Session, checked: Checked) -> str:
-        services.restore_issue(tx, obj.inner)
-        return f"{obj.inner.subject()}: restored"
-
-
-def group() -> Group[Issue]:
-    """Everything a live issue offers, in the order it is offered."""
-    return [
-        entry_of(EditTitle),
-        entry_of(EditBody),
-        entry_of(EditStatus),
-        entry_of(EditPriority),
-        entry_of(Delete),
-    ]
-
-
-def deleted_group() -> Group[Deleted[Issue]]:
-    """What a row in the trash offers, which is coming back and nothing else.
-
-    ``Deleted[Issue]`` rather than ``Issue`` is what makes "a deleted issue cannot
-    be edited" a fact about what typechecks: ``group`` does not apply to one."""
-    return [entry_of(Restore)]
+    def execute(cls, obj: Issue, payload: Empty, deps: ActionDeps) -> ActionResponse:
+        obj.deleted_at = datetime.now(UTC)
+        return ActionResponse(message=f"{obj.subject()}: deleted")

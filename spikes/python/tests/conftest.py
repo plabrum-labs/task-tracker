@@ -4,20 +4,19 @@ One ``connect`` is one in-memory database held open by a ``StaticPool``, so a te
 cannot see another's rows. ``create_all`` builds the schema on it — Alembic cannot
 reach a ``StaticPool``'s single connection, and a database that dies with the
 process has no history to migrate. The helpers seed rows through the create
-services — the same path a frontend takes — inside their own transaction, so what
-they return is a stored row read back rather than a hand-built one.
+actions — the same path a frontend takes — inside their own transaction, then read
+the stored row back, so what they return is persisted rather than hand-built.
 """
 
 import pytest
 from sqlalchemy import Engine
 
 from tt import schema
-from tt.domains.issue import Draft as IssueDraft
 from tt.domains.issue import Issue, Priority
-from tt.domains.issue import services as issue_services
-from tt.domains.project import Draft as ProjectDraft
+from tt.domains.issue import queries as issue_queries
 from tt.domains.project import Project
-from tt.domains.project import services as project_services
+from tt.domains.project import api as project_api
+from tt.domains.project import queries as project_queries
 from tt.platform import db as platform_db
 
 
@@ -30,15 +29,22 @@ def db() -> Engine:
 
 def a_project(engine: Engine, slug: str) -> Project:
     with platform_db.transaction(engine) as tx:
-        return project_services.create_project(tx, ProjectDraft(slug=slug, title=slug, body=""))
+        project_api.trigger(tx, "createProject", {"slug": slug, "title": slug})
+    with platform_db.reading(engine) as session:
+        project = project_queries.by_slug(session, slug)
+        assert project is not None
+        return project
 
 
 def an_issue(
     engine: Engine, project: Project, title: str, priority: Priority = Priority.NORMAL
 ) -> Issue:
     with platform_db.transaction(engine) as tx:
-        loaded = project_services.get_project(tx, project.slug)
-        assert loaded is not None
-        return issue_services.create_issue(
-            tx, loaded, IssueDraft(title=title, body="", priority=priority)
+        response = project_api.trigger(
+            tx, "addIssue", {"title": title, "priority": priority.name.lower()}, project.slug
         )
+    assert response.created_id is not None
+    with platform_db.reading(engine) as session:
+        issue = issue_queries.get(session, response.created_id)
+        assert issue is not None
+        return issue

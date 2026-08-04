@@ -14,11 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tt import schema
-from tt.domains.issue import Draft as IssueDraft
-from tt.domains.issue import Priority
-from tt.domains.issue import services as issue_services
-from tt.domains.project import Draft as ProjectDraft
-from tt.domains.project import services as project_services
+from tt.domains.project import api as project_api
 from tt.frontend import cli
 from tt.platform import db
 
@@ -31,17 +27,14 @@ USAGE = 2
 @pytest.fixture
 def database(tmp_path: Path) -> str:
     """A temp-file database with one project and one high-priority issue under it,
-    seeded through the domain services the CLI itself writes through."""
+    seeded through the same ``api`` the CLI itself writes through."""
     url = f"sqlite:///{tmp_path / 'tt.db'}"
     schema.upgrade(url)
     engine = db.connect(url)
     with db.transaction(engine) as tx:
-        project = project_services.create_project(
-            tx, ProjectDraft(slug="tt", title="task tracker", body="")
-        )
-        issue_services.create_issue(
-            tx, project, IssueDraft(title="ship the mvp", body="", priority=Priority.HIGH)
-        )
+        project_api.trigger(tx, "createProject", {"slug": "tt", "title": "task tracker"})
+    with db.transaction(engine) as tx:
+        project_api.trigger(tx, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt")
     engine.dispose()
     return url
 
@@ -66,8 +59,9 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "editStatus",
         "editPriority",
         "delete",
-        "restore",
     ]
+    # ``createProject`` is top-level — no address to hang a subcommand on — so it is
+    # reached through the raw ``action`` path rather than generated here.
     assert _names(cli.project_app) == [
         "ls",
         "show",
@@ -77,7 +71,6 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "editStatus",
         "delete",
         "addIssue",
-        "restore",
     ]
 
 
@@ -131,11 +124,28 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
 
     keys = [action["key"] for action in value["actions"]]
     assert keys == ["editTitle", "editBody", "editStatus", "editPriority", "delete"]
-    # The schema is passed through exactly as it was derived, descriptions and all.
-    assert (
-        value["actions"][0]["arguments"]["properties"]["title"]["description"]
-        == "What to call the issue."
-    )
+    # Each offer carries a human label alongside its key.
+    assert value["actions"][0]["label"] == "Edit title"
+    # Each action carries its fields, descriptions and all, for an agent to fill in.
+    title = value["actions"][0]["arguments"][0]
+    assert title == {
+        "name": "title",
+        "required": True,
+        "description": "What to call the issue.",
+        "type": "text",
+    }
+
+
+def test_create_project_is_reached_through_the_top_level_action_path(database: str) -> None:
+    made = invoke(database, "project", "action", "createProject", '{"slug":"new","title":"New"}')
+    assert made.exit_code == 0
+    assert "project new: created" in made.output
+    listed = invoke(database, "project", "ls")
+    assert "new" in listed.output
+    # A duplicate slug is the object's refusal, not a usage error.
+    dup = invoke(database, "project", "action", "createProject", '{"slug":"new"}')
+    assert dup.exit_code == cli.REFUSED
+    assert "already exists" in dup.output
 
 
 def test_an_unknown_object_or_malformed_json_is_invalid_rather_than_a_crash(database: str) -> None:
