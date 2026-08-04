@@ -369,6 +369,7 @@ def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
         ("editBody", Runnable()),
         ("editStatus", Refused("finish or drop 2 issues first")),
         ("delete", Refused("archive it first")),
+        ("setPath", Runnable()),
         ("addIssue", Runnable()),
     ]
 

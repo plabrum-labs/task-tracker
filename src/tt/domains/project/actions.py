@@ -40,6 +40,16 @@ def _issues(n: int) -> str:
     return "1 issue" if n == 1 else f"{n} issues"
 
 
+def _path_owner(deps: ActionDeps, path: str, exclude_id: int | None) -> Project | None:
+    """The live project that already owns ``path``, if any but ``exclude_id``. The
+    partial unique index guarantees at most one; this is what turns its constraint
+    violation into a sentence a refusal can carry."""
+    stmt = select(Project).where(Project.path == path, Project.deleted_at.is_(None))
+    if exclude_id is not None:
+        stmt = stmt.where(Project.id != exclude_id)
+    return deps.tx.scalars(stmt).first()
+
+
 @project_actions
 class EditTitle(ObjectAction[Project, schemas.EditTitlePayload]):
     KEY = "editTitle"
@@ -115,6 +125,29 @@ class Delete(ObjectAction[Project, Empty]):
 
 
 @project_actions
+class SetPath(ObjectAction[Project, schemas.SetPathPayload]):
+    # The directory bare tt resolves a project from. A live-only unique index covers
+    # ``path``, so binding a directory another live project already owns is the one
+    # thing this refuses — read here so it is a sentence, not a constraint violation.
+    KEY = "setPath"
+    LABEL = "Set path"
+    Payload = schemas.SetPathPayload
+
+    @classmethod
+    def execute(
+        cls, obj: Project, payload: schemas.SetPathPayload, deps: ActionDeps
+    ) -> ActionResponse:
+        path = payload.path.strip()
+        if not path:
+            raise Invalid("path is required")
+        owner = _path_owner(deps, path, exclude_id=obj.id)
+        if owner is not None:
+            raise Conflict(f'path already belongs to "{owner.slug}"')
+        obj.path = path
+        return ActionResponse(message=f"{obj.subject()}: path set")
+
+
+@project_actions
 class AddIssue(ObjectAction[Project, schemas.AddIssuePayload]):
     # An action on a project writing to the issues table. The store assigns the
     # id, so the message reads the row it wrote rather than the payload it built.
@@ -171,11 +204,17 @@ class CreateProject(TopLevelAction[schemas.CreateProjectPayload]):
         ).first()
         if existing is not None:
             raise Conflict(f'project "{slug}" already exists')
+        path = payload.path.strip() if payload.path else None
+        if path is not None:
+            owner = _path_owner(deps, path, exclude_id=None)
+            if owner is not None:
+                raise Conflict(f'path already belongs to "{owner.slug}"')
         project = Project(
             slug=slug,
             title=payload.title or "",
             body=payload.body or "",
             status=Status.ACTIVE,
+            path=path,
             issues=[],
         )
         deps.tx.add(project)

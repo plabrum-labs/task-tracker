@@ -8,7 +8,10 @@ cannot justify.
 
 The partial unique index on ``slug`` covers live rows only, which is what makes a
 slug reusable once its project is deleted and the guarantee behind
-``createProject``'s refusal.
+``createProject``'s refusal. ``path`` is the working directory a project owns, so
+bare ``tt`` can open the project the shell is standing in; its own live-only unique
+index is what a duplicate-path refusal reads. A null ``path`` is unbound, and
+SQLite treats nulls as distinct, so any number of projects may have none.
 """
 
 from __future__ import annotations
@@ -27,12 +30,14 @@ class Project(BaseDBModel):
     __tablename__ = "projects"
     __table_args__ = (
         Index("projects_slug_live", "slug", unique=True, sqlite_where=text("deleted_at IS NULL")),
+        Index("projects_path_live", "path", unique=True, sqlite_where=text("deleted_at IS NULL")),
     )
 
     slug: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[Status] = mapped_column(TextEnum(Status))
+    path: Mapped[str | None] = mapped_column(Text, default=None)
 
     issues: Mapped[list[Issue]] = relationship(
         back_populates="project",

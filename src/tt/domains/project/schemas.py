@@ -49,12 +49,22 @@ class CreateProjectPayload(BaseModel):
     slug: str = Field(description="The short name the project is addressed by.")
     title: str | None = Field(default=None, description="What to call the project.")
     body: str | None = Field(default=None, description="What the project is about.")
+    path: str | None = Field(
+        default=None, description="The directory bare tt opens this project in."
+    )
+
+
+class SetPathPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="The directory bare tt opens this project in.")
 
 
 class ProjectListItem(BaseModel):
     slug: str
     title: str
     status: str
+    path: str | None
     todo: int
     doing: int
     done: int
@@ -65,6 +75,7 @@ class ProjectDetail(BaseModel):
     title: str
     body: str
     status: str
+    path: str | None
     todo: int
     doing: int
     done: int

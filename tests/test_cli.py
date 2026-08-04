@@ -70,6 +70,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "editBody",
         "editStatus",
         "delete",
+        "setPath",
         "addIssue",
     ]
 
