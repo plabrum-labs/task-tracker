@@ -25,7 +25,7 @@ Body {
 }
 
 DetailPane {
-    width: 52;
+    width: 1fr;
     height: 1fr;
     padding: 1 2;
     border-left: solid $border;
