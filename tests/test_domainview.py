@@ -78,10 +78,10 @@ def test_fits_and_next_layout() -> None:
 
 
 def test_pane_split_stacks_below_when_thin() -> None:
-    assert dv.pane_split(100) == "beside"
+    assert dv.pane_split(dv.DETAIL_BESIDE_MIN_WIDTH + 40) == "beside"  # comfortably wide
     assert dv.pane_split(dv.DETAIL_BESIDE_MIN_WIDTH) == "beside"  # exactly wide enough
     assert dv.pane_split(dv.DETAIL_BESIDE_MIN_WIDTH - 1) == "below"  # one short stacks
-    assert dv.pane_split(60) == "below"
+    assert dv.pane_split(dv.DETAIL_BESIDE_MIN_WIDTH // 2) == "below"  # clearly too thin
 
 
 # --- cwd resolution -------------------------------------------------------

@@ -16,10 +16,11 @@ from textual.widgets import Input, OptionList, Static
 from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
 from tt.frontend.tui.app import TrackerApp
+from tt.frontend.tui.domainview import DETAIL_BESIDE_MIN_WIDTH
 from tt.frontend.tui.screens.form import FormScreen
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
-from tt.frontend.tui.widgets.body import Card, IssueRow
+from tt.frontend.tui.widgets.body import BoardColumn, Card, IssueRow
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.platform.config import ThemeName
 
@@ -174,12 +175,12 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
 
 async def test_detail_pane_stacks_below_the_list_when_narrow(seeded: Engine) -> None:
     wide = _app(seeded)
-    async with wide.run_test(size=(100, 30)) as pilot:
+    async with wide.run_test(size=(DETAIL_BESIDE_MIN_WIDTH + 20, 30)) as pilot:
         await pilot.pause()
         assert not _main(wide).query_one("#content").has_class("below")  # beside: room for both
 
     narrow = _app(seeded)
-    async with narrow.run_test(size=(70, 30)) as pilot:
+    async with narrow.run_test(size=(DETAIL_BESIDE_MIN_WIDTH - 20, 30)) as pilot:
         await pilot.pause()
         assert _main(narrow).query_one("#content").has_class("below")  # stacked under the list
 
@@ -199,6 +200,21 @@ async def test_board_only_appears_at_width_90(seeded: Engine) -> None:
         await pilot.press("tab")
         await pilot.pause()
         assert _main(narrow).view_layout == "list"
+
+
+async def test_board_columns_sit_side_by_side(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        cols = list(app.screen.query(BoardColumn))
+        assert len(cols) == 3
+        # A kanban lays the status columns across a row: one shared top edge, each
+        # starting to the right of the last — not stacked down the same left edge.
+        assert len({c.region.y for c in cols}) == 1
+        xs = [c.region.x for c in cols]
+        assert xs == sorted(xs) and len(set(xs)) == 3
 
 
 async def test_project_menu_greys_a_refused_delete(seeded: Engine) -> None:

@@ -125,6 +125,12 @@ IssueRow.sel {
 
 /* --- the board ----------------------------------------------------------- */
 
+/* The columns lay across a row; the wrapper is what makes their ``1fr`` widths
+   divide the width rather than each take all of it. */
+.board {
+    width: 1fr;
+    height: auto;
+}
 BoardColumn {
     width: 1fr;
     height: auto;

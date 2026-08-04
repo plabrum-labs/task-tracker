@@ -112,8 +112,13 @@ class Body(VerticalScroll):
             yield Static(f"  [$text-disabled]{hint}[/]", classes="empty")
             return
         if self.view_layout == "board":
-            for col in columns(issues, "board"):
-                yield BoardColumn(col, self.selected_id)
+            # The columns are ``width: 1fr``, which only lays them across a row inside a
+            # horizontal container — yielded straight into this ``VerticalScroll`` they
+            # would stack down the left edge instead of forming a board.
+            yield Horizontal(
+                *(BoardColumn(col, self.selected_id) for col in columns(issues, "board")),
+                classes="board",
+            )
         else:
             for issue in issues:
                 yield IssueRow(issue, issue.id == self.selected_id)
