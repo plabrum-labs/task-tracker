@@ -25,7 +25,10 @@ objects directly.
 import enum
 import inspect
 import json
+import subprocess
 from collections.abc import Callable
+from importlib.metadata import version as package_version
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
@@ -302,6 +305,56 @@ def _report(outcome: Callable[[], str]) -> None:
     typer.echo(message)
 
 
+# --- version --------------------------------------------------------------
+
+# The checkout tt is imported from: ``.../tt/frontend/cli.py`` up to the repo
+# root. tt is installed editable, so which tree is on ``PATH`` — not the frozen
+# package version — is what tells one build from another, and this is how
+# ``--version`` reports it.
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _git(source: Path, *args: str) -> str | None:
+    """The output of a ``git`` command run in ``source``, or ``None`` when git is
+    absent or ``source`` is not a checkout — a wheel install has no repository."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(source), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return done.stdout.strip()
+
+
+def _source_revision(source: Path) -> str | None:
+    """``source``'s short revision, suffixed ``+`` when the tree has uncommitted
+    changes, or ``None`` when it is not a git checkout."""
+    revision = _git(source, "rev-parse", "--short", "HEAD")
+    if revision is None:
+        return None
+    dirty = _git(source, "status", "--porcelain")
+    return f"{revision}+" if dirty else revision
+
+
+def _version_line() -> str:
+    """tt's version, the tree it runs from, and that tree's revision when it is a
+    checkout — the location and revision being the part that distinguishes builds."""
+    revision = _source_revision(_SOURCE_ROOT)
+    suffix = f" ({revision})" if revision is not None else ""
+    return f"tt {package_version('tt')}{suffix} — {_SOURCE_ROOT}"
+
+
+def _version_callback(show: bool) -> None:
+    """``--version`` is eager: it prints and exits before the callback bootstraps a
+    database or opens the TUI, so it works with no database reachable."""
+    if show:
+        typer.echo(_version_line())
+        raise typer.Exit()
+
+
 # --- the command tree -----------------------------------------------------
 
 app = typer.Typer(
@@ -317,6 +370,16 @@ def _main(
         str | None,
         typer.Option("--db", help="The database to open. Defaults to the shared per-user file."),
     ] = None,
+    # ``version`` is consumed by its eager callback, not this body.
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show the version and the checkout tt runs from, then exit.",
+        ),
+    ] = False,
 ) -> None:
     """Bare ``tt`` is the terminal UI; a subcommand is the command line. So the
     callback runs even with no subcommand, and opens the TUI when none was

@@ -76,6 +76,20 @@ def test_no_subcommand_opens_the_tui_on_the_chosen_database(
     assert len(opened) == 1
 
 
+def test_version_reports_the_source_tree_without_a_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ``--version`` is eager: it must print and exit before the callback bootstraps
+    # a database or opens the TUI, so it works even when no database is reachable.
+    opened: list[object] = []
+    monkeypatch.setattr("tt.frontend.tui.run", lambda engine: opened.append(engine))
+    result = runner.invoke(cli.app, ["--version"])
+    assert result.exit_code == 0
+    assert opened == []
+    assert result.stdout.startswith("tt ")
+    assert str(cli._SOURCE_ROOT) in result.stdout
+
+
 def test_a_subcommand_does_not_open_the_tui(database: str, monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[object] = []
     monkeypatch.setattr("tt.frontend.tui.run", lambda engine: opened.append(engine))
