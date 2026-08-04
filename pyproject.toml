@@ -15,7 +15,6 @@ dependencies = [
 
 [project.scripts]
 tt = "tt.frontend.cli:main"
-tt-mcp = "tt.frontend.mcp:main"
 
 [dependency-groups]
 dev = [

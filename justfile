@@ -5,8 +5,8 @@ default:
 sync:
     uv sync
 
-# Put `tt`/`tt-mcp` on your PATH (~/.local/bin) as an editable uv tool, so the
-# working copy stays live. Mutates the global tool env, unlike the rest here.
+# Put `tt` on your PATH (~/.local/bin) as an editable uv tool, so the working
+# copy stays live. Mutates the global tool env, unlike the rest here.
 install:
     uv tool install --editable .
 
@@ -30,10 +30,10 @@ tui:
     uv run tt tui
 
 # The MCP server, over stdio, on the same groups. Register it once with
-# `claude mcp add tt -- uv run tt-mcp` (run from this repo), then an agent lists
+# `claude mcp add tt -- uv run tt mcp` (run from this repo), then an agent lists
 # and drives the same actions the CLI does.
 mcp:
-    uv run tt-mcp
+    uv run tt mcp
 
 # Author a migration from a change to the models (autogenerate against the
 # default database, so upgrade it to head first).

@@ -35,7 +35,6 @@ from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from sqlalchemy import Engine
 
-from tt import schema
 from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
 from tt.platform.actions import (
@@ -360,11 +359,3 @@ async def _serve(engine: Engine) -> None:
 def serve(engine: Engine) -> None:
     """Run the stdio MCP server against an open database until the client closes it."""
     anyio.run(_serve, engine)
-
-
-def main() -> None:
-    """Console-script entry: open the shared per-user database and serve over stdio.
-
-    The MCP transport has no place to pass ``--db``, so this always opens the
-    default file; the CLI's ``tt mcp`` remains the path that honours an override."""
-    serve(schema.bootstrap())
