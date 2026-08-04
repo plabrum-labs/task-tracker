@@ -103,7 +103,8 @@ IssueRow.sel {
     color: $success;
 }
 .ref {
-    width: 8;
+    width: 10;
+    padding-right: 1;
     color: $text-muted;
 }
 .title {
