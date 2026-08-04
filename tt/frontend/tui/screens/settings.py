@@ -35,13 +35,13 @@ class SettingsScreen(ModalScreen["ThemeName | None"]):
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
             yield Static("[b]Settings[/]", classes="ov-header")
-            yield Static("[$text-muted]Theme[/]", classes="f-label")
+            yield Static("[$overlay-text-muted]Theme[/]", classes="f-label")
             yield OptionList(
                 *(Option(label, id=str(i)) for i, (label, _) in enumerate(_THEME_OPTIONS)),
                 id="theme-list",
             )
             yield Static(
-                "[$text-disabled]↑/↓ choose · enter save · esc cancel[/]", classes="ov-foot"
+                "[$overlay-text-disabled]↑/↓ choose · enter save · esc cancel[/]", classes="ov-foot"
             )
 
     def on_mount(self) -> None:

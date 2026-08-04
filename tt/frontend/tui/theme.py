@@ -54,6 +54,12 @@ TT_DARK = Theme(
         # through — a modal painted with them lets the dim scrim bleed straight
         # through its panel. ``$overlay`` is a pinned hex the modals paint instead.
         "overlay": "#1B1E25",
+        # Text on that pinned surface is pinned too. The ANSI text names contrast
+        # with the terminal's own background, not this hex overlay, so on it they
+        # can wash out — these tiers are chosen to read against ``$overlay``.
+        "overlay-text": "#E7E9EE",
+        "overlay-text-muted": "#A0A6B0",
+        "overlay-text-disabled": "#6E747E",
         **_ANSI_VARS_DARK,
     },
 )
@@ -74,8 +80,12 @@ TT_LIGHT = Theme(
         "border": "#D5D8DE",
         "priority-high": "#B5540B",
         # See ``$overlay`` on the dark theme: an opaque modal surface that
-        # ``ansi=True`` would otherwise make transparent.
+        # ``ansi=True`` would otherwise make transparent, and text pinned to read
+        # against it rather than against the terminal background.
         "overlay": "#F0F1F4",
+        "overlay-text": "#1A1D23",
+        "overlay-text-muted": "#57606A",
+        "overlay-text-disabled": "#8B929C",
         **_ANSI_VARS_LIGHT,
     },
 )

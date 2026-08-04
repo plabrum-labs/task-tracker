@@ -26,7 +26,7 @@ class CaptureScreen(ModalScreen["str | None"]):
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
             yield Static(
-                f"[$text-muted]New issue in [b]{esc(self._slug)}[/][/]", classes="ov-header"
+                f"[$overlay-text-muted]New issue in [b]{esc(self._slug)}[/][/]", classes="ov-header"
             )
             yield Input(placeholder="title", id="capture-input")
 

@@ -49,7 +49,8 @@ class FormScreen(ModalScreen["str | None"]):
                 yield self._control(field)
             yield Static("", classes="f-error", id="form-error")
             yield Static(
-                "[$text-disabled]tab move · enter submit · esc cancel[/]", classes="ov-foot"
+                "[$overlay-text-disabled]tab move · enter submit · esc cancel[/]",
+                classes="ov-foot",
             )
 
     def on_mount(self) -> None:
@@ -58,8 +59,8 @@ class FormScreen(ModalScreen["str | None"]):
 
     def _field_label(self, field: Field) -> str:
         mark = " [$priority-high]*[/]" if field.required else ""
-        desc = f"  [$text-disabled]{esc(field.description)}[/]" if field.description else ""
-        return f"[$text-muted]{esc(field.name)}[/]{mark}{desc}"
+        desc = f"  [$overlay-text-disabled]{esc(field.description)}[/]" if field.description else ""
+        return f"[$overlay-text-muted]{esc(field.name)}[/]{mark}{desc}"
 
     def _control(self, field: Field) -> Input | Select[str]:
         widget_id = f"field-{field.name}"

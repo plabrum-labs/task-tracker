@@ -37,8 +37,10 @@ class CheatsheetScreen(ModalScreen[None]):
         with Vertical(id="panel"):
             yield Static("[b]Keys[/]", classes="ov-header")
             for keys, what in _CHEATS:
-                yield Static(f"  [$primary]{keys:<14}[/] [$text-muted]{what}[/]", classes="cheat")
-            yield Static("  [$text-disabled]any key to close[/]", classes="cheat")
+                yield Static(
+                    f"  [$primary]{keys:<14}[/] [$overlay-text-muted]{what}[/]", classes="cheat"
+                )
+            yield Static("  [$overlay-text-disabled]any key to close[/]", classes="cheat")
 
     def on_key(self, event: events.Key) -> None:
         event.stop()

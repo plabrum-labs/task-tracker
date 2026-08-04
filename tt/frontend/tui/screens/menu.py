@@ -37,7 +37,7 @@ class MenuScreen(ModalScreen["Command | None"]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
-            yield Static(f"[$text-muted]{esc(self._header)}[/]", classes="ov-header")
+            yield Static(f"[$overlay-text-muted]{esc(self._header)}[/]", classes="ov-header")
             yield Input(placeholder="Search…", id="menu-filter")
             yield OptionList(id="menu-list")
 
@@ -47,8 +47,8 @@ class MenuScreen(ModalScreen["Command | None"]):
 
     def _option_markup(self, command: Command) -> str:
         if command.reason is not None:
-            return f"[$text-disabled]{esc(command.label)} — {esc(command.reason)}[/]"
-        hint = f"  [$text-disabled]{command.hint}[/]" if command.hint else ""
+            return f"[$overlay-text-disabled]{esc(command.label)} — {esc(command.reason)}[/]"
+        hint = f"  [$overlay-text-disabled]{command.hint}[/]" if command.hint else ""
         return f"{esc(command.label)}{hint}"
 
     def _populate(self, query: str) -> None:

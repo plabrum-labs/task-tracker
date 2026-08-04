@@ -164,6 +164,7 @@ MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
     margin-top: 3;
     padding: 1 1;
     background: $overlay;
+    color: $overlay-text;
     border: round $primary;
 }
 
@@ -175,12 +176,18 @@ MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
     padding: 1 1 0 1;
 }
 
-/* The menu's search box and list sit flush inside the panel. */
+/* The menu's search box and list sit flush inside the panel. Input and OptionList
+   each default their own ``color`` to ``$foreground``, so the pinned overlay text
+   is set on them explicitly rather than inherited from ``#panel``. */
 #panel Input {
     border: none;
     height: 1;
     padding: 0 1;
     background: $overlay;
+    color: $overlay-text;
+}
+#panel Input > .input--placeholder {
+    color: $overlay-text-disabled;
 }
 #panel OptionList {
     height: auto;
@@ -188,6 +195,7 @@ MenuScreen, FormScreen, CaptureScreen, SettingsScreen, CheatsheetScreen {
     border: none;
     padding: 0;
     background: $overlay;
+    color: $overlay-text;
 }
 
 /* A form's text boxes keep a bordered box; the focused one takes the accent. */
@@ -197,6 +205,10 @@ FormScreen Input {
     margin: 0 1;
     padding: 0 1;
     background: $overlay;
+    color: $overlay-text;
+}
+FormScreen Input > .input--placeholder {
+    color: $overlay-text-disabled;
 }
 FormScreen Input:focus {
     border: round $primary;
