@@ -5,8 +5,8 @@ event. The screen holds the scope, layout, rows, selection and filter as reactiv
 and mutation methods assign them so watchers repaint the affected widget. Everything
 you can do to the selected object is reached through a modal overlay derived from
 what that object offers — a ``MenuScreen`` for the list, a ``FormScreen`` for an
-action with fields — so this screen names one action key, the ``d`` delete
-accelerator, and derives the rest.
+action with fields — so this screen names only the two accelerators (``d`` delete,
+``s`` status cycle) and derives the rest.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from tt.frontend.tui.domainview import (
     issue_ref,
     move_selection,
     next_layout,
+    next_status,
     project_commands,
     surviving_id,
     switcher_commands,
@@ -58,7 +59,7 @@ from tt.frontend.tui.widgets.topbar import TopBar
 from tt.platform.actions import REFUSALS, Refused
 from tt.platform.config import ThemeName
 
-BROWSING = "j/k move · x actions · / filter · ? keys · q quit"
+BROWSING = "j/k move · s status · x actions · / filter · ? keys · q quit"
 
 
 class MainScreen(Screen[None]):
@@ -90,6 +91,7 @@ class MainScreen(Screen[None]):
         Binding("R", "refresh", "refresh", show=False),
         Binding("n", "capture", "new issue", show=False),
         Binding("d", "delete", "delete", show=False),
+        Binding("s", "set_status", "status", show=False),
         Binding("escape", "escape", "back", show=False),
         Binding("q", "quit", "quit", show=False),
     ]
@@ -374,6 +376,21 @@ class MainScreen(Screen[None]):
             self.status = f"delete: {offer.state.reason}"
             return
         self._run_action(RunAction(IssueTarget(issue.id), "delete", offer.fields), offer.label)
+
+    def action_set_status(self) -> None:
+        # The quick cycle: compute the next status off the selected row and dispatch
+        # ``setStatus`` at once, skipping the menu's pick-a-status form. Dispatching
+        # directly is safe — the domain ``run`` gate re-checks availability and
+        # ``_write`` catches a refusal — and the issue has no status machine to refuse.
+        issue = self._selected_issue()
+        if issue is None:
+            self.status = "no issue selected"
+            return
+        nxt = next_status(issue.status)
+        self._write(
+            "setStatus",
+            lambda: data.dispatch(self.engine, IssueTarget(issue.id), "setStatus", {"status": nxt}),
+        )
 
     # --- capture ----------------------------------------------------------
 

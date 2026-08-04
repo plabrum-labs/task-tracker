@@ -106,6 +106,27 @@ async def test_d_deletes_and_selection_lands_on_neighbour(seeded: Engine) -> Non
         assert _main(app).selected_id in remaining
 
 
+async def test_s_cycles_the_selected_issue_status_and_keeps_the_selection(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        selected = _main(app).selected_id
+        assert selected is not None
+        before = issue_api.issue_get(seeded, selected)
+        assert before is not None
+        assert before.status == "todo"
+
+        # The accelerator writes the next status at once — no form, unlike the menu's
+        # pick-a-status. Three presses walk the whole cycle and wrap back to todo.
+        for expected in ["doing", "done", "todo"]:
+            await pilot.press("s")
+            await pilot.pause()
+            assert _main(app).selected_id == selected  # selection is retained
+            moved = issue_api.issue_get(seeded, selected)
+            assert moved is not None
+            assert moved.status == expected  # advanced one step and persisted
+
+
 async def test_board_only_appears_at_width_90(seeded: Engine) -> None:
     wide = _app(seeded)
     async with wide.run_test(size=(100, 30)) as pilot:

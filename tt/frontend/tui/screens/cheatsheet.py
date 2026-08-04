@@ -18,6 +18,7 @@ _CHEATS: list[tuple[str, str]] = [
     ("x / space", "issue actions"),
     ("X", "project actions"),
     (":", "command palette"),
+    ("s", "cycle issue status"),
     ("d", "delete issue"),
     ("n", "new issue"),
     ("/", "filter"),

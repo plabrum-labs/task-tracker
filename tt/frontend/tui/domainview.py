@@ -29,6 +29,15 @@ STATUS_GLYPH = {"todo": "○", "doing": "◐", "done": "●"}
 # The status columns of the board, in the order they read left to right.
 BOARD_STATUSES = ("todo", "doing", "done")
 
+
+def next_status(current: str) -> str:
+    """The status one step forward around the board cycle, wrapping ``done`` back to
+    ``todo`` — the move the ``s`` accelerator writes. An unrecognised status starts
+    the cycle at its head."""
+    index = BOARD_STATUSES.index(current) if current in BOARD_STATUSES else -1
+    return BOARD_STATUSES[(index + 1) % len(BOARD_STATUSES)]
+
+
 HALF = 8  # rows a half-page jump moves; the terminal height is not pure.
 FAR = 10**6  # a move large enough to reach either end after clamping.
 
@@ -196,10 +205,12 @@ def match_path(candidates: list[tuple[str, str | None]], cwd: str) -> str | None
 # --- commands (the rows of every list overlay) ----------------------------
 
 # The single-key accelerators, each naming an action that runs against the selected
-# issue. The per-field edits collapsed into one ``Edit`` reached through the menu, so
-# only the fieldless ``delete`` keeps an accelerator.
+# issue. ``d`` runs the fieldless ``delete`` straight; ``s`` drives a direct status
+# cycle — it dispatches ``setStatus`` on the next status rather than opening the
+# menu's pick-a-status form, so it does not go through the generic offer path.
 ACCELERATORS: dict[str, str] = {
     "d": "delete",
+    "s": "setStatus",
 }
 _HINT = {action_key: keystroke for keystroke, action_key in ACCELERATORS.items()}
 

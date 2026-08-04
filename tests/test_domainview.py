@@ -113,5 +113,13 @@ def test_a_runnable_offer_carries_its_accelerator_and_a_refused_one_its_reason()
 
 
 def test_the_accelerators_name_the_actions_they_run() -> None:
-    # The per-field edits collapsed into the menu's ``Edit``; only delete keeps a key.
-    assert dv.ACCELERATORS == {"d": "delete"}
+    # ``d`` runs delete straight; ``s`` drives the direct status cycle.
+    assert dv.ACCELERATORS == {"d": "delete", "s": "setStatus"}
+
+
+def test_next_status_advances_one_step_and_wraps() -> None:
+    assert dv.next_status("todo") == "doing"
+    assert dv.next_status("doing") == "done"
+    assert dv.next_status("done") == "todo"  # wraps
+    # An unrecognised status starts the cycle at its head.
+    assert dv.next_status("archived") == "todo"
