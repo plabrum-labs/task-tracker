@@ -50,6 +50,11 @@ class EditPane(VerticalScroll):
 
     BINDINGS = [Binding("escape", "cancel", "cancel", show=False)]
 
+    # Tab moves between the field controls (the screen no longer binds it), so the
+    # scroll container itself stays out of the focus ring — focusing a field scrolls
+    # it into view, so a tall form still reaches every control without this stop.
+    can_focus = False
+
     # Assigning a new ``Edit`` recomposes the controls, the way the detail pane
     # rebuilds from its own reactive.
     edit: reactive[Edit | None] = reactive[Edit | None](None, recompose=True)

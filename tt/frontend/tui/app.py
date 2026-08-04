@@ -24,6 +24,10 @@ class TrackerApp(App[None]):
 
     CSS_PATH = "style.tcss"
 
+    # The tracker has its own ``:`` command palette; Textual's built-in one would
+    # otherwise claim ``ctrl+p``, which the browse screen binds to move up.
+    ENABLE_COMMAND_PALETTE = False
+
     def __init__(self, engine: Engine, *, theme: ThemeName | None = None) -> None:
         super().__init__()
         self._engine = engine

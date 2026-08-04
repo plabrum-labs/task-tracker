@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from textual.theme import Theme
 
-from tt.platform import config
 from tt.platform.config import Prefs, ThemeName
 
 _ANSI_VARS_DARK = {"ansi-background": "#0B0C0F", "ansi-foreground": "#E7E9EE"}
@@ -102,8 +101,3 @@ def startup_theme(prefs: Prefs, env_theme: str | None) -> ThemeName:
         return ThemeName(env_theme)
     except ValueError:
         return prefs.theme
-
-
-def save_theme(theme: ThemeName) -> None:
-    """Persist a committed theme choice as the new preference."""
-    config.save(Prefs(theme=theme))

@@ -21,6 +21,7 @@ from tt.platform.actions import (
     Offer,
     Refused,
 )
+from tt.platform.config import LAYOUTS, Layout
 
 # --- the visual vocabulary ------------------------------------------------
 
@@ -88,8 +89,6 @@ class AllScope:
 
 
 type Scope = ProjectScope | AllScope
-type Layout = Literal["list", "board"]
-LAYOUTS: tuple[Layout, ...] = ("list", "board")
 
 type Split = Literal["beside", "below"]
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import Engine
+from textual.pilot import Pilot
 from textual.widgets import Input, OptionList, Static
 
 from tt.domains.issue import api as issue_api
@@ -58,12 +59,20 @@ def _app(engine: Engine, theme: ThemeName = ThemeName.DARK) -> TrackerApp:
     return TrackerApp(engine, theme=theme)
 
 
+async def _scope_tt(pilot: Pilot[None]) -> None:
+    """Scope onto the ``tt`` project the way a user now does: through the switcher
+    (``P``), whose first row is the only seeded project."""
+    await pilot.press("P")
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+
+
 async def test_capture_writes_a_row(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")  # scope onto the tt project so capture has a target
-        await pilot.pause()
+        await _scope_tt(pilot)  # scope onto the tt project so capture has a target
         await pilot.press("n")
         await pilot.pause()
         for char in "triage inbox":
@@ -80,8 +89,7 @@ async def test_a_refused_edit_keeps_the_editor_open(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")
-        await pilot.pause()
+        await _scope_tt(pilot)
         await pilot.press("x")  # issue menu
         await pilot.pause()
         await pilot.press("enter")  # pick Edit — the form opens pre-filled in the pane
@@ -99,12 +107,31 @@ async def test_a_refused_edit_keeps_the_editor_open(seeded: Engine) -> None:
         assert "title is required" in error
 
 
+async def test_tab_moves_between_the_edit_pane_fields(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _scope_tt(pilot)
+        await pilot.press("x")  # issue menu
+        await pilot.pause()
+        await pilot.press("enter")  # pick Edit — the form opens focused on the first field
+        await pilot.pause()
+        edit = _main(app).query_one(EditPane)
+        assert app.focused is edit.query_one("#field-title", Input)
+        # Tab is no longer the layout switch, so it steps through the form's controls.
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is edit.query_one("#field-body", Input)
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.focused is edit.query_one("#field-title", Input)
+
+
 async def test_editing_the_title_in_the_pane_persists_and_returns_to_read(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")
-        await pilot.pause()
+        await _scope_tt(pilot)
         selected = _main(app).selected_id
         assert selected is not None
         await pilot.press("x")  # issue menu
@@ -126,8 +153,7 @@ async def test_escape_abandons_the_pane_editor_without_writing(seeded: Engine) -
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")
-        await pilot.pause()
+        await _scope_tt(pilot)
         selected = _main(app).selected_id
         assert selected is not None
         before = issue_api.issue_get(seeded, selected)
@@ -239,7 +265,7 @@ async def test_board_only_appears_at_width_90(seeded: Engine) -> None:
     wide = _app(seeded)
     async with wide.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("tab")
+        await pilot.press("]")  # cycle to the board layout
         await pilot.pause()
         assert _main(wide).view_layout == "board"
         assert len(_main(wide).query(Card)) > 0
@@ -247,7 +273,37 @@ async def test_board_only_appears_at_width_90(seeded: Engine) -> None:
     narrow = _app(seeded)
     async with narrow.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("tab")
+        await pilot.press("]")  # cycle to the board layout
+        await pilot.pause()
+        assert _main(narrow).view_layout == "list"
+
+
+async def test_the_layout_choice_persists_across_restarts(seeded: Engine) -> None:
+    first = _app(seeded)
+    async with first.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("]")  # switch to the board
+        await pilot.pause()
+        assert _main(first).view_layout == "board"
+
+    # A fresh app over the same config reopens on the board, not the default list.
+    second = _app(seeded)
+    async with second.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert _main(second).view_layout == "board"
+
+
+async def test_a_saved_board_falls_back_to_the_list_when_it_no_longer_fits(seeded: Engine) -> None:
+    wide = _app(seeded)
+    async with wide.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("]")  # save the board as the preference
+        await pilot.pause()
+        assert _main(wide).view_layout == "board"
+
+    # Reopening in a terminal too narrow for the board opens the list instead.
+    narrow = _app(seeded)
+    async with narrow.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         assert _main(narrow).view_layout == "list"
 
@@ -256,7 +312,7 @@ async def test_board_columns_sit_side_by_side(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
-        await pilot.press("tab")
+        await pilot.press("]")  # cycle to the board layout
         await pilot.pause()
         cols = list(app.screen.query(BoardColumn))
         assert len(cols) == 3
@@ -305,8 +361,7 @@ async def test_an_accelerator_in_the_menu_runs_its_command(seeded: Engine) -> No
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")  # scope onto tt
-        await pilot.pause()
+        await _scope_tt(pilot)  # scope onto tt
         await pilot.press("x")  # issue menu
         await pilot.pause()
         await pilot.press("e")  # the edit accelerator picks Edit from the list
@@ -322,8 +377,7 @@ async def test_e_opens_the_edit_form_for_the_selected_issue(seeded: Engine) -> N
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")  # scope onto tt
-        await pilot.pause()
+        await _scope_tt(pilot)  # scope onto tt
         selected = _main(app).selected_id
         assert selected is not None
         current = issue_api.issue_get(seeded, selected)
@@ -341,8 +395,7 @@ async def test_project_menu_greys_a_refused_delete(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")  # scope onto tt
-        await pilot.pause()
+        await _scope_tt(pilot)  # scope onto tt
         await pilot.press("X")  # the project menu
         await pilot.pause()
         menu = app.screen

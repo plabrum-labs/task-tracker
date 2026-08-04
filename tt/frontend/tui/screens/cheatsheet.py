@@ -9,12 +9,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 _CHEATS: list[tuple[str, str]] = [
-    ("j / k", "move"),
+    ("j/k · C-n/C-p", "move"),
     ("J / K", "half page"),
     ("g / G", "top / bottom"),
-    ("h / l", "columns (board)"),
-    ("tab", "cycle layout"),
-    ("[ / ]", "prev / next project"),
+    ("h/l · C-f/C-b", "columns (board)"),
+    ("[ / ]", "cycle layout"),
     ("enter", "read detail (esc to leave)"),
     ("x / space", "issue actions"),
     ("X", "project actions"),

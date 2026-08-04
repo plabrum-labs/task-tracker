@@ -40,6 +40,7 @@ from tt.frontend.tui.domainview import (
     RunAction,
     Scope,
     Split,
+    fits,
     index_of,
     issue_commands,
     issue_ref,
@@ -55,12 +56,12 @@ from tt.frontend.tui.screens.capture import CaptureScreen
 from tt.frontend.tui.screens.cheatsheet import CheatsheetScreen
 from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.screens.settings import SettingsScreen
-from tt.frontend.tui.theme import save_theme
 from tt.frontend.tui.widgets.body import Body
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import Edit, EditPane
 from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
 from tt.frontend.tui.widgets.topbar import TopBar
+from tt.platform import config
 from tt.platform.actions import REFUSALS, Refused
 from tt.platform.config import ThemeName
 
@@ -79,17 +80,15 @@ class MainScreen(Screen[None]):
     AUTO_FOCUS = ""
 
     BINDINGS = [
-        Binding("j,down", "move_down", "down", show=False),
-        Binding("k,up", "move_up", "up", show=False),
+        Binding("j,down,ctrl+n", "move_down", "down", show=False),
+        Binding("k,up,ctrl+p", "move_up", "up", show=False),
         Binding("J,ctrl+d", "half_down", "half page down", show=False),
         Binding("K,ctrl+u", "half_up", "half page up", show=False),
         Binding("g,less_than_sign", "top", "top", show=False),
         Binding("G,greater_than_sign", "bottom", "bottom", show=False),
-        Binding("h,left", "col_left", "left", show=False),
-        Binding("l,right", "col_right", "right", show=False),
-        Binding("tab", "cycle_layout", "layout", show=False),
-        Binding("left_square_bracket", "prev_project", "prev project", show=False),
-        Binding("right_square_bracket", "next_project", "next project", show=False),
+        Binding("h,left,ctrl+b", "col_left", "left", show=False),
+        Binding("l,right,ctrl+f", "col_right", "right", show=False),
+        Binding("left_square_bracket,right_square_bracket", "cycle_layout", "layout", show=False),
         Binding("enter", "focus_detail", "detail", show=False),
         Binding("x,space", "issue_menu", "actions", show=False),
         Binding("X", "project_menu", "project actions", show=False),
@@ -136,6 +135,11 @@ class MainScreen(Screen[None]):
         self.scope = data.initial_scope(self.engine)
         self.reload()
         self.split = pane_split(self.size.width)
+        # Reopen on the layout you left; a saved board that no longer fits this
+        # terminal falls back to the list rather than opening cramped.
+        saved = config.load().layout
+        if fits(saved, self.size.width, self.size.height):
+            self.view_layout = saved
         self._ready = True
         self._paint_all()
         # Browse mode holds no focus, so every keystroke reaches the bindings rather
@@ -278,23 +282,9 @@ class MainScreen(Screen[None]):
 
     def action_cycle_layout(self) -> None:
         self.view_layout = next_layout(self.view_layout, self.size.width, self.size.height)
+        config.save_layout(self.view_layout)
 
     # --- scope ------------------------------------------------------------
-
-    def action_prev_project(self) -> None:
-        self._shift_project(-1)
-
-    def action_next_project(self) -> None:
-        self._shift_project(1)
-
-    def _shift_project(self, n: int) -> None:
-        if not self.projects:
-            return
-        # All-projects is a stop on the cycle, so ``]`` off the last project lands
-        # back on it rather than skipping to the first.
-        scopes: list[Scope] = [AllScope(), *(ProjectScope(p.slug) for p in self.projects)]
-        base = next((i for i, s in enumerate(scopes) if s == self.scope), 0)
-        self._switch_scope(scopes[(base + n) % len(scopes)])
 
     def _switch_scope(self, scope: Scope) -> None:
         self.scope = scope
@@ -346,7 +336,7 @@ class MainScreen(Screen[None]):
         commands.extend(
             [
                 Command("Switch project", None, "P", Navigate("switcher")),
-                Command("Toggle layout", None, "tab", Navigate("layout")),
+                Command("Toggle layout", None, "[", Navigate("layout")),
                 Command("Refresh", None, "R", Navigate("refresh")),
             ]
         )
@@ -503,7 +493,7 @@ class MainScreen(Screen[None]):
         if theme is None:
             return
         self.app.theme = theme.value
-        save_theme(theme)
+        config.save_theme(theme)
         self.status = BROWSING
 
     def action_cheatsheet(self) -> None:
