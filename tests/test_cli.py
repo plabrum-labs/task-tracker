@@ -71,6 +71,16 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "delete",
         "setPath",
         "addIssue",
+        "addEpic",
+    ]
+    assert _names(cli.epic_app) == [
+        "ls",
+        "show",
+        "action",
+        "edit",
+        "setStatus",
+        "setDueDate",
+        "delete",
     ]
 
 
@@ -119,6 +129,8 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
         "normal",
         "--due_date",
         "",
+        "--epic",
+        "",
     ]
     # The required options come from the schema, so an edit missing them is a usage
     # error rather than a payload the decoder refuses further in.
@@ -134,6 +146,8 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
         "--priority",
         "normal",
         "--due_date",
+        "",
+        "--epic",
         "",
     ]
     assert invoke(database, "issue", "edit", "1", *bad_enum).exit_code == USAGE
@@ -154,6 +168,8 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
         "normal",
         "--due_date",
         "",
+        "--epic",
+        "",
     )
     assert blank.exit_code == cli.REFUSED
     assert "title is required" in blank.output
@@ -172,7 +188,7 @@ def test_the_help_text_carries_the_field_doc_and_the_enum_values(
     assert "Where the issue is up to." in result.output
     # Typer renders the closed choice inline rather than clap's "[possible values:
     # …]", but the alternatives are all there.
-    for value in ("requires_planning", "todo", "doing", "done"):
+    for value in ("backlog", "requires_planning", "todo", "doing", "done"):
         assert value in result.output
 
 
@@ -192,6 +208,8 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
         "normal",
         "--due_date",
         "",
+        "--epic",
+        "",
     )
     assert spelled.exit_code == 0
     blob = invoke(
@@ -200,7 +218,7 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
         "action",
         "1",
         "edit",
-        '{"title":"x","body":"","status":"doing","priority":"normal","due_date":null}',
+        '{"title":"x","body":"","status":"doing","priority":"normal","due_date":null,"epic":null}',
     )
     assert blob.exit_code == 0
     assert spelled.output == blob.output

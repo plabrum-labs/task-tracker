@@ -63,16 +63,20 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
         rest = issue_queries.list_issues(s, "tt")
     with platform_db.transaction(db) as tx:
         doing = issue_queries.get_issue(tx, first.id)
-        planning = issue_queries.get_issue(tx, rest[-1].id)
+        planning = issue_queries.get_issue(tx, rest[1].id)
+        backlog = issue_queries.get_issue(tx, rest[-1].id)
         assert doing is not None
         assert planning is not None
+        assert backlog is not None
         doing.status = Status.DOING
         planning.status = Status.REQUIRES_PLANNING
+        backlog.status = Status.BACKLOG
 
     with platform_db.reading(db) as s:
         loaded = project_queries.get_project(s, "tt")
     assert loaded is not None
-    assert (loaded.planning, loaded.todo, loaded.doing, loaded.done) == (1, 1, 1, 0)
+    counts = (loaded.backlog, loaded.planning, loaded.todo, loaded.doing, loaded.done)
+    assert counts == (1, 1, 0, 1, 0)
     assert loaded.issue_count() == 3
 
     # A project with nothing under it still gets zeroes rather than nothing.
@@ -80,7 +84,14 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
     with platform_db.reading(db) as s:
         reloaded = project_queries.get_project(s, empty.slug)
     assert reloaded is not None
-    assert (reloaded.planning, reloaded.todo, reloaded.doing, reloaded.done) == (0, 0, 0, 0)
+    empty_counts = (
+        reloaded.backlog,
+        reloaded.planning,
+        reloaded.todo,
+        reloaded.doing,
+        reloaded.done,
+    )
+    assert empty_counts == (0, 0, 0, 0, 0)
 
 
 # --- ordering -------------------------------------------------------------

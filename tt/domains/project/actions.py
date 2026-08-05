@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from tt.domains.epic.enums import Status as EpicStatus
+from tt.domains.epic.models import Epic
 from tt.domains.issue.enums import Priority
 from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.models import Issue
@@ -167,6 +169,43 @@ class AddIssue(ObjectAction[Project, schemas.AddIssuePayload]):
         deps.tx.flush()
         deps.tx.refresh(issue, ["created_at", "updated_at"])
         return ActionResponse(message=f"{issue.subject()}: created", created_id=issue.id)
+
+
+@project_actions
+class AddEpic(ObjectAction[Project, schemas.AddEpicPayload]):
+    # An action on a project writing to the epics table, the mirror of ``AddIssue``.
+    # The store assigns the id, so the message reads the row it wrote.
+    KEY = "addEpic"
+    LABEL = "Add epic"
+    Payload = schemas.AddEpicPayload
+
+    @classmethod
+    def is_disabled(cls, obj: Project) -> str | None:
+        match obj.status:
+            case Status.ARCHIVED:
+                return "project is archived"
+            case Status.ACTIVE:
+                return None
+
+    @classmethod
+    def execute(
+        cls, obj: Project, payload: schemas.AddEpicPayload, deps: ActionDeps
+    ) -> ActionResponse:
+        title = payload.title.strip()
+        if not title:
+            raise Invalid("title is required")
+        epic = Epic(
+            project=obj,
+            title=title,
+            body=payload.body or "",
+            status=EpicStatus.ACTIVE,
+            due_date=payload.due_date,
+            issues=[],
+        )
+        deps.tx.add(epic)
+        deps.tx.flush()
+        deps.tx.refresh(epic, ["created_at", "updated_at"])
+        return ActionResponse(message=f"{epic.subject()}: created", created_id=epic.id)
 
 
 @project_actions

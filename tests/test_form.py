@@ -24,6 +24,7 @@ from tt.platform.actions import (
     Field,
     Invalid,
     OptionalText,
+    Reference,
     Text,
     fields_of,
     payload,
@@ -52,7 +53,7 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
         Field(
             name="status",
             required=True,
-            kind=Enum(["requires_planning", "todo", "doing", "done"]),
+            kind=Enum(["backlog", "requires_planning", "todo", "doing", "done"]),
             description="Where the issue is up to.",
         ),
         Field(
@@ -67,7 +68,24 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
             kind=Date(),
             description="When the issue is due, as YYYY-MM-DD. Blank clears it.",
         ),
+        Field(
+            name="epic",
+            required=True,
+            kind=Reference(),
+            description="The id of the epic this issue belongs to. Blank clears it.",
+        ),
     ]
+
+
+def test_a_reference_field_derives_from_an_int_base() -> None:
+    # An ``int`` base is a pointer at another row's id; a blank submits the null
+    # that clears the link, the same rule ``OptionalText`` carries.
+    fields = fields_of(issue_schemas.EditIssuePayload)
+    epic = fields[-1]
+    assert epic.name == "epic"
+    assert epic.kind == Reference()
+    assert payload([(epic, "")]) == {"epic": None}
+    assert payload([(epic, "3")]) == {"epic": "3"}
 
 
 def test_the_set_due_date_payload_derives_a_single_date_field() -> None:
@@ -95,7 +113,7 @@ def test_the_set_status_payload_derives_a_single_status_enum_field() -> None:
         Field(
             name="status",
             required=True,
-            kind=Enum(["requires_planning", "todo", "doing", "done"]),
+            kind=Enum(["backlog", "requires_planning", "todo", "doing", "done"]),
             description="Where the issue is up to.",
         ),
     ]
@@ -115,9 +133,10 @@ def test_an_action_with_no_arguments_renders_a_form_with_no_fields() -> None:
 def test_a_field_the_form_cannot_render_fails_the_whole_form() -> None:
     # Dropping the field would render a form that cannot express the action, and
     # submitting it would produce a payload the decoder refuses for a reason
-    # nothing on screen mentions. A non-string, non-enum field has no control.
+    # nothing on screen mentions. ``int`` is now a ``Reference`` control, so the
+    # exemplar of an unrenderable kind is a ``float`` — no control derives from it.
     class Unrenderable(BaseModel):
-        count: int
+        ratio: float
 
     with pytest.raises(TypeError):
         fields_of(Unrenderable)
@@ -158,6 +177,7 @@ def test_a_blank_required_text_field_is_submitted_and_refused(db: Engine) -> Non
             (fields[2], "todo"),
             (fields[3], "normal"),
             (fields[4], ""),  # due_date — blank clears
+            (fields[5], ""),  # epic — blank clears
         ]
     )
     assert built["title"] == ""

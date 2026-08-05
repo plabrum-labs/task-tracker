@@ -19,6 +19,12 @@ from sqlalchemy import Engine
 
 from conftest import a_project, an_issue
 from tt import schema
+from tt.domains.epic import Epic
+from tt.domains.epic import Status as EpicStatus
+from tt.domains.epic import actions as epic_actions
+from tt.domains.epic import api as epic_api
+from tt.domains.epic import queries as epic_queries
+from tt.domains.epic import schemas as epic_schemas
 from tt.domains.issue import Issue, Priority, Status
 from tt.domains.issue import actions as issue_actions
 from tt.domains.issue import api as issue_api
@@ -68,6 +74,15 @@ def run_project[P: BaseModel](
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
         obj = project_queries.get_project(tx, slug)
+        assert obj is not None
+        return action.run(obj, payload, ActionDeps(tx))
+
+
+def run_epic[P: BaseModel](
+    engine: Engine, action: type[ObjectAction[Epic, P]], epic_id: int, payload: P
+) -> ActionResponse:
+    with platform_db.transaction(engine) as tx:
+        obj = epic_queries.get_epic(tx, epic_id)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -135,6 +150,7 @@ def _edit(**over: Any) -> issue_schemas.EditIssuePayload:
         "status": Status.TODO,
         "priority": Priority.NORMAL,
         "due_date": None,
+        "epic": None,
     }
     fields.update(over)
     return issue_schemas.EditIssuePayload(**fields)
@@ -200,7 +216,13 @@ def test_set_status_is_always_offered() -> None:
 def test_set_status_moves_to_each_status(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
-    for status in [Status.REQUIRES_PLANNING, Status.DOING, Status.DONE, Status.TODO]:
+    for status in [
+        Status.BACKLOG,
+        Status.REQUIRES_PLANNING,
+        Status.DOING,
+        Status.DONE,
+        Status.TODO,
+    ]:
         response = run_issue(
             db,
             issue_actions.SetStatus,
@@ -318,7 +340,14 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
     issue_api.issue_action(
         db,
         "edit",
-        {"title": "wip", "body": "", "status": "doing", "priority": "normal", "due_date": None},
+        {
+            "title": "wip",
+            "body": "",
+            "status": "doing",
+            "priority": "normal",
+            "due_date": None,
+            "epic": None,
+        },
         made.id,
     )
     response = project_api.project_action(
@@ -479,6 +508,211 @@ def test_create_project_refuses_a_slug_over_the_length_cap(db: Engine) -> None:
     assert response.message == "project abcde: created"
 
 
+# --- epics -----------------------------------------------------------------
+
+
+def an_epic(engine: Engine, project_slug: str, title: str) -> int:
+    response = project_api.project_action(engine, "addEpic", {"title": title}, project_slug)
+    assert response.created_id is not None
+    return response.created_id
+
+
+def epic(*, issues: list[Issue] | None = None) -> Epic:
+    return Epic(
+        id=1,
+        project_id=1,
+        title="v1",
+        body="",
+        status=EpicStatus.ACTIVE,
+        due_date=None,
+        issues=list(issues or []),
+    )
+
+
+def test_add_epic_is_refused_while_the_project_is_archived(db: Engine) -> None:
+    archived = project(status=ProjectStatus.ARCHIVED)
+    assert project_actions.AddEpic.availability(archived) == Refused("project is archived")
+    with pytest.raises(Conflict):
+        run_synthetic(
+            db,
+            project_actions.AddEpic,
+            archived,
+            project_schemas.AddEpicPayload(title="nope", body=None, due_date=None),
+        )
+
+
+def test_add_epic_creates_an_epic_under_the_project(db: Engine) -> None:
+    a_project(db, "tt")
+    response = run_project(
+        db,
+        project_actions.AddEpic,
+        "tt",
+        project_schemas.AddEpicPayload(title=" v1 ", body=None, due_date=date(2026, 9, 1)),
+    )
+    assert response.message == "epic 1: created"
+    assert response.created_id == 1
+    with platform_db.reading(db) as s:
+        made = epic_queries.get_epic(s, 1)
+    assert made is not None
+    assert made.title == "v1"  # trimmed
+    assert made.status is EpicStatus.ACTIVE
+    assert made.due_date == date(2026, 9, 1)
+
+    # A blank title is the object's refusal.
+    with pytest.raises(Invalid):
+        run_project(
+            db,
+            project_actions.AddEpic,
+            "tt",
+            project_schemas.AddEpicPayload(title="  ", body=None, due_date=None),
+        )
+
+
+def _edit_epic(**over: Any) -> epic_schemas.EditEpicPayload:
+    fields: dict[str, Any] = {
+        "title": "v1",
+        "body": "",
+        "status": EpicStatus.ACTIVE,
+        "due_date": None,
+    }
+    fields.update(over)
+    return epic_schemas.EditEpicPayload(**fields)
+
+
+def test_epic_edit_and_status_are_always_offered() -> None:
+    for status in EpicStatus:
+        seeded = Epic(id=1, project_id=1, title="v1", body="", status=status, due_date=None)
+        assert epic_actions.EditEpic.availability(seeded) == Runnable()
+        assert epic_actions.SetStatus.availability(seeded) == Runnable()
+        assert epic_actions.SetDueDate.availability(seeded) == Runnable()
+
+
+def test_epic_edit_sets_every_field_and_refuses_a_blank_title(db: Engine) -> None:
+    a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "old")
+    response = run_epic(
+        db,
+        epic_actions.EditEpic,
+        epic_id,
+        _edit_epic(
+            title=" done ", body="notes", status=EpicStatus.DONE, due_date=date(2026, 12, 1)
+        ),
+    )
+    assert response.message == "epic 1: saved"
+    with platform_db.reading(db) as s:
+        read = epic_queries.get_epic(s, epic_id)
+    assert read is not None
+    assert (read.title, read.body, read.status, read.due_date) == (
+        "done",
+        "notes",
+        EpicStatus.DONE,
+        date(2026, 12, 1),
+    )
+
+    with pytest.raises(Invalid):
+        run_epic(db, epic_actions.EditEpic, epic_id, _edit_epic(title="   "))
+
+
+def test_epic_set_status_and_due_date_move(db: Engine) -> None:
+    a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    response = run_epic(
+        db, epic_actions.SetStatus, epic_id, epic_schemas.SetStatusPayload(status=EpicStatus.DONE)
+    )
+    assert response.message == "epic 1: done"
+
+    run_epic(
+        db,
+        epic_actions.SetDueDate,
+        epic_id,
+        epic_schemas.SetDueDatePayload(due_date=date(2026, 9, 1)),
+    )
+    with platform_db.reading(db) as s:
+        read = epic_queries.get_epic(s, epic_id)
+    assert read is not None
+    assert read.status is EpicStatus.DONE
+    assert read.due_date == date(2026, 9, 1)
+
+
+def test_epic_delete_is_refused_while_it_holds_live_issues(db: Engine) -> None:
+    # The menu refuses on the loaded count, and the write refuses against the live
+    # row — so no live issue is left pointing at a deleted epic.
+    busy = epic(issues=[issue()])
+    assert epic_actions.Delete.availability(busy) == Refused("reassign or close 1 issue first")
+
+    tt = a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    made = an_issue(db, tt, "under the epic")
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id), made.id)
+    with pytest.raises(Conflict):
+        run_epic(db, epic_actions.Delete, epic_id, Empty())
+
+    # Clear the link, and the epic goes.
+    issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.id)
+    with platform_db.reading(db) as s:
+        empty_epic = epic_queries.get_epic(s, epic_id)
+    assert empty_epic is not None
+    assert epic_actions.Delete.availability(empty_epic) == Runnable()
+    assert run_epic(db, epic_actions.Delete, epic_id, Empty()).message == "epic 1: deleted"
+    with platform_db.reading(db) as s:
+        assert epic_queries.get_epic(s, epic_id) is None
+
+
+# --- an issue's epic link --------------------------------------------------
+
+
+def _wire_edit(**over: Any) -> dict[str, Any]:
+    """A whole-object issue-edit blob, defaulting to a no-op so a case names only
+    the field it exercises."""
+    wire: dict[str, Any] = {
+        "title": "a title",
+        "body": "",
+        "status": "todo",
+        "priority": "normal",
+        "due_date": None,
+        "epic": None,
+    }
+    wire.update(over)
+    return wire
+
+
+def test_edit_assigns_and_clears_an_issues_epic(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    made = an_issue(db, tt, "wire it")
+
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id), made.id)
+    detail = issue_api.issue_get(db, made.id)
+    assert detail is not None
+    assert detail.epic == epic_id
+
+    issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.id)
+    cleared = issue_api.issue_get(db, made.id)
+    assert cleared is not None
+    assert cleared.epic is None
+
+
+def test_edit_refuses_an_epic_from_another_project(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    a_project(db, "web")
+    other_epic = an_epic(db, "web", "web v1")
+    made = an_issue(db, tt, "wire it")
+    with pytest.raises(Conflict, match="not in this project"):
+        issue_api.issue_action(db, "edit", _wire_edit(epic=other_epic), made.id)
+
+
+def test_edit_refuses_an_unknown_epic(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    with pytest.raises(Conflict, match="no epic 999"):
+        issue_api.issue_action(db, "edit", _wire_edit(epic=999), made.id)
+
+
+def test_epic_detail_refuses_an_unknown_id(db: Engine) -> None:
+    with pytest.raises(Invalid):
+        epic_api.epic_detail(db, 999)
+
+
 # --- dispatch through the group -------------------------------------------
 
 
@@ -499,6 +733,7 @@ def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
         ("delete", Refused("archive it first")),
         ("setPath", Runnable()),
         ("addIssue", Runnable()),
+        ("addEpic", Runnable()),
     ]
 
 
@@ -519,7 +754,14 @@ def test_the_api_agrees_with_the_typed_path() -> None:
     erased = _fresh()
     tt = a_project(erased, "tt")
     seeded = an_issue(erased, tt, "old")
-    wire = {"title": " new ", "body": "", "status": "todo", "priority": "normal", "due_date": None}
+    wire = {
+        "title": " new ",
+        "body": "",
+        "status": "todo",
+        "priority": "normal",
+        "due_date": None,
+        "epic": None,
+    }
     via_api = issue_api.issue_action(erased, "edit", wire, seeded.id).message
 
     typed = _fresh()
@@ -551,13 +793,22 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
     an_issue(db, tt, "one")
     for payload in [
         {},  # missing required fields
-        {"title": 5, "body": "", "status": "todo", "priority": "normal", "due_date": None},  # type
+        # wrong type
+        {
+            "title": 5,
+            "body": "",
+            "status": "todo",
+            "priority": "normal",
+            "due_date": None,
+            "epic": None,
+        },
         {
             "title": "x",
             "body": "",
             "status": "todo",
             "priority": "normal",
             "due_date": None,
+            "epic": None,
             "b": 1,
         },
     ]:
@@ -569,7 +820,14 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
         issue_api.issue_action(
             db,
             "edit",
-            {"title": "x", "body": "", "status": "shipped", "priority": "normal", "due_date": None},
+            {
+                "title": "x",
+                "body": "",
+                "status": "shipped",
+                "priority": "normal",
+                "due_date": None,
+                "epic": None,
+            },
             1,
         )
 
@@ -613,6 +871,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "status": "archived",
                 "priority": "normal",
                 "due_date": None,
+                "epic": None,
             },
             made.id,
         )
@@ -627,6 +886,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "status": "todo",
                 "priority": "normal",
                 "due_date": None,
+                "epic": None,
                 "status_note": "x",
             },
             made.id,

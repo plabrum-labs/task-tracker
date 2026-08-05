@@ -219,6 +219,7 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
             "status": first.status,
             "priority": first.priority,
             "due_date": first.due_date,
+            "epic": first.epic,
         },
         first.id,
     )

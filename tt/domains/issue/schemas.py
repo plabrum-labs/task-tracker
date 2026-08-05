@@ -53,6 +53,9 @@ class EditIssuePayload(BaseModel):
     due_date: date | None = Field(
         description="When the issue is due, as YYYY-MM-DD. Blank clears it."
     )
+    epic: int | None = Field(
+        description="The id of the epic this issue belongs to. Blank clears it."
+    )
 
 
 class SetStatusPayload(BaseModel):
@@ -81,6 +84,7 @@ class IssueListItem(BaseModel):
     status: str
     priority: str
     due_date: date | None
+    epic: int | None
 
 
 class IssueDetail(BaseModel):
@@ -91,5 +95,6 @@ class IssueDetail(BaseModel):
     status: str
     priority: str
     due_date: date | None
+    epic: int | None
     created_at: datetime
     updated_at: datetime

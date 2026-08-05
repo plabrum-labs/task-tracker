@@ -17,6 +17,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine
 
+import tt.domains.epic.models  # noqa: F401  (registers the epics table)
 import tt.domains.issue.models  # noqa: F401  (registers the issues table)
 import tt.domains.project.models  # noqa: F401  (registers the projects table)
 from tt.platform import db

@@ -20,6 +20,7 @@ from tt.platform.db import BaseDBModel
 from tt.platform.enums import IntEnum, TextEnum
 
 if TYPE_CHECKING:
+    from tt.domains.epic.models import Epic
     from tt.domains.project.models import Project
 
 
@@ -37,6 +38,12 @@ class Issue(BaseDBModel):
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
+    # An epic is optional and lives under the same project; on an epic's hard delete
+    # the link falls to null. A live issue never points at a deleted epic, though —
+    # ``epic.delete`` refuses while it still holds live issues.
+    epic_id: Mapped[int | None] = mapped_column(
+        ForeignKey("epics.id", ondelete="SET NULL"), index=True, default=None
+    )
     title: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[Status] = mapped_column(TextEnum(Status))
@@ -44,6 +51,7 @@ class Issue(BaseDBModel):
     due_date: Mapped[date | None] = mapped_column(Date, default=None)
 
     project: Mapped[Project] = relationship(back_populates="issues", lazy="raise")
+    epic: Mapped[Epic | None] = relationship(back_populates="issues", lazy="raise")
 
     def subject(self) -> str:
         return f"issue {self.id}"

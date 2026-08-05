@@ -28,6 +28,7 @@ def _list_item(issue: Issue) -> schemas.IssueListItem:
         status=name_of(issue.status),
         priority=name_of(issue.priority),
         due_date=issue.due_date,
+        epic=issue.epic_id,
     )
 
 
@@ -40,6 +41,7 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
         status=name_of(issue.status),
         priority=name_of(issue.priority),
         due_date=issue.due_date,
+        epic=issue.epic_id,
         created_at=issue.created_at,
         updated_at=issue.updated_at,
     )

@@ -53,6 +53,10 @@ class Project(BaseDBModel):
         return [issue for issue in self.issues if issue.deleted_at is None]
 
     @property
+    def backlog(self) -> int:
+        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BACKLOG)
+
+    @property
     def planning(self) -> int:
         return sum(1 for issue in self.live_issues if issue.status is IssueStatus.REQUIRES_PLANNING)
 

@@ -36,6 +36,8 @@ import typer
 from sqlalchemy import Engine
 
 from tt import schema
+from tt.domains.epic import api as epic_api
+from tt.domains.epic.schemas import EpicListItem
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project import api as project_api
@@ -62,12 +64,21 @@ type Writer = Callable[[Engine, Any, str, dict[str, Any]], str]
 
 
 def _project_line(p: ProjectListItem) -> str:
-    counts = f"{p.planning} planning, {p.todo} todo, {p.doing} doing, {p.done} done"
+    counts = (
+        f"{p.backlog} backlog, {p.planning} planning, {p.todo} todo, {p.doing} doing, {p.done} done"
+    )
     return f"{p.slug:<12} {p.title:<24} {p.status:<8} {counts}"
 
 
 def _issue_line(i: IssueListItem) -> str:
     return f"{i.id:<4} {i.project:<12} {i.status:<8} {i.priority:<6} {i.title}"
+
+
+def _epic_line(e: EpicListItem) -> str:
+    total = e.backlog + e.planning + e.todo + e.doing + e.done
+    progress = f"{e.done}/{total}"
+    due = e.due_date.isoformat() if e.due_date is not None else "—"
+    return f"{e.id:<4} {e.project:<12} {e.status:<8} {due:<12} {progress:<8} {e.title}"
 
 
 def _field_json(field: Field) -> dict[str, Any]:
@@ -84,6 +95,8 @@ def _field_json(field: Field) -> dict[str, Any]:
             return {**base, "type": "text", "optional": True}
         case actions.Date():
             return {**base, "type": "date"}
+        case actions.Reference():
+            return {**base, "type": "int"}
         case Enum(values=values):
             return {**base, "type": "enum", "values": values}
 
@@ -120,6 +133,10 @@ def _project_write(engine: Engine, slug: Any, key: str, payload: dict[str, Any])
 
 def _issue_write(engine: Engine, issue_id: Any, key: str, payload: dict[str, Any]) -> str:
     return issue_api.issue_action(engine, key, payload, issue_id).message
+
+
+def _epic_write(engine: Engine, epic_id: Any, key: str, payload: dict[str, Any]) -> str:
+    return epic_api.epic_action(engine, key, payload, epic_id).message
 
 
 def _project_init(
@@ -165,10 +182,29 @@ def _issue_ls(engine: Engine, project_slug: str | None, as_json: bool) -> str:
     return "\n".join(_issue_line(i) for i in items)
 
 
+def _epic_ls(engine: Engine, project_slug: str | None, as_json: bool) -> str:
+    if project_slug is not None:
+        if project_api.project_get(engine, project_slug) is None:
+            raise Invalid(f"no project {project_slug!r}")
+        slugs = [project_slug]
+    else:
+        slugs = [p.slug for p in project_api.project_list(engine)]
+    items = [epic for slug in slugs for epic in epic_api.epic_list(engine, slug)]
+    if as_json:
+        return _pretty([item.model_dump(mode="json") for item in items])
+    return "\n".join(_epic_line(e) for e in items)
+
+
 def _project_show(engine: Engine, slug: str) -> str:
     detail, offers = project_api.project_detail(engine, slug)
     actions = [_offer_json(offer) for offer in offers]
     return _pretty({"project": detail.model_dump(mode="json"), "actions": actions})
+
+
+def _epic_show(engine: Engine, epic_id: int) -> str:
+    detail, offers = epic_api.epic_detail(engine, epic_id)
+    actions = [_offer_json(offer) for offer in offers]
+    return _pretty({"epic": detail.model_dump(mode="json"), "actions": actions})
 
 
 def _issue_show(engine: Engine, issue_id: int) -> str:
@@ -419,6 +455,7 @@ def _main(
 
 project_app = typer.Typer(help="Projects.", no_args_is_help=True)
 issue_app = typer.Typer(help="Issues.", no_args_is_help=True)
+epic_app = typer.Typer(help="Epics.", no_args_is_help=True)
 
 
 @project_app.command("ls", help="List live projects.")
@@ -500,6 +537,35 @@ def _issue_action_command(
     _report(lambda: _issue_write(_engine(ctx), id, key, _blob(payload)))
 
 
+@epic_app.command("ls", help="List live epics.")
+def _epic_ls_command(
+    ctx: typer.Context,
+    project: Annotated[str | None, typer.Option("--project", help="Only this project.")] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
+    ] = False,
+) -> None:
+    _report(lambda: _epic_ls(_engine(ctx), project, as_json))
+
+
+@epic_app.command("show", help="Print an epic and what it offers.")
+def _epic_show_command(
+    ctx: typer.Context,
+    id: Annotated[int, typer.Argument(help="The epic's id.")],
+) -> None:
+    _report(lambda: _epic_show(_engine(ctx), id))
+
+
+@epic_app.command("action", help="Run an action by key, passing its arguments as JSON.")
+def _epic_action_command(
+    ctx: typer.Context,
+    id: Annotated[int, typer.Argument(help="The epic's id.")],
+    key: Annotated[str, typer.Argument(help=_KEY_HELP)],
+    payload: Annotated[str, typer.Argument(help=_JSON_HELP)] = "{}",
+) -> None:
+    _report(lambda: _epic_write(_engine(ctx), id, key, _blob(payload)))
+
+
 # The generated subcommands are appended after the fixed ones, so the tree reads
 # ``ls show action`` then a subcommand per action, in the order ``action_schemas``
 # lists them.
@@ -519,9 +585,18 @@ _register_generated(
     "The issue's id.",
     _issue_write,
 )
+_register_generated(
+    epic_app,
+    epic_api.action_schemas(),
+    "id",
+    int,
+    "The epic's id.",
+    _epic_write,
+)
 
 app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
+app.add_typer(epic_app, name="epic")
 
 
 def main() -> None:

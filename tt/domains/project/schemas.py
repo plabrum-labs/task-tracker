@@ -7,7 +7,7 @@ an issue's priority, so it reaches across to ``issue``'s ``WirePriority`` — th
 same direction the actions already depend in.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +38,14 @@ class AddIssuePayload(BaseModel):
     )
 
 
+class AddEpicPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(description="What to call the epic.")
+    body: str | None = Field(default=None, description="What the epic is about.")
+    due_date: date | None = Field(default=None, description="When the epic is due, as YYYY-MM-DD.")
+
+
 class CreateProjectPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -60,6 +68,7 @@ class ProjectListItem(BaseModel):
     title: str
     status: str
     path: str | None
+    backlog: int
     planning: int
     todo: int
     doing: int
@@ -72,6 +81,7 @@ class ProjectDetail(BaseModel):
     body: str
     status: str
     path: str | None
+    backlog: int
     planning: int
     todo: int
     doing: int
