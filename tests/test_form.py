@@ -130,7 +130,7 @@ def test_the_fields_are_in_the_order_the_payload_declares_them() -> None:
     # Alphabetically this would be body, priority, title. ``model_fields`` is in
     # declaration order and a dict preserves it.
     fields = fields_of(project_schemas.AddIssuePayload)
-    assert [field.name for field in fields] == ["title", "body", "priority"]
+    assert [field.name for field in fields] == ["title", "body", "status", "priority"]
 
 
 def test_an_action_with_no_arguments_renders_a_form_with_no_fields() -> None:
@@ -158,10 +158,11 @@ def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engin
         [
             (fields[0], "triage inbox"),  # title
             (fields[1], ""),  # body — the blank optional
-            (fields[2], "normal"),  # priority
+            (fields[2], "todo"),  # status
+            (fields[3], "normal"),  # priority
         ]
     )
-    assert built == {"title": "triage inbox", "body": None, "priority": "normal"}
+    assert built == {"title": "triage inbox", "body": None, "status": "todo", "priority": "normal"}
 
     # And the decoder accepts exactly that: the dispatch writes, so reading the
     # created issue back shows the null body defaulted to blank.

@@ -486,6 +486,7 @@ def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
         created = issue_queries.list_issues(s, "tt")[0]
     assert created.title == "ship it"
     assert created.body == ""
+    assert created.status == Status.TODO
     assert created.priority == Priority.NORMAL
 
     with pytest.raises(Invalid):
@@ -495,6 +496,19 @@ def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
             "tt",
             project_schemas.AddIssuePayload(title="  ", body=None, priority=None),
         )
+
+
+def test_add_issue_honors_an_explicit_status(db: Engine) -> None:
+    a_project(db, "tt")
+    run_project(
+        db,
+        project_actions.AddIssue,
+        "tt",
+        project_schemas.AddIssuePayload(title="plan it", body=None, status=Status.BACKLOG),
+    )
+    with platform_db.reading(db) as s:
+        created = issue_queries.list_issues(s, "tt")[0]
+    assert created.status == Status.BACKLOG
 
 
 def test_create_project_refuses_a_slug_the_live_list_already_holds(db: Engine) -> None:

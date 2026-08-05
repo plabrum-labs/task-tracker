@@ -11,6 +11,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.schemas import WirePriority
 from tt.domains.project.enums import Status
 
@@ -33,6 +34,9 @@ class AddIssuePayload(BaseModel):
 
     title: str = Field(description="What to call the issue.")
     body: str | None = Field(default=None, description="What the issue is about.")
+    status: IssueStatus | None = Field(
+        default=None, description="Where the issue is up to. Defaults to todo."
+    )
     priority: WirePriority | None = Field(
         default=None, description="How far up the list it sorts. Defaults to normal."
     )

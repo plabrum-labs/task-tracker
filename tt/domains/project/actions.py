@@ -162,7 +162,7 @@ class AddIssue(ObjectAction[Project, schemas.AddIssuePayload]):
             project=obj,
             title=title,
             body=payload.body or "",
-            status=IssueStatus.TODO,
+            status=payload.status or IssueStatus.TODO,
             priority=payload.priority or Priority.NORMAL,
         )
         deps.tx.add(issue)
