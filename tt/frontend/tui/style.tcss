@@ -66,6 +66,30 @@ EditPane {
     color: $text-disabled;
 }
 
+/* The comment thread under the body. A row is the flat list's shape — the same
+   gutter bar over a fixed-width column and a filling one — but grown to the height
+   its wrapped body needs rather than pinned to a single line. */
+.d-comment-head {
+    height: auto;
+    padding-top: 1;
+}
+CommentRow {
+    height: auto;
+    padding-top: 1;
+}
+CommentRow.sel {
+    background: $primary 14%;
+}
+.d-comment-date {
+    width: 6;
+    color: $text-muted;
+}
+.d-comment-body {
+    width: 1fr;
+    height: auto;
+    color: $text-muted;
+}
+
 /* The edit form inside the pane. Its boxes sit on the terminal background like the
    read detail beside them — not on the modal ``$overlay`` — so the accent is the
    only paint; the focused box takes it. */

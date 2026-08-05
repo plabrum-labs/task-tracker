@@ -7,7 +7,9 @@ offer. No database, no widget, no event loop.
 """
 
 import os
+from datetime import UTC, datetime
 
+from tt.domains.comment.schemas import CommentView
 from tt.domains.issue.schemas import IssueListItem
 from tt.frontend.tui import domainview as dv
 from tt.platform.actions import Offer, Refused, Runnable
@@ -24,6 +26,13 @@ def _item(issue_id: int, status: str = "todo", priority: str = "normal") -> Issu
         due_date=None,
         epic=None,
         milestone=None,
+    )
+
+
+def _comment(comment_id: int) -> CommentView:
+    written = datetime(2026, 8, comment_id, tzinfo=UTC)
+    return CommentView(
+        id=comment_id, body=f"comment {comment_id}", created_at=written, updated_at=written
     )
 
 
@@ -70,6 +79,35 @@ def test_index_of_is_zero_when_the_selection_is_gone() -> None:
     issues = [_item(5), _item(6)]
     assert dv.index_of(issues, 6) == 1
     assert dv.index_of(issues, 99) == 0
+
+
+# --- the comment thread's cursor ------------------------------------------
+
+
+def test_move_comment_walks_the_thread_and_clamps_at_both_ends() -> None:
+    comments = [_comment(1), _comment(2), _comment(3)]
+    assert dv.move_comment(comments, 1, 1) == 2
+    assert dv.move_comment(comments, 2, -1) == 1
+    assert dv.move_comment(comments, 3, 1) == 3  # clamps at the end
+    assert dv.move_comment(comments, 1, -1) == 1  # clamps at the start
+    # Nothing selected takes the first comment, whichever way the cursor moved.
+    assert dv.move_comment(comments, None, 1) == 1
+    assert dv.move_comment(comments, None, -1) == 1
+
+
+def test_move_comment_has_nothing_to_select_in_an_empty_thread() -> None:
+    assert dv.move_comment([], None, 1) is None
+    assert dv.move_comment([], 7, -1) is None
+
+
+def test_the_comment_cursor_lands_on_the_survivor_after_a_delete() -> None:
+    # The same reconciliation the issue list uses, over the thread: the deleted
+    # comment's neighbour takes the cursor rather than it jumping to the top.
+    remaining = [_comment(1), _comment(3), _comment(4)]
+    assert dv.surviving_id(remaining, 3, 1) == 3  # still here
+    assert dv.surviving_id(remaining, 2, 1) == 3  # gone: whatever now sits where it was
+    assert dv.surviving_id([], 2, 0) is None  # the last comment deleted leaves none
+    assert dv.index_of([_comment(1), _comment(2)], 2) == 1
 
 
 # --- layout fitting -------------------------------------------------------
@@ -145,6 +183,30 @@ def test_the_accelerators_name_the_actions_they_run() -> None:
     # ``d`` runs delete straight; ``e`` opens the edit form; ``s`` drives the direct
     # status cycle.
     assert dv.ACCELERATORS == {"d": "delete", "e": "edit", "s": "setStatus"}
+
+
+def test_comment_commands_address_the_comment_and_reuse_the_accelerators() -> None:
+    offers = [
+        Offer(key="edit", label="Edit", state=Runnable(), fields=[], seed=True),
+        Offer(key="delete", label="Delete", state=Runnable(), fields=[]),
+    ]
+    detail = {"id": 7, "body": "the parser drops trailing commas"}
+    edit, delete = dv.comment_commands(offers, 7, detail)
+
+    # Every command addresses the comment by id, so ``dispatch`` routes it to the
+    # comment api rather than to the issue the thread hangs off.
+    assert isinstance(edit.run, dv.RunAction) and edit.run.target == dv.CommentTarget(7)
+    assert isinstance(delete.run, dv.RunAction) and delete.run.target == dv.CommentTarget(7)
+    assert (edit.hint, delete.hint) == ("e", "d")  # the map already covers both
+    # The edit seeds from its target, so its form opens on the comment's body; the
+    # fieldless delete carries none.
+    assert edit.run.seed == detail
+    assert delete.run.seed is None
+
+
+def test_a_refused_comment_offer_carries_its_reason_rather_than_running() -> None:
+    refused = Offer(key="delete", label="Delete", state=Refused("the issue is archived"), fields=[])
+    assert dv.comment_commands([refused], 7)[0].reason == "the issue is archived"
 
 
 def test_the_edit_offer_carries_the_e_accelerator() -> None:

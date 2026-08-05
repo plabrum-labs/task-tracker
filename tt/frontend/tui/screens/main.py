@@ -6,7 +6,10 @@ and mutation methods assign them so watchers repaint the affected widget. Everyt
 you can do to the selected object is reached through what that object offers — a
 ``MenuScreen`` overlay for the list, and for an action with fields the ``EditPane``
 that takes over the right pane where the read detail was — so this screen names only
-the accelerators (``d`` delete, ``e`` edit, ``s`` status cycle) and derives the rest.
+the accelerators (``d`` delete, ``e`` edit, ``s`` status cycle, ``c`` add comment)
+and derives the rest. They act on the selected issue in browse mode; once the detail
+pane holds focus its comment thread is what the cursor is in, so ``x``/``e``/``d``
+address the selected comment instead.
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Input
 
+from tt.domains.comment import api as comment_api
+from tt.domains.comment.schemas import CommentView
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project import api as project_api
@@ -32,6 +37,7 @@ from tt.frontend.tui.domainview import (
     HALF,
     AllScope,
     Command,
+    CommentTarget,
     IssueTarget,
     Layout,
     Navigate,
@@ -40,6 +46,8 @@ from tt.frontend.tui.domainview import (
     RunAction,
     Scope,
     Split,
+    Target,
+    comment_commands,
     fits,
     index_of,
     issue_commands,
@@ -61,11 +69,11 @@ from tt.frontend.tui.widgets.edit import Edit, EditPane
 from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
 from tt.frontend.tui.widgets.topbar import TopBar
 from tt.platform import config
-from tt.platform.actions import REFUSALS, Refused
+from tt.platform.actions import REFUSALS, Offer, Refused
 from tt.platform.config import ThemeName
 
-BROWSING = "j/k move · enter open · x actions · s status · / filter · ? keys · q quit"
-READING = "j/k scroll · esc back"
+BROWSING = "j/k move · enter open · x actions · s status · c comment · / filter · ? keys · q quit"
+READING = "j/k comments · x/e/d act on the one selected · esc back"
 EDITING = "^s save · esc cancel"
 
 
@@ -98,6 +106,7 @@ class MainScreen(Screen[None]):
         Binding("slash", "filter", "filter", show=False),
         Binding("R", "refresh", "refresh", show=False),
         Binding("n", "capture", "new issue", show=False),
+        Binding("c", "comment", "add comment", show=False),
         Binding("d", "delete", "delete", show=False),
         Binding("e", "edit", "edit", show=False),
         Binding("s", "set_status", "status", show=False),
@@ -155,6 +164,15 @@ class MainScreen(Screen[None]):
 
     def _selected_issue(self) -> IssueListItem | None:
         return next((i for i in self._visible() if i.id == self.selected_id), None)
+
+    def _selected_comment(self) -> CommentView | None:
+        """The comment the thread's cursor is on, and only while the detail pane holds
+        focus: in browse mode ``x``/``e``/``d`` address the issue, and inside the
+        thread they address the comment under the bar."""
+        pane = self.query_one(DetailPane)
+        if self.focused is not pane or pane.detail is None:
+            return None
+        return next((c for c in pane.detail.comments if c.id == pane.selected_comment_id), None)
 
     def _slug(self) -> str | None:
         return self.scope.slug if isinstance(self.scope, ProjectScope) else None
@@ -304,6 +322,12 @@ class MainScreen(Screen[None]):
         self.status = READING
 
     def action_issue_menu(self) -> None:
+        comment = self._selected_comment()
+        if comment is not None:
+            detail, offers = comment_api.comment_detail(self.engine, comment.id)
+            commands = comment_commands(offers, comment.id, detail.model_dump(mode="json"))
+            self.app.push_screen(MenuScreen(f"Comment {comment.id}", commands), self._on_command)
+            return
         issue = self._selected_issue()
         if issue is None:
             self.status = "no issue selected"
@@ -392,7 +416,11 @@ class MainScreen(Screen[None]):
 
     def _end_edit(self) -> None:
         self.query_one(EditPane).display = False
-        self.query_one(DetailPane).display = True
+        pane = self.query_one(DetailPane)
+        pane.display = True
+        # The form gives the focus back to browse, so the thread's cursor goes with
+        # it — the same rule as escaping the pane.
+        pane.selected_comment_id = None
         self.set_focus(None)
 
     def on_edit_pane_saved(self, event: EditPane.Saved) -> None:
@@ -415,40 +443,66 @@ class MainScreen(Screen[None]):
         self.status = message
         self.reload()
 
+    def _run_offer(
+        self,
+        target: Target,
+        offers: list[Offer],
+        key: str,
+        seed: dict[str, Any] | None = None,
+    ) -> None:
+        """The accelerator path: pick the named action out of what the target offers
+        and run it. An action the target does not offer, or offers refused, is the
+        object's answer and lands in the status line rather than writing."""
+        offer = next((o for o in offers if o.key == key), None)
+        if offer is None:
+            self.status = f"{key}: not available"
+            return
+        if isinstance(offer.state, Refused):
+            self.status = f"{key}: {offer.state.reason}"
+            return
+        self._run_action(RunAction(target, key, offer.fields, seed), offer.label)
+
     def action_delete(self) -> None:
+        comment = self._selected_comment()
+        if comment is not None:
+            _, offers = comment_api.comment_detail(self.engine, comment.id)
+            self._run_offer(CommentTarget(comment.id), offers, "delete")
+            return
         issue = self._selected_issue()
         if issue is None:
             self.status = "no issue selected"
             return
         _, offers = issue_api.issue_detail(self.engine, issue.ref)
-        offer = next((o for o in offers if o.key == "delete"), None)
-        if offer is None:
-            self.status = "delete: not available"
-            return
-        if isinstance(offer.state, Refused):
-            self.status = f"delete: {offer.state.reason}"
-            return
-        self._run_action(RunAction(IssueTarget(issue.ref), "delete", offer.fields), offer.label)
+        self._run_offer(IssueTarget(issue.ref), offers, "delete")
 
     def action_edit(self) -> None:
+        # Seed the form from the target's current values so the pane opens pre-filled,
+        # the same way the menu builds its edit command.
+        comment = self._selected_comment()
+        if comment is not None:
+            detail, offers = comment_api.comment_detail(self.engine, comment.id)
+            self._run_offer(
+                CommentTarget(comment.id), offers, "edit", detail.model_dump(mode="json")
+            )
+            return
         issue = self._selected_issue()
         if issue is None:
             self.status = "no issue selected"
             return
-        detail, offers = issue_api.issue_detail(self.engine, issue.ref)
-        offer = next((o for o in offers if o.key == "edit"), None)
-        if offer is None:
-            self.status = "edit: not available"
-            return
-        if isinstance(offer.state, Refused):
-            self.status = f"edit: {offer.state.reason}"
-            return
-        # Seed the form from the issue's current values so the pane opens pre-filled,
-        # the same way the menu builds its edit command.
-        self._run_action(
-            RunAction(IssueTarget(issue.ref), "edit", offer.fields, detail.model_dump(mode="json")),
-            offer.label,
+        issue_detail, offers = issue_api.issue_detail(self.engine, issue.ref)
+        self._run_offer(
+            IssueTarget(issue.ref), offers, "edit", issue_detail.model_dump(mode="json")
         )
+
+    def action_comment(self) -> None:
+        # A comment is created through the issue it hangs off, so ``c`` runs the
+        # issue's ``addComment`` — a create, whose form opens blank.
+        issue = self._selected_issue()
+        if issue is None:
+            self.status = "no issue selected"
+            return
+        _, offers = issue_api.issue_detail(self.engine, issue.ref)
+        self._run_offer(IssueTarget(issue.ref), offers, "addComment")
 
     def action_set_status(self) -> None:
         # The quick cycle: compute the next status off the selected row and dispatch
@@ -522,6 +576,9 @@ class MainScreen(Screen[None]):
         # Escape leaves the detail pane back to browse before it touches the filter,
         # so reading an issue and then backing out does not also clear a live filter.
         if isinstance(self.focused, DetailPane):
+            # Drop the comment cursor with the focus: browse keys act on the issue
+            # again, so a bar left in the thread would claim a selection they ignore.
+            self.focused.selected_comment_id = None
             self.set_focus(None)
             self.status = BROWSING
             return

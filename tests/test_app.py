@@ -17,7 +17,7 @@ from textual.widgets import Input, OptionList, Static, TextArea
 from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
 from tt.frontend.tui.app import TrackerApp
-from tt.frontend.tui.domainview import DETAIL_BESIDE_MIN_WIDTH
+from tt.frontend.tui.domainview import DETAIL_BESIDE_MIN_WIDTH, CommentTarget, RunAction
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.widgets.body import BoardColumn, Card, IssueRow
@@ -50,6 +50,17 @@ def _seed(engine: Engine) -> None:
     project_api.project_action(
         engine, "addIssue", {"title": "write readme", "priority": "normal"}, "tt"
     )
+
+
+def _comment_on(engine: Engine, ref: str, body: str) -> int:
+    """One comment on an issue, written through the action a frontend takes."""
+    response = issue_api.issue_action(engine, "addComment", {"body": body}, ref)
+    assert response.created_id is not None
+    return response.created_id
+
+
+def _rendered(pane: DetailPane) -> str:
+    return " ".join(str(widget.render()) for widget in pane.query(Static))
 
 
 @pytest.fixture
@@ -257,6 +268,174 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
         await pilot.pause()
         second = issue_api.issue_list(seeded, "tt")[1]
         assert pane.detail is not None and pane.detail.id == second.id
+
+
+async def test_the_detail_pane_shows_the_comment_thread_and_its_empty_state(seeded: Engine) -> None:
+    issues = issue_api.issue_list(seeded, "tt")
+    _comment_on(seeded, issues[0].ref, "the parser drops trailing commas")
+    written = issue_api.issue_get(seeded, issues[0].ref)
+    assert written is not None
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        rendered = _rendered(pane)
+        assert "COMMENTS · 1" in rendered
+        assert "the parser drops trailing commas" in rendered
+        # The date column carries the day it was written, not the year.
+        assert f"{written.comments[0].created_at:%m-%d}" in rendered
+
+        # The next issue has none, so the thread reads its empty state rather than
+        # disappearing — the same fallback the body has.
+        await pilot.press("j")
+        await pilot.pause()
+        assert pane.detail is not None and pane.detail.id == issues[1].id
+        rendered = _rendered(pane)
+        assert "COMMENTS · 0" in rendered and "no comments" in rendered
+
+
+async def test_c_adds_a_comment_and_the_thread_reflects_it(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        selected = _main(app).selected_id
+        assert selected is not None
+        ref = _ref(app, selected)
+        await pilot.press("c")
+        await pilot.pause()
+        main = _main(app)
+        edit = main.query_one(EditPane)
+        assert edit.display and not main.query_one(DetailPane).display
+        body = edit.query_one("#field-body", TextArea)
+        assert body.text == ""  # a create opens blank, not seeded from the issue
+        body.text = "shipped behind a flag"
+        await pilot.press("ctrl+s")  # the prose editor takes enter, so ctrl+s saves
+        await pilot.pause()
+        written = issue_api.issue_get(seeded, ref)
+        assert written is not None
+        assert [c.body for c in written.comments] == ["shipped behind a flag"]
+        # The thread reloaded behind the form, so the new comment is on screen.
+        assert "shipped behind a flag" in _rendered(_main(app).query_one(DetailPane))
+
+
+async def test_focusing_the_pane_moves_a_comment_cursor_and_escape_drops_it(
+    seeded: Engine,
+) -> None:
+    first = issue_api.issue_list(seeded, "tt")[0]
+    one = _comment_on(seeded, first.ref, "first note")
+    two = _comment_on(seeded, first.ref, "second note")
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        assert pane.selected_comment_id is None  # browse selects no comment
+
+        await pilot.press("enter")  # focus the pane: j/k now walk the thread
+        await pilot.pause()
+        assert app.focused is pane
+        await pilot.press("j")
+        await pilot.pause()
+        assert pane.selected_comment_id == one
+        await pilot.press("j")
+        await pilot.pause()
+        assert pane.selected_comment_id == two
+        await pilot.press("j")  # clamps at the end of the thread
+        await pilot.pause()
+        assert pane.selected_comment_id == two
+        await pilot.press("k")
+        await pilot.pause()
+        assert pane.selected_comment_id == one
+
+        # Escaping back to browse drops the cursor with the focus, so the browse keys
+        # address the issue again.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.focused is None
+        assert pane.selected_comment_id is None
+
+
+async def test_e_edits_the_selected_comment_and_a_refusal_keeps_its_editor_open(
+    seeded: Engine,
+) -> None:
+    first = issue_api.issue_list(seeded, "tt")[0]
+    _comment_on(seeded, first.ref, "the parser drops trailing commas")
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")  # into the thread
+        await pilot.press("j")  # onto its one comment
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        edit = _main(app).query_one(EditPane)
+        # Seeded from the comment, not from the issue it hangs off.
+        body = edit.query_one("#field-body", TextArea)
+        assert body.text == "the parser drops trailing commas"
+
+        # A blank body is the comment's own refusal; it lands in the form, which stays.
+        body.text = "   "
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert edit.display
+        assert "body is required" in str(edit.query_one("#edit-error").render())
+
+        body.text = "the parser drops trailing commas, still"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        written = issue_api.issue_get(seeded, first.ref)
+        assert written is not None
+        assert [c.body for c in written.comments] == ["the parser drops trailing commas, still"]
+        assert "the parser drops trailing commas, still" in _rendered(
+            _main(app).query_one(DetailPane)
+        )
+
+
+async def test_d_deletes_the_selected_comment_and_the_cursor_lands_on_its_neighbour(
+    seeded: Engine,
+) -> None:
+    first = issue_api.issue_list(seeded, "tt")[0]
+    one = _comment_on(seeded, first.ref, "first note")
+    two = _comment_on(seeded, first.ref, "second note")
+    three = _comment_on(seeded, first.ref, "third note")
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.press("j")
+        await pilot.press("j")  # onto the middle comment
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        assert pane.selected_comment_id == two
+
+        await pilot.press("d")  # delete has no fields, so it runs at once
+        await pilot.pause()
+        written = issue_api.issue_get(seeded, first.ref)
+        assert written is not None
+        assert [c.id for c in written.comments] == [one, three]
+        # Whatever now sits where the deleted comment was takes the cursor, and the
+        # issue behind it is untouched.
+        assert pane.selected_comment_id == three
+        assert "second note" not in _rendered(pane)
+        assert issue_api.issue_get(seeded, first.ref) is not None
+
+
+async def test_x_opens_the_selected_comments_menu_rather_than_the_issues(seeded: Engine) -> None:
+    first = issue_api.issue_list(seeded, "tt")[0]
+    comment_id = _comment_on(seeded, first.ref, "the parser drops trailing commas")
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.press("j")  # onto the comment
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        menu = app.screen
+        assert isinstance(menu, MenuScreen)
+        # What a comment offers, not what an issue does.
+        assert [c.label for c in menu._commands] == ["Edit", "Delete"]
+        targets = [c.run.target for c in menu._commands if isinstance(c.run, RunAction)]
+        assert targets == [CommentTarget(comment_id), CommentTarget(comment_id)]
 
 
 async def test_detail_pane_stacks_below_the_list_when_narrow(seeded: Engine) -> None:

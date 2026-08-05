@@ -11,8 +11,9 @@ widget or the database.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project.schemas import ProjectListItem
@@ -121,6 +122,14 @@ def next_layout(layout: Layout, width: int, height: int) -> Layout:
 # --- columns and selection ------------------------------------------------
 
 
+class Identified(Protocol):
+    """A row a cursor addresses by id — an issue of the list, a comment of the
+    thread. The reconciliation below is the same for both, so it names this rather
+    than either row shape."""
+
+    id: int
+
+
 @dataclass(frozen=True)
 class Column:
     """One column of the body: a title, the status it groups (``None`` for the flat
@@ -181,24 +190,36 @@ def move_selection(
 
 
 def surviving_id(
-    issues: list[IssueListItem], selected_id: int | None, fallback_index: int
+    rows: Sequence[Identified], selected_id: int | None, fallback_index: int
 ) -> int | None:
-    """The selection after a reload. Keep the same issue if it is still here; else
-    take whatever now sits where it was, so deleting the selected row lands on its
+    """The selection after a reload. Keep the same row if it is still here; else take
+    whatever now sits where it was, so deleting the selected row lands on its
     neighbour rather than jumping to the top."""
-    if not issues:
+    if not rows:
         return None
-    if any(i.id == selected_id for i in issues):
+    if any(row.id == selected_id for row in rows):
         return selected_id
-    return issues[_clamp(fallback_index, 0, len(issues) - 1)].id
+    return rows[_clamp(fallback_index, 0, len(rows) - 1)].id
 
 
-def index_of(issues: list[IssueListItem], selected_id: int | None) -> int:
+def index_of(rows: Sequence[Identified], selected_id: int | None) -> int:
     """The flat position of the selected id, or ``0`` when it is gone."""
-    for i, issue in enumerate(issues):
-        if issue.id == selected_id:
+    for i, row in enumerate(rows):
+        if row.id == selected_id:
             return i
     return 0
+
+
+def move_comment(comments: Sequence[Identified], selected_id: int | None, delta: int) -> int | None:
+    """The comment id the cursor lands on after moving ``delta`` rows down the thread,
+    clamped at both ends. Nothing selected takes the first comment — the thread has no
+    columns to cross, so this is the whole of its navigation."""
+    if not comments:
+        return None
+    here = next((i for i, comment in enumerate(comments) if comment.id == selected_id), None)
+    if here is None:
+        return comments[0].id
+    return comments[_clamp(here + delta, 0, len(comments) - 1)].id
 
 
 # --- cwd resolution -------------------------------------------------------
@@ -245,11 +266,19 @@ class ProjectTarget:
 
 
 @dataclass(frozen=True)
+class CommentTarget:
+    """A comment of the thread. Addressed by its global id, not a ref: a comment has
+    no project-scoped number of its own."""
+
+    comment_id: int
+
+
+@dataclass(frozen=True)
 class RootTarget:
     """A creator with no object to address — ``createProject``."""
 
 
-type Target = IssueTarget | ProjectTarget | RootTarget
+type Target = IssueTarget | ProjectTarget | CommentTarget | RootTarget
 
 
 @dataclass(frozen=True)
@@ -311,6 +340,12 @@ def project_commands(
     offers: list[Offer], slug: str, detail: dict[str, Any] | None = None
 ) -> list[Command]:
     return [_offer_command(offer, ProjectTarget(slug), detail) for offer in offers]
+
+
+def comment_commands(
+    offers: list[Offer], comment_id: int, detail: dict[str, Any] | None = None
+) -> list[Command]:
+    return [_offer_command(offer, CommentTarget(comment_id), detail) for offer in offers]
 
 
 def switcher_commands(projects: list[ProjectListItem], create: Offer | None) -> list[Command]:

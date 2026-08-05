@@ -14,12 +14,14 @@ from typing import Any, assert_never
 
 from sqlalchemy import Engine
 
+from tt.domains.comment import api as comment_api
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
 from tt.frontend.tui.domainview import (
     AllScope,
+    CommentTarget,
     IssueTarget,
     ProjectScope,
     ProjectTarget,
@@ -62,6 +64,8 @@ def dispatch(engine: Engine, target: Target, key: str, payload: dict[str, Any]) 
             return issue_api.issue_action(engine, key, payload, ref).message
         case ProjectTarget(slug=slug):
             return project_api.project_action(engine, key, payload, slug).message
+        case CommentTarget(comment_id=comment_id):
+            return comment_api.comment_action(engine, key, payload, comment_id).message
         case RootTarget():
             return project_api.project_action(engine, key, payload, None).message
     assert_never(target)
