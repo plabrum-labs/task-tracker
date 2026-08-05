@@ -47,7 +47,7 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
         Field(
             name="body",
             required=True,
-            kind=Text(),
+            kind=Text(multiline=True),
             description="The issue's description. Blank clears it.",
         ),
         Field(
@@ -199,3 +199,15 @@ def test_text_and_enum_are_the_two_controls_a_field_derives() -> None:
     fields = fields_of(issue_schemas.EditIssuePayload)
     assert fields[0].kind == Text()  # title
     assert fields[3].kind == Enum(["normal", "high"])  # priority
+
+
+def test_a_multiline_marker_marks_the_prose_field_without_changing_its_submit() -> None:
+    # ``body`` carries the ``Multiline`` marker so a frontend draws a wrapping
+    # editor; the title beside it stays a plain one-line box. The marker is inert to
+    # the payload — a required prose field submits its text, blank included, the same
+    # as any other ``Text``.
+    fields = {f.name: f for f in fields_of(issue_schemas.EditIssuePayload)}
+    assert fields["body"].kind == Text(multiline=True)
+    assert fields["title"].kind == Text()
+    assert payload([(fields["body"], "line one\nline two")]) == {"body": "line one\nline two"}
+    assert payload([(fields["body"], "")]) == {"body": ""}

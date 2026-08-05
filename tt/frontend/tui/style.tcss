@@ -90,6 +90,47 @@ EditPane Select {
     margin: 0 1;
 }
 
+/* The prose split: the body editor takes the pane's remaining height on the left,
+   the scalars a narrow column on its right. The row itself is what claims the
+   leftover space (``1fr``); the title above and the footer below stay ``auto``. */
+.e-split {
+    height: 1fr;
+}
+.e-content {
+    width: 2fr;
+    height: 1fr;
+}
+.e-attrs {
+    width: 1fr;
+    height: 1fr;
+    min-width: 22;
+}
+EditPane TextArea {
+    height: 1fr;
+    min-height: 6;
+    margin: 0 1;
+    border: round $border;
+    background: ansi_default;
+}
+EditPane TextArea:focus {
+    border: round $primary;
+}
+
+/* Stacked under the list, the two columns cannot sit side by side in a short
+   pane, so the split becomes a stack and the body editor takes a fixed height. */
+#content.below .e-split {
+    layout: vertical;
+    height: auto;
+}
+#content.below .e-content,
+#content.below .e-attrs {
+    width: 1fr;
+    height: auto;
+}
+#content.below EditPane TextArea {
+    height: 8;
+}
+
 StatusBar {
     dock: bottom;
     height: 1;

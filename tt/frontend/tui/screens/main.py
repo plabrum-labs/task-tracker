@@ -67,7 +67,7 @@ from tt.platform.config import ThemeName
 
 BROWSING = "j/k move · enter open · x actions · s status · / filter · ? keys · q quit"
 READING = "j/k scroll · esc back"
-EDITING = "enter save · esc cancel"
+EDITING = "^s save · esc cancel"
 
 
 class MainScreen(Screen[None]):

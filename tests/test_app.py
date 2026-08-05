@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Engine
 from textual.pilot import Pilot
-from textual.widgets import Input, OptionList, Static
+from textual.widgets import Input, OptionList, Static, TextArea
 
 from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
@@ -119,9 +119,10 @@ async def test_tab_moves_between_the_edit_pane_fields(seeded: Engine) -> None:
         edit = _main(app).query_one(EditPane)
         assert app.focused is edit.query_one("#field-title", Input)
         # Tab is no longer the layout switch, so it steps through the form's controls.
+        # The body is prose, so its control is the multi-line editor, not a one-liner.
         await pilot.press("tab")
         await pilot.pause()
-        assert app.focused is edit.query_one("#field-body", Input)
+        assert app.focused is edit.query_one("#field-body", TextArea)
         await pilot.press("shift+tab")
         await pilot.pause()
         assert app.focused is edit.query_one("#field-title", Input)

@@ -47,13 +47,31 @@ def name_of(value: object) -> str:
 
 
 @dataclass(frozen=True)
+class Multiline:
+    """Marker annotation for a text field whose value is prose. Inert to
+    validation — ``fields_of`` reads it off a field's ``Annotated`` metadata and
+    sets ``multiline`` on the derived text kind, so a frontend draws a wrapping
+    editor rather than a one-line box. ``MULTILINE`` is the singleton to annotate
+    with (``Annotated[str, MULTILINE]``)."""
+
+
+MULTILINE = Multiline()
+
+
+@dataclass(frozen=True)
 class Text:
-    """A required text box."""
+    """A required text box. ``multiline`` marks it as prose, drawn as a wrapping
+    editor rather than a one-line box."""
+
+    multiline: bool = False
 
 
 @dataclass(frozen=True)
 class OptionalText:
-    """A text box whose blank state is a real ``null``."""
+    """A text box whose blank state is a real ``null``. ``multiline`` marks it as
+    prose, drawn as a wrapping editor rather than a one-line box."""
+
+    multiline: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,11 +124,11 @@ def _peel(annotation: Any) -> tuple[Any, bool]:
     return annotation, False
 
 
-def _kind_of(base: Any, *, optional: bool) -> Kind:
+def _kind_of(base: Any, *, optional: bool, multiline: bool) -> Kind:
     if isinstance(base, type) and issubclass(base, enum.Enum):
         return Enum([member.name.lower() for member in base])
     if base is str:
-        return OptionalText() if optional else Text()
+        return OptionalText(multiline=multiline) if optional else Text(multiline=multiline)
     if base is datetime.date:
         return Date()
     if base is int:
@@ -132,10 +150,11 @@ def fields_of(schema_cls: type[BaseModel]) -> list[Field]:
 
 def _field_of(name: str, info: FieldInfo) -> Field:
     base, optional = _peel(info.annotation)
+    multiline = any(isinstance(m, Multiline) for m in info.metadata)
     return Field(
         name=name,
         required=info.is_required(),
-        kind=_kind_of(base, optional=optional),
+        kind=_kind_of(base, optional=optional, multiline=multiline),
         description=info.description,
     )
 

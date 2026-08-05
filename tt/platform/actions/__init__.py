@@ -22,10 +22,12 @@ from tt.platform.actions.base import (
 )
 from tt.platform.actions.deps import ActionDeps
 from tt.platform.actions.form import (
+    MULTILINE,
     Date,
     Enum,
     Field,
     Kind,
+    Multiline,
     OptionalText,
     Reference,
     Text,
@@ -49,8 +51,10 @@ __all__ = [
     "Empty",
     "Enum",
     "Field",
+    "MULTILINE",
     "Invalid",
     "Kind",
+    "Multiline",
     "ObjectAction",
     "Offer",
     "Offered",

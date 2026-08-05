@@ -19,6 +19,7 @@ from typing import Annotated
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
 from tt.domains.issue.enums import Priority, Status
+from tt.platform.actions import MULTILINE
 
 
 def _priority_by_name(value: object) -> object:
@@ -47,7 +48,7 @@ class EditIssuePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(description="What to call the issue.")
-    body: str = Field(description="The issue's description. Blank clears it.")
+    body: Annotated[str, MULTILINE] = Field(description="The issue's description. Blank clears it.")
     status: Status = Field(description="Where the issue is up to.")
     priority: WirePriority = Field(description="How far up the list the issue sorts.")
     due_date: date | None = Field(
