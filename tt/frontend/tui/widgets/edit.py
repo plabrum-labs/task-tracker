@@ -23,7 +23,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Input, Select, Static
 
-from tt.platform.actions import REFUSALS, Enum, Field, OptionalText, Text
+from tt.platform.actions import REFUSALS, Date, Enum, Field, OptionalText, Text
 from tt.platform.actions import payload as build_payload
 
 # What the pane calls to perform the write: a payload in, the action's message out,
@@ -99,7 +99,9 @@ class EditPane(VerticalScroll):
         widget_id = f"field-{field.name}"
         value = None if seed is None else seed.get(field.name)
         match field.kind:
-            case Text() | OptionalText():
+            case Text() | OptionalText() | Date():
+                # A date is typed as its ISO string; a seeded ``date`` renders through
+                # ``str``. The picker a ``Date`` leaves room for is future TUI work.
                 return Input(value=str(value or ""), id=widget_id)
             case Enum(values=values):
                 chosen = value if isinstance(value, str) and value in values else values[0]

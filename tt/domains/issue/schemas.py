@@ -13,7 +13,7 @@ The output schemas are the read contract: ``*ListItem`` for a row in a list and
 rendered to their wire strings.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
@@ -50,6 +50,9 @@ class EditIssuePayload(BaseModel):
     body: str = Field(description="The issue's description. Blank clears it.")
     status: Status = Field(description="Where the issue is up to.")
     priority: WirePriority = Field(description="How far up the list the issue sorts.")
+    due_date: date | None = Field(
+        description="When the issue is due, as YYYY-MM-DD. Blank clears it."
+    )
 
 
 class SetStatusPayload(BaseModel):
@@ -60,12 +63,24 @@ class SetStatusPayload(BaseModel):
     status: Status = Field(description="Where the issue is up to.")
 
 
+class SetDueDatePayload(BaseModel):
+    # The focused due-date move, the mirror of ``SetStatus``: the one field the
+    # whole-object edit also carries, sent on its own. A blank clears the date, the
+    # null an optional-date form sends.
+    model_config = ConfigDict(extra="forbid")
+
+    due_date: date | None = Field(
+        description="When the issue is due, as YYYY-MM-DD. Blank clears it."
+    )
+
+
 class IssueListItem(BaseModel):
     id: int
     project: str
     title: str
     status: str
     priority: str
+    due_date: date | None
 
 
 class IssueDetail(BaseModel):
@@ -75,5 +90,6 @@ class IssueDetail(BaseModel):
     body: str
     status: str
     priority: str
+    due_date: date | None
     created_at: datetime
     updated_at: datetime

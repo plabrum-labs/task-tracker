@@ -9,9 +9,10 @@ query per row.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Index, Text, text
+from sqlalchemy import Date, ForeignKey, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.issue.enums import Priority, Status
@@ -40,6 +41,7 @@ class Issue(BaseDBModel):
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[Status] = mapped_column(TextEnum(Status))
     priority: Mapped[Priority] = mapped_column(IntEnum(Priority))
+    due_date: Mapped[date | None] = mapped_column(Date, default=None)
 
     project: Mapped[Project] = relationship(back_populates="issues", lazy="raise")
 

@@ -10,6 +10,7 @@ and the write refuses it. The issue edit refuses nothing at the menu, so for it 
 honest pair is "always offered" and the blank-title refusal ``execute`` states.
 """
 
+from datetime import date
 from typing import Any
 
 import pytest
@@ -133,6 +134,7 @@ def _edit(**over: Any) -> issue_schemas.EditIssuePayload:
         "body": "",
         "status": Status.TODO,
         "priority": Priority.NORMAL,
+        "due_date": None,
     }
     fields.update(over)
     return issue_schemas.EditIssuePayload(**fields)
@@ -223,6 +225,51 @@ def test_set_status_refuses_an_unknown_status_or_an_extra_field(db: Engine) -> N
         issue_api.issue_action(db, "setStatus", {"status": "doing", "title": "x"}, made.id)
 
 
+def test_set_due_date_is_always_offered() -> None:
+    for status in Status:
+        seeded = Issue(
+            id=1, project_id=1, title="a title", body="", status=status, priority=Priority.NORMAL
+        )
+        assert issue_actions.SetDueDate.availability(seeded) == Runnable()
+
+
+def test_set_due_date_sets_and_clears(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    seeded = an_issue(db, tt, "one")
+
+    response = run_issue(
+        db,
+        issue_actions.SetDueDate,
+        seeded.id,
+        issue_schemas.SetDueDatePayload(due_date=date(2026, 9, 1)),
+    )
+    assert response.message == "issue 1: due 2026-09-01"
+    with platform_db.reading(db) as s:
+        read = issue_queries.get_issue(s, seeded.id)
+    assert read is not None
+    assert read.due_date == date(2026, 9, 1)
+
+    # A null clears it — no date is a state, not a refusal.
+    response = run_issue(
+        db, issue_actions.SetDueDate, seeded.id, issue_schemas.SetDueDatePayload(due_date=None)
+    )
+    assert response.message == "issue 1: due cleared"
+    with platform_db.reading(db) as s:
+        cleared = issue_queries.get_issue(s, seeded.id)
+    assert cleared is not None
+    assert cleared.due_date is None
+
+
+def test_edit_carries_the_due_date(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    seeded = an_issue(db, tt, "one")
+    run_issue(db, issue_actions.EditIssue, seeded.id, _edit(due_date=date(2026, 12, 25)))
+    with platform_db.reading(db) as s:
+        read = issue_queries.get_issue(s, seeded.id)
+    assert read is not None
+    assert read.due_date == date(2026, 12, 25)
+
+
 def test_delete_hides_an_issue(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
@@ -269,7 +316,10 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "wip")
     issue_api.issue_action(
-        db, "edit", {"title": "wip", "body": "", "status": "doing", "priority": "normal"}, made.id
+        db,
+        "edit",
+        {"title": "wip", "body": "", "status": "doing", "priority": "normal", "due_date": None},
+        made.id,
     )
     response = project_api.project_action(
         db, "edit", {"title": "renamed", "body": "notes", "status": "active", "path": None}, "tt"
@@ -437,7 +487,7 @@ def _keys(offered: list[Any]) -> list[str]:
 
 
 def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
-    assert _keys(issue_group.offers(issue())) == ["edit", "setStatus", "delete"]
+    assert _keys(issue_group.offers(issue())) == ["edit", "setStatus", "setDueDate", "delete"]
     # An active project with two issues doing: edit is runnable (its archive
     # precondition is in execute now), delete comes back refused, addIssue runnable
     # — one list, told apart by what each execute writes rather than by which
@@ -469,7 +519,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
     erased = _fresh()
     tt = a_project(erased, "tt")
     seeded = an_issue(erased, tt, "old")
-    wire = {"title": " new ", "body": "", "status": "todo", "priority": "normal"}
+    wire = {"title": " new ", "body": "", "status": "todo", "priority": "normal", "due_date": None}
     via_api = issue_api.issue_action(erased, "edit", wire, seeded.id).message
 
     typed = _fresh()
@@ -501,8 +551,15 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
     an_issue(db, tt, "one")
     for payload in [
         {},  # missing required fields
-        {"title": 5, "body": "", "status": "todo", "priority": "normal"},  # wrong type
-        {"title": "x", "body": "", "status": "todo", "priority": "normal", "bogus": 1},  # extra
+        {"title": 5, "body": "", "status": "todo", "priority": "normal", "due_date": None},  # type
+        {
+            "title": "x",
+            "body": "",
+            "status": "todo",
+            "priority": "normal",
+            "due_date": None,
+            "b": 1,
+        },
     ]:
         with pytest.raises(Invalid):
             issue_api.issue_action(db, "edit", payload, 1)
@@ -510,7 +567,10 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
     # about in advance.
     with pytest.raises(Invalid):
         issue_api.issue_action(
-            db, "edit", {"title": "x", "body": "", "status": "shipped", "priority": "normal"}, 1
+            db,
+            "edit",
+            {"title": "x", "body": "", "status": "shipped", "priority": "normal", "due_date": None},
+            1,
         )
 
 
@@ -547,7 +607,13 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
         issue_api.issue_action(
             db,
             "edit",
-            {"title": "x", "body": "", "status": "archived", "priority": "normal"},
+            {
+                "title": "x",
+                "body": "",
+                "status": "archived",
+                "priority": "normal",
+                "due_date": None,
+            },
             made.id,
         )
     # ``status_note`` is gone from the issue edit, so sending it is an extra field.
@@ -555,7 +621,14 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
         issue_api.issue_action(
             db,
             "edit",
-            {"title": "x", "body": "", "status": "todo", "priority": "normal", "status_note": "x"},
+            {
+                "title": "x",
+                "body": "",
+                "status": "todo",
+                "priority": "normal",
+                "due_date": None,
+                "status_note": "x",
+            },
             made.id,
         )
     # An issue status, and an issue-only field, through the project's edit.

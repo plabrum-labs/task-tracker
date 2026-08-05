@@ -15,7 +15,12 @@ from tt.platform.actions import Offer, Refused, Runnable
 
 def _item(issue_id: int, status: str = "todo", priority: str = "normal") -> IssueListItem:
     return IssueListItem(
-        id=issue_id, project="tt", title=f"issue {issue_id}", status=status, priority=priority
+        id=issue_id,
+        project="tt",
+        title=f"issue {issue_id}",
+        status=status,
+        priority=priority,
+        due_date=None,
     )
 
 

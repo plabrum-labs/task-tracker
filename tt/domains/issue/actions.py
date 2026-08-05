@@ -49,6 +49,7 @@ class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
         obj.body = payload.body
         obj.status = payload.status
         obj.priority = payload.priority
+        obj.due_date = payload.due_date
         return ActionResponse(message=f"{obj.subject()}: saved")
 
 
@@ -68,6 +69,25 @@ class SetStatus(ObjectAction[Issue, schemas.SetStatusPayload]):
     ) -> ActionResponse:
         obj.status = payload.status
         return ActionResponse(message=f"{obj.subject()}: {payload.status}")
+
+
+@issue_actions
+class SetDueDate(ObjectAction[Issue, schemas.SetDueDatePayload]):
+    # The direct due-date move, the mirror of ``SetStatus``. The whole-object edit
+    # still carries the due date; this is the one-field verb. A null payload clears
+    # it — no date is a real state, not a refusal.
+    KEY = "setDueDate"
+    LABEL = "Set due date"
+    Payload = schemas.SetDueDatePayload
+    SEED_FROM_TARGET = True
+
+    @classmethod
+    def execute(
+        cls, obj: Issue, payload: schemas.SetDueDatePayload, deps: ActionDeps
+    ) -> ActionResponse:
+        obj.due_date = payload.due_date
+        when = payload.due_date.isoformat() if payload.due_date is not None else "cleared"
+        return ActionResponse(message=f"{obj.subject()}: due {when}")
 
 
 @issue_actions

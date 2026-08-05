@@ -218,6 +218,7 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
             "body": "the parser drops trailing commas",
             "status": first.status,
             "priority": first.priority,
+            "due_date": first.due_date,
         },
         first.id,
     )

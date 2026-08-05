@@ -82,6 +82,8 @@ def _field_json(field: Field) -> dict[str, Any]:
             return {**base, "type": "text"}
         case actions.OptionalText():
             return {**base, "type": "text", "optional": True}
+        case actions.Date():
+            return {**base, "type": "date"}
         case Enum(values=values):
             return {**base, "type": "enum", "values": values}
 

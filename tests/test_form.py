@@ -17,7 +17,17 @@ from tt.domains.issue import api as issue_api
 from tt.domains.issue import schemas as issue_schemas
 from tt.domains.project import api as project_api
 from tt.domains.project import schemas as project_schemas
-from tt.platform.actions import Empty, Enum, Field, Invalid, OptionalText, Text, fields_of, payload
+from tt.platform.actions import (
+    Date,
+    Empty,
+    Enum,
+    Field,
+    Invalid,
+    OptionalText,
+    Text,
+    fields_of,
+    payload,
+)
 
 
 def _seeded(engine: Engine) -> None:
@@ -51,7 +61,33 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
             kind=Enum(["normal", "high"]),
             description="How far up the list the issue sorts.",
         ),
+        Field(
+            name="due_date",
+            required=True,
+            kind=Date(),
+            description="When the issue is due, as YYYY-MM-DD. Blank clears it.",
+        ),
     ]
+
+
+def test_the_set_due_date_payload_derives_a_single_date_field() -> None:
+    assert fields_of(issue_schemas.SetDueDatePayload) == [
+        Field(
+            name="due_date",
+            required=True,
+            kind=Date(),
+            description="When the issue is due, as YYYY-MM-DD. Blank clears it.",
+        ),
+    ]
+
+
+def test_a_blank_date_field_submits_the_null_its_schema_advertises() -> None:
+    # A ``Date``'s blank is a real ``null``, the same rule ``OptionalText`` carries,
+    # because every date column is nullable.
+    fields = fields_of(issue_schemas.SetDueDatePayload)
+    assert fields[0].kind == Date()
+    assert payload([(fields[0], "")]) == {"due_date": None}
+    assert payload([(fields[0], "2026-09-01")]) == {"due_date": "2026-09-01"}
 
 
 def test_the_set_status_payload_derives_a_single_status_enum_field() -> None:
@@ -121,6 +157,7 @@ def test_a_blank_required_text_field_is_submitted_and_refused(db: Engine) -> Non
             (fields[1], ""),
             (fields[2], "todo"),
             (fields[3], "normal"),
+            (fields[4], ""),  # due_date — blank clears
         ]
     )
     assert built["title"] == ""

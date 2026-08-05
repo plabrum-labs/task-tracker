@@ -9,6 +9,7 @@ wire name of a value, the one place the enum-to-string convention lives.
 
 from __future__ import annotations
 
+import datetime
 import enum
 import types
 from dataclasses import dataclass
@@ -56,13 +57,20 @@ class OptionalText:
 
 
 @dataclass(frozen=True)
+class Date:
+    """A calendar date, entered as an ISO string. Its blank state is a real
+    ``null``, the same rule ``OptionalText`` carries, because every date a column
+    holds is nullable."""
+
+
+@dataclass(frozen=True)
 class Enum:
     """A cycling selector over the closed list an enum advertises."""
 
     values: list[str]
 
 
-type Kind = Text | OptionalText | Enum
+type Kind = Text | OptionalText | Date | Enum
 
 
 @dataclass(frozen=True)
@@ -96,6 +104,8 @@ def _kind_of(base: Any, *, optional: bool) -> Kind:
         return Enum([member.name.lower() for member in base])
     if base is str:
         return OptionalText() if optional else Text()
+    if base is datetime.date:
+        return Date()
     # A field the form cannot render is a programming error, not runtime input:
     # dropping it would draw a form that cannot express the action.
     raise TypeError(f"no form field for {base!r}")
@@ -124,15 +134,16 @@ def _field_of(name: str, info: FieldInfo) -> Field:
 def payload(values: list[tuple[Field, str]]) -> dict[str, Any]:
     """What the typed-in values make, ready to decode.
 
-    A blank ``OptionalText`` is sent as ``null``. A blank ``Text`` is sent as
-    ``""`` rather than withheld: the action's ``execute`` is the enforcement point
-    — ``editTitle`` is what decides a blank title is refused — and a form that
-    second-guessed it would be a second place that has to agree. An ``Enum_`` is
-    always sent, because a selector over a closed list has no blank state.
+    A blank ``OptionalText`` or ``Date`` is sent as ``null``. A blank ``Text`` is
+    sent as ``""`` rather than withheld: the action's ``execute`` is the
+    enforcement point — ``editTitle`` is what decides a blank title is refused — and
+    a form that second-guessed it would be a second place that has to agree. An
+    ``Enum_`` is always sent, because a selector over a closed list has no blank
+    state.
     """
     out: dict[str, Any] = {}
     for field, value in values:
-        if isinstance(field.kind, OptionalText) and value == "":
+        if isinstance(field.kind, OptionalText | Date) and value == "":
             out[field.name] = None
         else:
             out[field.name] = value
