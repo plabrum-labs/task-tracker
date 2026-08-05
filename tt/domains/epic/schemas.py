@@ -43,6 +43,15 @@ class SetDueDatePayload(BaseModel):
     )
 
 
+class AddMilestonePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(description="What to call the milestone.")
+    due_date: date | None = Field(
+        default=None, description="When the milestone is due, as YYYY-MM-DD."
+    )
+
+
 class EpicListItem(BaseModel):
     id: int
     project: str

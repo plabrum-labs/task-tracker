@@ -21,6 +21,7 @@ from tt.platform.enums import IntEnum, TextEnum
 
 if TYPE_CHECKING:
     from tt.domains.epic.models import Epic
+    from tt.domains.milestone.models import Milestone
     from tt.domains.project.models import Project
 
 
@@ -44,6 +45,12 @@ class Issue(BaseDBModel):
     epic_id: Mapped[int | None] = mapped_column(
         ForeignKey("epics.id", ondelete="SET NULL"), index=True, default=None
     )
+    # A milestone is optional and lives under the issue's epic; the edit refuses one
+    # from a different epic, and clears a now-stale one when the epic changes. On a
+    # milestone's hard delete the link falls to null.
+    milestone_id: Mapped[int | None] = mapped_column(
+        ForeignKey("milestones.id", ondelete="SET NULL"), index=True, default=None
+    )
     title: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[Status] = mapped_column(TextEnum(Status))
@@ -52,6 +59,7 @@ class Issue(BaseDBModel):
 
     project: Mapped[Project] = relationship(back_populates="issues", lazy="raise")
     epic: Mapped[Epic | None] = relationship(back_populates="issues", lazy="raise")
+    milestone: Mapped[Milestone | None] = relationship(back_populates="issues", lazy="raise")
 
     def subject(self) -> str:
         return f"issue {self.id}"

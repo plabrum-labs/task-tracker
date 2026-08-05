@@ -56,6 +56,11 @@ class EditIssuePayload(BaseModel):
     epic: int | None = Field(
         description="The id of the epic this issue belongs to. Blank clears it."
     )
+    milestone: int | None = Field(
+        description=(
+            "The id of the milestone this issue belongs to, within its epic. Blank clears it."
+        )
+    )
 
 
 class SetStatusPayload(BaseModel):
@@ -85,6 +90,7 @@ class IssueListItem(BaseModel):
     priority: str
     due_date: date | None
     epic: int | None
+    milestone: int | None
 
 
 class IssueDetail(BaseModel):
@@ -96,5 +102,6 @@ class IssueDetail(BaseModel):
     priority: str
     due_date: date | None
     epic: int | None
+    milestone: int | None
     created_at: datetime
     updated_at: datetime

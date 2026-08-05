@@ -6,9 +6,10 @@ no history to migrate and Alembic cannot reach the connection a ``StaticPool``
 holds anyway. ``upgrade`` runs the migrations against a file the CLI and TUI keep,
 which is where a schema change is a new revision rather than a silent ``create``.
 
-Importing the domain models is the point of this module living above them: it is
-what registers every table on ``BaseDBModel.metadata`` before either call reads
-it, and before Alembic's ``env`` diffs against it.
+Discovering the domain models is the point of this module living above them: the
+walk below imports every ``models.py`` under ``tt``, which is what registers each
+table on ``BaseDBModel.metadata`` before either call reads it, and before
+Alembic's ``env`` diffs against it. Adding a domain needs no edit here.
 """
 
 from pathlib import Path
@@ -17,11 +18,14 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine
 
-import tt.domains.epic.models  # noqa: F401  (registers the epics table)
-import tt.domains.issue.models  # noqa: F401  (registers the issues table)
-import tt.domains.project.models  # noqa: F401  (registers the projects table)
 from tt.platform import db
 from tt.platform.db import BaseDBModel
+from tt.platform.discovery import discover_and_import
+
+# Import every domain's ``models`` for its table-registration side effect. Runs at
+# import time so the metadata is populated before ``create_all``/``upgrade`` or
+# Alembic's ``env`` reads it.
+discover_and_import(["models.py"], search_root=Path(__file__).resolve().parent)
 
 # alembic.ini sits at the repo root, one level above the tt package.
 _ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"

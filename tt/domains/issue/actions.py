@@ -19,6 +19,7 @@ from sqlalchemy import select
 from tt.domains.epic.models import Epic
 from tt.domains.issue import queries, schemas
 from tt.domains.issue.models import Issue
+from tt.domains.milestone.models import Milestone
 from tt.platform.actions import (
     ActionDeps,
     ActionGroup,
@@ -48,6 +49,28 @@ def _resolve_epic(deps: ActionDeps, epic_id: int | None, project_id: int) -> int
     return epic.id
 
 
+def _resolve_milestone(
+    deps: ActionDeps, milestone_id: int | None, new_epic_id: int | None, old_epic_id: int | None
+) -> int | None:
+    """The id of the live milestone an issue is being filed under, or ``None``. A
+    milestone must belong to the issue's (new) epic. A milestone that instead
+    belongs to the epic the issue is *leaving* is dropped rather than blocking the
+    epic move — that is the stale link a re-submit carries. Any other mismatch is an
+    explicit foreign choice, and refused."""
+    if milestone_id is None:
+        return None
+    milestone = deps.tx.scalars(
+        select(Milestone).where(Milestone.id == milestone_id, Milestone.deleted_at.is_(None))
+    ).first()
+    if milestone is None:
+        raise Conflict(f"no milestone {milestone_id}")
+    if milestone.epic_id == new_epic_id:
+        return milestone.id
+    if milestone.epic_id == old_epic_id:
+        return None
+    raise Conflict(f"milestone {milestone_id} is not in this epic")
+
+
 @issue_actions
 class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
     # One whole-object edit: the payload carries every editable field and each is
@@ -70,7 +93,10 @@ class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
         obj.status = payload.status
         obj.priority = payload.priority
         obj.due_date = payload.due_date
-        obj.epic_id = _resolve_epic(deps, payload.epic, obj.project_id)
+        old_epic_id = obj.epic_id
+        new_epic_id = _resolve_epic(deps, payload.epic, obj.project_id)
+        obj.epic_id = new_epic_id
+        obj.milestone_id = _resolve_milestone(deps, payload.milestone, new_epic_id, old_epic_id)
         return ActionResponse(message=f"{obj.subject()}: saved")
 
 

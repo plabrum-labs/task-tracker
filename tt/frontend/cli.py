@@ -40,6 +40,8 @@ from tt.domains.epic import api as epic_api
 from tt.domains.epic.schemas import EpicListItem
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
+from tt.domains.milestone import api as milestone_api
+from tt.domains.milestone.schemas import MilestoneListItem
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
 from tt.platform import actions
@@ -79,6 +81,13 @@ def _epic_line(e: EpicListItem) -> str:
     progress = f"{e.done}/{total}"
     due = e.due_date.isoformat() if e.due_date is not None else "—"
     return f"{e.id:<4} {e.project:<12} {e.status:<8} {due:<12} {progress:<8} {e.title}"
+
+
+def _milestone_line(m: MilestoneListItem) -> str:
+    total = m.backlog + m.planning + m.todo + m.doing + m.done
+    progress = f"{m.done}/{total}"
+    due = m.due_date.isoformat() if m.due_date is not None else "—"
+    return f"{m.id:<4} epic {m.epic:<7} {due:<12} {progress:<8} {m.title}"
 
 
 def _field_json(field: Field) -> dict[str, Any]:
@@ -137,6 +146,10 @@ def _issue_write(engine: Engine, issue_id: Any, key: str, payload: dict[str, Any
 
 def _epic_write(engine: Engine, epic_id: Any, key: str, payload: dict[str, Any]) -> str:
     return epic_api.epic_action(engine, key, payload, epic_id).message
+
+
+def _milestone_write(engine: Engine, milestone_id: Any, key: str, payload: dict[str, Any]) -> str:
+    return milestone_api.milestone_action(engine, key, payload, milestone_id).message
 
 
 def _project_init(
@@ -205,6 +218,35 @@ def _epic_show(engine: Engine, epic_id: int) -> str:
     detail, offers = epic_api.epic_detail(engine, epic_id)
     actions = [_offer_json(offer) for offer in offers]
     return _pretty({"epic": detail.model_dump(mode="json"), "actions": actions})
+
+
+def _epic_ids(engine: Engine) -> list[int]:
+    """Every live epic id across every live project — what a milestone list with no
+    epic named ranges over."""
+    return [
+        epic.id
+        for project in project_api.project_list(engine)
+        for epic in epic_api.epic_list(engine, project.slug)
+    ]
+
+
+def _milestone_ls(engine: Engine, epic_id: int | None, as_json: bool) -> str:
+    if epic_id is not None:
+        if epic_api.epic_get(engine, epic_id) is None:
+            raise Invalid(f"no epic {epic_id}")
+        epic_ids = [epic_id]
+    else:
+        epic_ids = _epic_ids(engine)
+    items = [m for eid in epic_ids for m in milestone_api.milestone_list(engine, eid)]
+    if as_json:
+        return _pretty([item.model_dump(mode="json") for item in items])
+    return "\n".join(_milestone_line(m) for m in items)
+
+
+def _milestone_show(engine: Engine, milestone_id: int) -> str:
+    detail, offers = milestone_api.milestone_detail(engine, milestone_id)
+    actions = [_offer_json(offer) for offer in offers]
+    return _pretty({"milestone": detail.model_dump(mode="json"), "actions": actions})
 
 
 def _issue_show(engine: Engine, issue_id: int) -> str:
@@ -456,6 +498,7 @@ def _main(
 project_app = typer.Typer(help="Projects.", no_args_is_help=True)
 issue_app = typer.Typer(help="Issues.", no_args_is_help=True)
 epic_app = typer.Typer(help="Epics.", no_args_is_help=True)
+milestone_app = typer.Typer(help="Milestones.", no_args_is_help=True)
 
 
 @project_app.command("ls", help="List live projects.")
@@ -566,6 +609,35 @@ def _epic_action_command(
     _report(lambda: _epic_write(_engine(ctx), id, key, _blob(payload)))
 
 
+@milestone_app.command("ls", help="List live milestones.")
+def _milestone_ls_command(
+    ctx: typer.Context,
+    epic: Annotated[int | None, typer.Option("--epic", help="Only this epic's milestones.")] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
+    ] = False,
+) -> None:
+    _report(lambda: _milestone_ls(_engine(ctx), epic, as_json))
+
+
+@milestone_app.command("show", help="Print a milestone and what it offers.")
+def _milestone_show_command(
+    ctx: typer.Context,
+    id: Annotated[int, typer.Argument(help="The milestone's id.")],
+) -> None:
+    _report(lambda: _milestone_show(_engine(ctx), id))
+
+
+@milestone_app.command("action", help="Run an action by key, passing its arguments as JSON.")
+def _milestone_action_command(
+    ctx: typer.Context,
+    id: Annotated[int, typer.Argument(help="The milestone's id.")],
+    key: Annotated[str, typer.Argument(help=_KEY_HELP)],
+    payload: Annotated[str, typer.Argument(help=_JSON_HELP)] = "{}",
+) -> None:
+    _report(lambda: _milestone_write(_engine(ctx), id, key, _blob(payload)))
+
+
 # The generated subcommands are appended after the fixed ones, so the tree reads
 # ``ls show action`` then a subcommand per action, in the order ``action_schemas``
 # lists them.
@@ -593,10 +665,19 @@ _register_generated(
     "The epic's id.",
     _epic_write,
 )
+_register_generated(
+    milestone_app,
+    milestone_api.action_schemas(),
+    "id",
+    int,
+    "The milestone's id.",
+    _milestone_write,
+)
 
 app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
 app.add_typer(epic_app, name="epic")
+app.add_typer(milestone_app, name="milestone")
 
 
 def main() -> None:

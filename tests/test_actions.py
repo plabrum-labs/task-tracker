@@ -31,6 +31,10 @@ from tt.domains.issue import api as issue_api
 from tt.domains.issue import queries as issue_queries
 from tt.domains.issue import schemas as issue_schemas
 from tt.domains.issue.actions import issue_actions as issue_group
+from tt.domains.milestone import Milestone
+from tt.domains.milestone import actions as milestone_actions
+from tt.domains.milestone import queries as milestone_queries
+from tt.domains.milestone import schemas as milestone_schemas
 from tt.domains.project import Project
 from tt.domains.project import Status as ProjectStatus
 from tt.domains.project import actions as project_actions
@@ -83,6 +87,15 @@ def run_epic[P: BaseModel](
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
         obj = epic_queries.get_epic(tx, epic_id)
+        assert obj is not None
+        return action.run(obj, payload, ActionDeps(tx))
+
+
+def run_milestone[P: BaseModel](
+    engine: Engine, action: type[ObjectAction[Milestone, P]], milestone_id: int, payload: P
+) -> ActionResponse:
+    with platform_db.transaction(engine) as tx:
+        obj = milestone_queries.get_milestone(tx, milestone_id)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -151,6 +164,7 @@ def _edit(**over: Any) -> issue_schemas.EditIssuePayload:
         "priority": Priority.NORMAL,
         "due_date": None,
         "epic": None,
+        "milestone": None,
     }
     fields.update(over)
     return issue_schemas.EditIssuePayload(**fields)
@@ -347,6 +361,7 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
             "priority": "normal",
             "due_date": None,
             "epic": None,
+            "milestone": None,
         },
         made.id,
     )
@@ -671,6 +686,7 @@ def _wire_edit(**over: Any) -> dict[str, Any]:
         "priority": "normal",
         "due_date": None,
         "epic": None,
+        "milestone": None,
     }
     wire.update(over)
     return wire
@@ -711,6 +727,172 @@ def test_edit_refuses_an_unknown_epic(db: Engine) -> None:
 def test_epic_detail_refuses_an_unknown_id(db: Engine) -> None:
     with pytest.raises(Invalid):
         epic_api.epic_detail(db, 999)
+
+
+# --- milestones ------------------------------------------------------------
+
+
+def a_milestone(engine: Engine, epic_id: int, title: str) -> int:
+    response = epic_api.epic_action(engine, "addMilestone", {"title": title}, epic_id)
+    assert response.created_id is not None
+    return response.created_id
+
+
+def milestone(*, issues: list[Issue] | None = None) -> Milestone:
+    return Milestone(id=1, epic_id=1, title="alpha", due_date=None, issues=list(issues or []))
+
+
+def test_add_milestone_creates_one_under_the_epic(db: Engine) -> None:
+    a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    response = run_epic(
+        db,
+        epic_actions.AddMilestone,
+        epic_id,
+        epic_schemas.AddMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
+    )
+    assert response.message == "milestone 1: created"
+    assert response.created_id == 1
+    with platform_db.reading(db) as s:
+        made = milestone_queries.get_milestone(s, 1)
+    assert made is not None
+    assert made.title == "alpha"  # trimmed
+    assert made.epic_id == epic_id
+    assert made.due_date == date(2026, 9, 1)
+
+    # A blank title is the object's refusal.
+    with pytest.raises(Invalid):
+        run_epic(
+            db,
+            epic_actions.AddMilestone,
+            epic_id,
+            epic_schemas.AddMilestonePayload(title="  ", due_date=None),
+        )
+
+
+def test_milestone_edit_and_set_due_date(db: Engine) -> None:
+    a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    milestone_id = a_milestone(db, epic_id, "old")
+
+    seeded = milestone()
+    assert milestone_actions.EditMilestone.availability(seeded) == Runnable()
+    assert milestone_actions.SetDueDate.availability(seeded) == Runnable()
+
+    response = run_milestone(
+        db,
+        milestone_actions.EditMilestone,
+        milestone_id,
+        milestone_schemas.EditMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
+    )
+    assert response.message == "milestone 1: saved"
+    with platform_db.reading(db) as s:
+        read = milestone_queries.get_milestone(s, milestone_id)
+    assert read is not None
+    assert read.title == "alpha"  # trimmed
+    assert read.due_date == date(2026, 9, 1)
+
+    with pytest.raises(Invalid):
+        run_milestone(
+            db,
+            milestone_actions.EditMilestone,
+            milestone_id,
+            milestone_schemas.EditMilestonePayload(title="   ", due_date=None),
+        )
+
+    run_milestone(
+        db,
+        milestone_actions.SetDueDate,
+        milestone_id,
+        milestone_schemas.SetDueDatePayload(due_date=None),
+    )
+    with platform_db.reading(db) as s:
+        cleared = milestone_queries.get_milestone(s, milestone_id)
+    assert cleared is not None
+    assert cleared.due_date is None
+
+
+def test_milestone_delete_is_refused_while_it_holds_live_issues(db: Engine) -> None:
+    busy = milestone(issues=[issue()])
+    assert milestone_actions.Delete.availability(busy) == Refused("reassign or close 1 issue first")
+
+    tt = a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    milestone_id = a_milestone(db, epic_id, "alpha")
+    made = an_issue(db, tt, "under the milestone")
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=milestone_id), made.id)
+    with pytest.raises(Conflict):
+        run_milestone(db, milestone_actions.Delete, milestone_id, Empty())
+
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=None), made.id)
+    with platform_db.reading(db) as s:
+        empty_milestone = milestone_queries.get_milestone(s, milestone_id)
+    assert empty_milestone is not None
+    assert milestone_actions.Delete.availability(empty_milestone) == Runnable()
+    assert run_milestone(db, milestone_actions.Delete, milestone_id, Empty()).message == (
+        "milestone 1: deleted"
+    )
+
+
+# --- an issue's milestone link ---------------------------------------------
+
+
+def test_edit_assigns_a_milestone_within_the_issues_epic(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    milestone_id = a_milestone(db, epic_id, "alpha")
+    made = an_issue(db, tt, "wire it")
+
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=milestone_id), made.id)
+    detail = issue_api.issue_get(db, made.id)
+    assert detail is not None
+    assert (detail.epic, detail.milestone) == (epic_id, milestone_id)
+
+
+def test_edit_refuses_a_milestone_from_another_epic(db: Engine) -> None:
+    # The key invariant: an issue's milestone must belong to the issue's epic.
+    tt = a_project(db, "tt")
+    epic_a = an_epic(db, "tt", "v1")
+    epic_b = an_epic(db, "tt", "v2")
+    milestone_b = a_milestone(db, epic_b, "beta")
+    made = an_issue(db, tt, "wire it")
+    with pytest.raises(Conflict, match="not in this epic"):
+        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_b), made.id)
+
+
+def test_edit_refuses_a_milestone_when_the_issue_has_no_epic(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    milestone_id = a_milestone(db, epic_id, "alpha")
+    made = an_issue(db, tt, "wire it")
+    with pytest.raises(Conflict, match="not in this epic"):
+        issue_api.issue_action(db, "edit", _wire_edit(epic=None, milestone=milestone_id), made.id)
+
+
+def test_changing_the_epic_clears_a_now_stale_milestone(db: Engine) -> None:
+    # Moving the issue to a different epic drops the milestone the old epic held
+    # rather than blocking the move — the stale link is cleared, not refused.
+    tt = a_project(db, "tt")
+    epic_a = an_epic(db, "tt", "v1")
+    epic_b = an_epic(db, "tt", "v2")
+    milestone_a = a_milestone(db, epic_a, "alpha")
+    made = an_issue(db, tt, "wire it")
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_a), made.id)
+
+    # Re-submit with the epic changed to B and the stale milestone still named.
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_b, milestone=milestone_a), made.id)
+    detail = issue_api.issue_get(db, made.id)
+    assert detail is not None
+    assert detail.epic == epic_b
+    assert detail.milestone is None
+
+
+def test_edit_refuses_an_unknown_milestone(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    epic_id = an_epic(db, "tt", "v1")
+    made = an_issue(db, tt, "wire it")
+    with pytest.raises(Conflict, match="no milestone 999"):
+        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=999), made.id)
 
 
 # --- dispatch through the group -------------------------------------------
@@ -761,6 +943,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
         "priority": "normal",
         "due_date": None,
         "epic": None,
+        "milestone": None,
     }
     via_api = issue_api.issue_action(erased, "edit", wire, seeded.id).message
 
@@ -801,6 +984,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
             "priority": "normal",
             "due_date": None,
             "epic": None,
+            "milestone": None,
         },
         {
             "title": "x",
@@ -809,6 +993,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
             "priority": "normal",
             "due_date": None,
             "epic": None,
+            "milestone": None,
             "b": 1,
         },
     ]:
@@ -827,6 +1012,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
                 "priority": "normal",
                 "due_date": None,
                 "epic": None,
+                "milestone": None,
             },
             1,
         )
@@ -872,6 +1058,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "priority": "normal",
                 "due_date": None,
                 "epic": None,
+                "milestone": None,
             },
             made.id,
         )
@@ -887,6 +1074,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "priority": "normal",
                 "due_date": None,
                 "epic": None,
+                "milestone": None,
                 "status_note": "x",
             },
             made.id,

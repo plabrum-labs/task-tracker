@@ -1,0 +1,87 @@
+"""Everything a milestone can be asked.
+
+A milestone is thin, so its actions are: a whole-object ``edit`` over its title
+and due date, the focused ``setDueDate`` verb it also carries, and a ``delete``.
+Like an epic, ``delete`` refuses while the milestone still holds live issues, so no
+live issue is left pointing at a deleted milestone. The flush is the group's, once.
+Each action registers by decorating itself with ``milestone_actions``.
+"""
+
+from datetime import UTC, datetime
+
+from tt.domains.milestone import queries, schemas
+from tt.domains.milestone.models import Milestone
+from tt.platform.actions import (
+    ActionDeps,
+    ActionGroup,
+    ActionResponse,
+    Empty,
+    Invalid,
+    ObjectAction,
+)
+
+milestone_actions: ActionGroup[Milestone] = ActionGroup("milestone", locate=queries.get_milestone)
+
+
+def _issues(n: int) -> str:
+    return "1 issue" if n == 1 else f"{n} issues"
+
+
+@milestone_actions
+class EditMilestone(ObjectAction[Milestone, schemas.EditMilestonePayload]):
+    # One whole-object edit: the payload carries every editable field and each is
+    # set. The due date rides along here; the focused move is ``SetDueDate``.
+    KEY = "edit"
+    LABEL = "Edit"
+    Payload = schemas.EditMilestonePayload
+    SEED_FROM_TARGET = True
+
+    @classmethod
+    def execute(
+        cls, obj: Milestone, payload: schemas.EditMilestonePayload, deps: ActionDeps
+    ) -> ActionResponse:
+        title = payload.title.strip()
+        if not title:
+            raise Invalid("title is required")
+        obj.title = title
+        obj.due_date = payload.due_date
+        return ActionResponse(message=f"{obj.subject()}: saved")
+
+
+@milestone_actions
+class SetDueDate(ObjectAction[Milestone, schemas.SetDueDatePayload]):
+    # The direct due-date move. A null payload clears it — no date is a real state,
+    # not a refusal.
+    KEY = "setDueDate"
+    LABEL = "Set due date"
+    Payload = schemas.SetDueDatePayload
+    SEED_FROM_TARGET = True
+
+    @classmethod
+    def execute(
+        cls, obj: Milestone, payload: schemas.SetDueDatePayload, deps: ActionDeps
+    ) -> ActionResponse:
+        obj.due_date = payload.due_date
+        when = payload.due_date.isoformat() if payload.due_date is not None else "cleared"
+        return ActionResponse(message=f"{obj.subject()}: due {when}")
+
+
+@milestone_actions
+class Delete(ObjectAction[Milestone, Empty]):
+    # The soft delete, refused while the milestone still holds live issues so no
+    # live issue is left pointing at a deleted milestone.
+    KEY = "delete"
+    LABEL = "Delete"
+    Payload = Empty
+
+    @classmethod
+    def is_disabled(cls, obj: Milestone) -> str | None:
+        open_issues = obj.issue_count()
+        if open_issues > 0:
+            return f"reassign or close {_issues(open_issues)} first"
+        return None
+
+    @classmethod
+    def execute(cls, obj: Milestone, payload: Empty, deps: ActionDeps) -> ActionResponse:
+        obj.deleted_at = datetime.now(UTC)
+        return ActionResponse(message=f"{obj.subject()}: deleted")

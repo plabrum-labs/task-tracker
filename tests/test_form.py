@@ -74,15 +74,22 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
             kind=Reference(),
             description="The id of the epic this issue belongs to. Blank clears it.",
         ),
+        Field(
+            name="milestone",
+            required=True,
+            kind=Reference(),
+            description=(
+                "The id of the milestone this issue belongs to, within its epic. Blank clears it."
+            ),
+        ),
     ]
 
 
 def test_a_reference_field_derives_from_an_int_base() -> None:
     # An ``int`` base is a pointer at another row's id; a blank submits the null
     # that clears the link, the same rule ``OptionalText`` carries.
-    fields = fields_of(issue_schemas.EditIssuePayload)
-    epic = fields[-1]
-    assert epic.name == "epic"
+    fields = {f.name: f for f in fields_of(issue_schemas.EditIssuePayload)}
+    epic = fields["epic"]
     assert epic.kind == Reference()
     assert payload([(epic, "")]) == {"epic": None}
     assert payload([(epic, "3")]) == {"epic": "3"}
@@ -178,6 +185,7 @@ def test_a_blank_required_text_field_is_submitted_and_refused(db: Engine) -> Non
             (fields[3], "normal"),
             (fields[4], ""),  # due_date — blank clears
             (fields[5], ""),  # epic — blank clears
+            (fields[6], ""),  # milestone — blank clears
         ]
     )
     assert built["title"] == ""

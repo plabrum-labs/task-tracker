@@ -80,6 +80,15 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "edit",
         "setStatus",
         "setDueDate",
+        "addMilestone",
+        "delete",
+    ]
+    assert _names(cli.milestone_app) == [
+        "ls",
+        "show",
+        "action",
+        "edit",
+        "setDueDate",
         "delete",
     ]
 
@@ -131,6 +140,8 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
         "",
         "--epic",
         "",
+        "--milestone",
+        "",
     ]
     # The required options come from the schema, so an edit missing them is a usage
     # error rather than a payload the decoder refuses further in.
@@ -148,6 +159,8 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
         "--due_date",
         "",
         "--epic",
+        "",
+        "--milestone",
         "",
     ]
     assert invoke(database, "issue", "edit", "1", *bad_enum).exit_code == USAGE
@@ -169,6 +182,8 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
         "--due_date",
         "",
         "--epic",
+        "",
+        "--milestone",
         "",
     )
     assert blank.exit_code == cli.REFUSED
@@ -210,6 +225,8 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
         "",
         "--epic",
         "",
+        "--milestone",
+        "",
     )
     assert spelled.exit_code == 0
     blob = invoke(
@@ -218,7 +235,7 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
         "action",
         "1",
         "edit",
-        '{"title":"x","body":"","status":"doing","priority":"normal","due_date":null,"epic":null}',
+        '{"title":"x","body":"","status":"doing","priority":"normal","due_date":null,"epic":null,"milestone":null}',
     )
     assert blob.exit_code == 0
     assert spelled.output == blob.output

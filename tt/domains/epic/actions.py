@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from tt.domains.epic import queries, schemas
 from tt.domains.epic.models import Epic
+from tt.domains.milestone.models import Milestone
 from tt.platform.actions import (
     ActionDeps,
     ActionGroup,
@@ -85,6 +86,34 @@ class SetDueDate(ObjectAction[Epic, schemas.SetDueDatePayload]):
         obj.due_date = payload.due_date
         when = payload.due_date.isoformat() if payload.due_date is not None else "cleared"
         return ActionResponse(message=f"{obj.subject()}: due {when}")
+
+
+@epic_actions
+class AddMilestone(ObjectAction[Epic, schemas.AddMilestonePayload]):
+    # An action on an epic writing to the milestones table, the mirror of a
+    # project's ``AddIssue``/``AddEpic``. The store assigns the id, so the message
+    # reads the row it wrote.
+    KEY = "addMilestone"
+    LABEL = "Add milestone"
+    Payload = schemas.AddMilestonePayload
+
+    @classmethod
+    def execute(
+        cls, obj: Epic, payload: schemas.AddMilestonePayload, deps: ActionDeps
+    ) -> ActionResponse:
+        title = payload.title.strip()
+        if not title:
+            raise Invalid("title is required")
+        milestone = Milestone(
+            epic=obj,
+            title=title,
+            due_date=payload.due_date,
+            issues=[],
+        )
+        deps.tx.add(milestone)
+        deps.tx.flush()
+        deps.tx.refresh(milestone, ["created_at", "updated_at"])
+        return ActionResponse(message=f"{milestone.subject()}: created", created_id=milestone.id)
 
 
 @epic_actions

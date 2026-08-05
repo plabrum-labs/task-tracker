@@ -22,6 +22,7 @@ def _item(issue_id: int, status: str = "todo", priority: str = "normal") -> Issu
         priority=priority,
         due_date=None,
         epic=None,
+        milestone=None,
     )
 
 
