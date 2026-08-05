@@ -1,12 +1,11 @@
-"""The number-columns migration, driven against seeded old-shape rows.
+"""The data-migrating revisions, driven against seeded old-shape rows.
 
 Unlike the domain tests, which build the schema with ``create_all`` on an in-memory
 database, a backfill only means anything against rows that predate it — so this
-steps a real temp-file database up to the revision *before* the numbers were added,
-inserts issues, epics and milestones the old way, then runs the migration and reads
-back what it wrote. It is the one place Alembic runs under pytest, because the
-StaticPool in-memory database it cannot reach is exactly what has no history to
-migrate.
+steps a real temp-file database up to the revision *before* a migration, inserts
+rows the old way, then runs the migration and reads back what it wrote. It is the
+one place Alembic runs under pytest, because the StaticPool in-memory database it
+cannot reach is exactly what has no history to migrate.
 """
 
 import sqlite3
@@ -20,6 +19,11 @@ from alembic.config import Config
 # absent; the assertions read the state ``_AFTER`` leaves.
 _BEFORE = "762216d69769"
 _AFTER = "e88f1f25f3e8"
+
+# The priority remap: the revision before it (two levels, ``normal``/``high``) and
+# the revision that renumbers those rows into the five-level scheme.
+_PRI_BEFORE = "ad1a89982bc9"
+_PRI_AFTER = "cf62ed046fd8"
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,3 +109,49 @@ def test_the_migration_round_trips(tmp_path: Path) -> None:
     command.upgrade(config, _AFTER)
     command.downgrade(config, _BEFORE)
     command.upgrade(config, _AFTER)
+
+
+def _seed_old_priorities(path: Path) -> None:
+    """One project with an issue at each of the two old levels: ``normal`` (1) and
+    ``high`` (2)."""
+    con = sqlite3.connect(path)
+    try:
+        con.execute(
+            "INSERT INTO projects (id, slug, title, body, status) VALUES (1,'ENG','','','ACTIVE')"
+        )
+        for iid, priority in [(1, 1), (2, 2)]:
+            con.execute(
+                "INSERT INTO issues (id, project_id, number, title, body, status, priority) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (iid, 1, iid, f"i{iid}", "", "TODO", priority),
+            )
+        con.commit()
+    finally:
+        con.close()
+
+
+def test_the_priority_remap_renumbers_the_old_levels(tmp_path: Path) -> None:
+    path = tmp_path / "t.db"
+    config = _config(f"sqlite:///{path}")
+    command.upgrade(config, _PRI_BEFORE)
+    _seed_old_priorities(path)
+    command.upgrade(config, _PRI_AFTER)
+
+    con = sqlite3.connect(path)
+    try:
+        rows = con.execute("SELECT id, priority FROM issues ORDER BY id").fetchall()
+    finally:
+        con.close()
+
+    # normal (1) becomes the new middle medium (2); high (2) moves up to 3 to leave
+    # urgent (4) above it.
+    assert rows == [(1, 2), (2, 3)]
+
+
+def test_the_priority_remap_round_trips(tmp_path: Path) -> None:
+    # The downgrade is lossy but must stay applyable, and the upgrade after it must
+    # re-run cleanly.
+    config = _config(f"sqlite:///{tmp_path / 't.db'}")
+    command.upgrade(config, _PRI_AFTER)
+    command.downgrade(config, _PRI_BEFORE)
+    command.upgrade(config, _PRI_AFTER)

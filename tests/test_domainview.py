@@ -15,7 +15,7 @@ from tt.frontend.tui import domainview as dv
 from tt.platform.actions import Offer, Refused, Runnable
 
 
-def _item(issue_id: int, status: str = "todo", priority: str = "normal") -> IssueListItem:
+def _item(issue_id: int, status: str = "todo", priority: str = "medium") -> IssueListItem:
     return IssueListItem(
         id=issue_id,
         ref=f"tt-{issue_id}",
@@ -154,8 +154,13 @@ def test_match_path_expands_a_stored_tilde() -> None:
 
 def test_glyph_and_marker() -> None:
     assert dv.glyph("doing") == "◐"
-    assert dv.marker("high") == "▲"
-    assert dv.marker("normal") is None
+    high = dv.priority_mark("high")
+    assert high is not None and high.glyph == "▲"
+    urgent = dv.priority_mark("urgent")
+    assert urgent is not None and urgent.var == "$priority-urgent"
+    # The quiet middle and an unset priority draw nothing.
+    assert dv.priority_mark("medium") is None
+    assert dv.priority_mark("none") is None
 
 
 def test_status_var_names_the_theme_variable_and_falls_back_to_muted() -> None:

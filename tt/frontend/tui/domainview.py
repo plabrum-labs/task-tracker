@@ -60,9 +60,28 @@ def status_var(status: str) -> str:
     return STATUS_VAR.get(status, "$text-muted")
 
 
-def marker(priority: str) -> str | None:
-    """The priority marker, or ``None`` when there is nothing to show."""
-    return "▲" if priority == "high" else None
+@dataclass(frozen=True)
+class PriorityMark:
+    """How a priority draws in the margins: a glyph and the theme variable it takes
+    its colour from. Only the levels that stand out carry one — the quiet middle
+    (``medium``, the default) and an unset ``none`` show nothing."""
+
+    glyph: str
+    var: str
+
+
+# Levels above and below the quiet middle get a mark; ``medium`` and ``none`` do
+# not, so the list stays calm and only the exceptions draw the eye.
+PRIORITY_MARK = {
+    "urgent": PriorityMark("⇈", "$priority-urgent"),
+    "high": PriorityMark("▲", "$priority-high"),
+    "low": PriorityMark("▽", "$priority-low"),
+}
+
+
+def priority_mark(priority: str) -> PriorityMark | None:
+    """The marker a priority draws, or ``None`` when the level shows nothing."""
+    return PRIORITY_MARK.get(priority)
 
 
 def _clamp(value: int, low: int, high: int) -> int:

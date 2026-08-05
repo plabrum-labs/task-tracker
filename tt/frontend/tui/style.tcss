@@ -210,10 +210,9 @@ IssueRow.sel {
     color: $text-muted;
 }
 .pri {
-    width: 8;
+    width: 9;
     text-align: right;
     padding-right: 1;
-    color: $priority-high;
 }
 .empty {
     padding: 0 2;

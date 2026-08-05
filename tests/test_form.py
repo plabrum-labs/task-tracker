@@ -59,7 +59,7 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
         Field(
             name="priority",
             required=True,
-            kind=Enum(["normal", "high"]),
+            kind=Enum(["none", "low", "medium", "high", "urgent"]),
             description="How far up the list the issue sorts.",
         ),
         Field(
@@ -160,10 +160,10 @@ def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engin
             (fields[0], "triage inbox"),  # title
             (fields[1], ""),  # body — the blank optional
             (fields[2], "todo"),  # status
-            (fields[3], "normal"),  # priority
+            (fields[3], "medium"),  # priority
         ]
     )
-    assert built == {"title": "triage inbox", "body": None, "status": "todo", "priority": "normal"}
+    assert built == {"title": "triage inbox", "body": None, "status": "todo", "priority": "medium"}
 
     # And the decoder accepts exactly that: the dispatch writes, so reading the
     # created issue back shows the null body defaulted to blank.
@@ -184,7 +184,7 @@ def test_a_blank_required_text_field_is_submitted_and_refused(db: Engine) -> Non
             (fields[0], ""),
             (fields[1], ""),
             (fields[2], "todo"),
-            (fields[3], "normal"),
+            (fields[3], "medium"),
             (fields[4], ""),  # due_date — blank clears
             (fields[5], ""),  # epic — blank clears
             (fields[6], ""),  # milestone — blank clears
@@ -200,7 +200,7 @@ def test_text_and_enum_are_the_two_controls_a_field_derives() -> None:
     # The kind is what ``tui`` reads to choose between a text box and a selector.
     fields = fields_of(issue_schemas.EditIssuePayload)
     assert fields[0].kind == Text()  # title
-    assert fields[3].kind == Enum(["normal", "high"])  # priority
+    assert fields[3].kind == Enum(["none", "low", "medium", "high", "urgent"])  # priority
 
 
 def test_a_multiline_marker_marks_the_prose_field_without_changing_its_submit() -> None:

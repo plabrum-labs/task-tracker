@@ -38,7 +38,7 @@ class AddIssuePayload(BaseModel):
         default=None, description="Where the issue is up to. Defaults to todo."
     )
     priority: WirePriority | None = Field(
-        default=None, description="How far up the list it sorts. Defaults to normal."
+        default=None, description="How far up the list it sorts. Defaults to medium."
     )
 
 

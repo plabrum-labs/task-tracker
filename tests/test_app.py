@@ -48,7 +48,7 @@ def _seed(engine: Engine) -> None:
         engine, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt"
     )
     project_api.project_action(
-        engine, "addIssue", {"title": "write readme", "priority": "normal"}, "tt"
+        engine, "addIssue", {"title": "write readme", "priority": "medium"}, "tt"
     )
 
 

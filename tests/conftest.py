@@ -36,7 +36,7 @@ def a_project(engine: Engine, slug: str) -> Project:
 
 
 def an_issue(
-    engine: Engine, project: Project, title: str, priority: Priority = Priority.NORMAL
+    engine: Engine, project: Project, title: str, priority: Priority = Priority.MEDIUM
 ) -> Issue:
     response = project_api.project_action(
         engine, "addIssue", {"title": title, "priority": priority.name.lower()}, project.slug

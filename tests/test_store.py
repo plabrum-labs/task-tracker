@@ -103,7 +103,7 @@ def test_issues_come_back_high_priority_first_then_oldest_first(db: Engine) -> N
     # produces the expected order. The native integer sort on the stored priority
     # is what puts high first.
     for title, priority in [
-        ("first", Priority.NORMAL),
+        ("first", Priority.MEDIUM),
         ("second", Priority.HIGH),
         ("third", Priority.HIGH),
     ]:
@@ -219,9 +219,9 @@ def test_the_enum_round_trips_through_the_column_it_is_stored_in(db: Engine) -> 
     # and come back as the same members.
     tt = a_project(db, "tt")
     for title, status, priority in [
-        ("a", Status.TODO, Priority.NORMAL),
+        ("a", Status.TODO, Priority.MEDIUM),
         ("b", Status.DOING, Priority.HIGH),
-        ("c", Status.DONE, Priority.NORMAL),
+        ("c", Status.DONE, Priority.MEDIUM),
     ]:
         made = an_issue(db, tt, title, priority)
         with platform_db.transaction(db) as tx:

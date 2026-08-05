@@ -24,8 +24,8 @@ from tt.domains.issue.schemas import IssueDetail
 from tt.frontend.tui.domainview import (
     glyph,
     index_of,
-    marker,
     move_comment,
+    priority_mark,
     status_var,
     surviving_id,
 )
@@ -87,7 +87,8 @@ class DetailPane(VerticalScroll):
             f"[$text-muted]{esc(detail.ref)}[/]  [b]{esc(detail.title)}[/]", classes="d-header"
         )
         var = status_var(detail.status)
-        pri = "   [$priority-high]▲ high[/]" if marker(detail.priority) else ""
+        mark = priority_mark(detail.priority)
+        pri = f"   [{mark.var}]{mark.glyph} {esc(detail.priority)}[/]" if mark else ""
         status = f"[{var}]{glyph(detail.status)} {esc(detail.status)}[/]{pri}"
         yield Static(status, classes="d-meta")
         yield Static(

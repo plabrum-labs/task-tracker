@@ -47,7 +47,9 @@ TT_DARK = Theme(
         "text-muted": "ansi_bright_black",
         "text-disabled": "ansi_bright_black",
         "border": "#23262E",
+        "priority-urgent": "#F85149",
         "priority-high": "#F0883E",
+        "priority-low": "#8B949E",
         # A floating modal needs an opaque surface, but ``ansi=True`` forces the
         # stock ``$panel``/``$surface`` to ``transparent`` so the terminal shows
         # through — a modal painted with them lets the dim scrim bleed straight
@@ -77,7 +79,9 @@ TT_LIGHT = Theme(
         "text-muted": "ansi_bright_black",
         "text-disabled": "ansi_bright_black",
         "border": "#D5D8DE",
+        "priority-urgent": "#CF222E",
         "priority-high": "#B5540B",
+        "priority-low": "#6E7781",
         # See ``$overlay`` on the dark theme: an opaque modal surface that
         # ``ansi=True`` would otherwise make transparent, and text pinned to read
         # against it rather than against the terminal background.

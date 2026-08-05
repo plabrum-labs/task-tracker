@@ -165,7 +165,9 @@ class AddIssue(ObjectAction[Project, schemas.AddIssuePayload]):
             title=title,
             body=payload.body or "",
             status=payload.status or IssueStatus.TODO,
-            priority=payload.priority or Priority.NORMAL,
+            # ``Priority.NONE`` is a real level whose value is 0, so an explicit
+            # "none" must survive; only an unsent priority falls back to the default.
+            priority=payload.priority if payload.priority is not None else Priority.MEDIUM,
         )
         deps.tx.add(issue)
         deps.tx.flush()

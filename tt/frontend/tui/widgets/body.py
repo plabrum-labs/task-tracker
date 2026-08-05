@@ -22,7 +22,7 @@ from tt.frontend.tui.domainview import (
     Layout,
     columns,
     glyph,
-    marker,
+    priority_mark,
     status_var,
 )
 
@@ -42,7 +42,9 @@ class IssueRow(Horizontal):
         yield Static(esc(issue.ref), classes="ref")
         title_classes = "title done" if issue.status == "done" else "title"
         yield Static(esc(issue.title), classes=title_classes)
-        yield Static("▲ high" if marker(issue.priority) else "", classes="pri")
+        mark = priority_mark(issue.priority)
+        pri = f"[{mark.var}]{mark.glyph} {esc(issue.priority)}[/]" if mark else ""
+        yield Static(pri, classes="pri")
 
     def on_mount(self) -> None:
         if self._selected:
@@ -55,7 +57,8 @@ class Card(Static):
     per-cell classes the flat row splits into."""
 
     def __init__(self, issue: IssueListItem, selected: bool) -> None:
-        pri = "[$priority-high]▲[/] " if marker(issue.priority) else ""
+        mark = priority_mark(issue.priority)
+        pri = f"[{mark.var}]{mark.glyph}[/] " if mark else ""
         ref = f"[$text-disabled]{esc(issue.ref)}[/]"
         super().__init__(f"{pri}{ref}\n{esc(issue.title)}", classes="sel" if selected else "")
         self._selected = selected

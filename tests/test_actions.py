@@ -138,7 +138,7 @@ def issue() -> Issue:
         title="a title",
         body="",
         status=Status.TODO,
-        priority=Priority.NORMAL,
+        priority=Priority.MEDIUM,
     )
 
 
@@ -164,7 +164,7 @@ def doing_issues(n: int) -> list[Issue]:
             title=f"i{i}",
             body="",
             status=Status.DOING,
-            priority=Priority.NORMAL,
+            priority=Priority.MEDIUM,
         )
         for i in range(n)
     ]
@@ -180,7 +180,7 @@ def _edit(**over: Any) -> issue_schemas.EditIssuePayload:
         "title": "a title",
         "body": "",
         "status": Status.TODO,
-        "priority": Priority.NORMAL,
+        "priority": Priority.MEDIUM,
         "due_date": None,
         "epic": None,
         "milestone": None,
@@ -241,7 +241,7 @@ def test_set_status_is_always_offered() -> None:
     # No status machine: the focused move applies from and to every status.
     for status in Status:
         seeded = Issue(
-            id=1, project_id=1, title="a title", body="", status=status, priority=Priority.NORMAL
+            id=1, project_id=1, title="a title", body="", status=status, priority=Priority.MEDIUM
         )
         assert issue_actions.SetStatus.availability(seeded) == Runnable()
 
@@ -283,7 +283,7 @@ def test_set_status_refuses_an_unknown_status_or_an_extra_field(db: Engine) -> N
 def test_set_due_date_is_always_offered() -> None:
     for status in Status:
         seeded = Issue(
-            id=1, project_id=1, title="a title", body="", status=status, priority=Priority.NORMAL
+            id=1, project_id=1, title="a title", body="", status=status, priority=Priority.MEDIUM
         )
         assert issue_actions.SetDueDate.availability(seeded) == Runnable()
 
@@ -377,7 +377,7 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
             "title": "wip",
             "body": "",
             "status": "doing",
-            "priority": "normal",
+            "priority": "medium",
             "due_date": None,
             "epic": None,
             "milestone": None,
@@ -501,7 +501,7 @@ def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
     assert created.title == "ship it"
     assert created.body == ""
     assert created.status == Status.TODO
-    assert created.priority == Priority.NORMAL
+    assert created.priority == Priority.MEDIUM
 
     with pytest.raises(Invalid):
         run_project(
@@ -760,7 +760,7 @@ def _wire_edit(**over: Any) -> dict[str, Any]:
         "title": "a title",
         "body": "",
         "status": "todo",
-        "priority": "normal",
+        "priority": "medium",
         "due_date": None,
         "epic": None,
         "milestone": None,
@@ -1219,7 +1219,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
         "title": " new ",
         "body": "",
         "status": "todo",
-        "priority": "normal",
+        "priority": "medium",
         "due_date": None,
         "epic": None,
         "milestone": None,
@@ -1260,7 +1260,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
             "title": 5,
             "body": "",
             "status": "todo",
-            "priority": "normal",
+            "priority": "medium",
             "due_date": None,
             "epic": None,
             "milestone": None,
@@ -1269,7 +1269,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
             "title": "x",
             "body": "",
             "status": "todo",
-            "priority": "normal",
+            "priority": "medium",
             "due_date": None,
             "epic": None,
             "milestone": None,
@@ -1288,7 +1288,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
                 "title": "x",
                 "body": "",
                 "status": "shipped",
-                "priority": "normal",
+                "priority": "medium",
                 "due_date": None,
                 "epic": None,
                 "milestone": None,
@@ -1334,7 +1334,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "title": "x",
                 "body": "",
                 "status": "archived",
-                "priority": "normal",
+                "priority": "medium",
                 "due_date": None,
                 "epic": None,
                 "milestone": None,
@@ -1350,7 +1350,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "title": "x",
                 "body": "",
                 "status": "todo",
-                "priority": "normal",
+                "priority": "medium",
                 "due_date": None,
                 "epic": None,
                 "milestone": None,

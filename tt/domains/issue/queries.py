@@ -19,6 +19,9 @@ from tt.domains.issue.models import Issue
 from tt.domains.project.models import Project
 from tt.platform.refs import parse_ref
 
+# The eager loads every read shares. The list read adds the ordering; the two
+# single-row reads below fetch one row, for which an ``ORDER BY`` would be dead
+# weight.
 _loaded = (
     select(Issue)
     .join(Issue.project)
@@ -29,7 +32,6 @@ _loaded = (
         selectinload(Issue.tags),
         selectinload(Issue.comments),
     )
-    .order_by(Issue.priority.desc(), Issue.created_at.asc())
 )
 
 
@@ -39,7 +41,7 @@ def list_issues(db: Session, project_slug: str) -> list[Issue]:
         Issue.deleted_at.is_(None),
         Project.deleted_at.is_(None),
         Project.slug == project_slug,
-    )
+    ).order_by(Issue.priority.desc(), Issue.created_at.asc())
     return list(db.scalars(stmt))
 
 
