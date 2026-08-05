@@ -1,4 +1,4 @@
-default_install_hook_types: [pre-commit, pre-push]
+default_install_hook_types: [pre-commit]
 
 # Every hook shells out to a justfile recipe rather than pinning its own
 # binary, so the hook, CI and a manual `just verify` can never run different
@@ -22,13 +22,13 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
-      # The test suite is the slow part, so it gates the push rather than every
-      # commit. always_run because a push carries commits this hook has not
-      # seen, whatever the working tree happens to touch.
-      - id: verify
-        name: just verify
-        entry: just verify
+      # The test suite is the slow part; it gates every commit rather than the
+      # push, so nothing slow runs at push time. always_run because a commit's
+      # correctness does not depend on which files the working tree touches.
+      - id: test
+        name: just test
+        entry: just test
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-push]
+        stages: [pre-commit]
