@@ -21,8 +21,9 @@ from tt.platform.actions import (
     Invalid,
     ObjectAction,
 )
+from tt.platform.sequences import next_number
 
-epic_actions: ActionGroup[Epic] = ActionGroup("epic", locate=queries.get_epic)
+epic_actions: ActionGroup[Epic] = ActionGroup("epic", locate=queries.resolve_ref)
 
 
 def _issues(n: int) -> str:
@@ -106,6 +107,10 @@ class AddMilestone(ObjectAction[Epic, schemas.AddMilestonePayload]):
             raise Invalid("title is required")
         milestone = Milestone(
             epic=obj,
+            # The epic never moves projects, so its project is the milestone's for
+            # good — set here so the number is drawn against it and the ref reads it.
+            project=obj.project,
+            number=next_number(deps.tx, obj.project_id, "milestone"),
             title=title,
             due_date=payload.due_date,
             issues=[],

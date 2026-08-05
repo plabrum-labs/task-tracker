@@ -20,30 +20,39 @@ from tt.platform.db import with_transaction
 # --- reads ----------------------------------------------------------------
 
 
+def _link_ref(issue: Issue, number: int | None) -> str | None:
+    """The ref of a row the issue links — its epic or milestone. Both live in the
+    issue's project, so the ref is the issue's own slug and the linked row's
+    project-scoped number, built without loading the linked row's project."""
+    return f"{issue.project.slug}-{number}" if number is not None else None
+
+
 def _list_item(issue: Issue) -> schemas.IssueListItem:
     return schemas.IssueListItem(
         id=issue.id,
+        ref=issue.ref,
         project=issue.project.slug,
         title=issue.title,
         status=name_of(issue.status),
         priority=name_of(issue.priority),
         due_date=issue.due_date,
-        epic=issue.epic_id,
-        milestone=issue.milestone_id,
+        epic=_link_ref(issue, issue.epic.number if issue.epic is not None else None),
+        milestone=_link_ref(issue, issue.milestone.number if issue.milestone is not None else None),
     )
 
 
 def _detail(issue: Issue) -> schemas.IssueDetail:
     return schemas.IssueDetail(
         id=issue.id,
+        ref=issue.ref,
         project=issue.project.slug,
         title=issue.title,
         body=issue.body,
         status=name_of(issue.status),
         priority=name_of(issue.priority),
         due_date=issue.due_date,
-        epic=issue.epic_id,
-        milestone=issue.milestone_id,
+        epic=_link_ref(issue, issue.epic.number if issue.epic is not None else None),
+        milestone=_link_ref(issue, issue.milestone.number if issue.milestone is not None else None),
         tags=sorted(tag.name for tag in issue.tags),
         created_at=issue.created_at,
         updated_at=issue.updated_at,
@@ -56,18 +65,18 @@ def issue_list(tx: Session, project_slug: str) -> list[schemas.IssueListItem]:
 
 
 @with_transaction
-def issue_get(tx: Session, issue_id: int) -> schemas.IssueDetail | None:
-    issue = queries.get_issue(tx, issue_id)
+def issue_get(tx: Session, ref: str) -> schemas.IssueDetail | None:
+    issue = queries.resolve_ref(tx, ref)
     return _detail(issue) if issue is not None else None
 
 
 @with_transaction
-def issue_detail(tx: Session, issue_id: int) -> tuple[schemas.IssueDetail, list[Offer]]:
+def issue_detail(tx: Session, ref: str) -> tuple[schemas.IssueDetail, list[Offer]]:
     """An issue and what it offers, for a detail view — the two reads a detail view
     makes at once, so a caller does not load the row twice."""
-    issue = queries.get_issue(tx, issue_id)
+    issue = queries.resolve_ref(tx, ref)
     if issue is None:
-        raise Invalid(f"no issue {issue_id}")
+        raise Invalid(f"no issue {ref}")
     return _detail(issue), issue_actions.offers(issue)
 
 
@@ -75,10 +84,10 @@ def issue_detail(tx: Session, issue_id: int) -> tuple[schemas.IssueDetail, list[
 
 
 @with_transaction
-def issue_action(tx: Session, key: str, payload: Any, issue_id: int) -> ActionResponse:
+def issue_action(tx: Session, key: str, payload: Any, ref: str) -> ActionResponse:
     """Run an action by key against the addressed issue. Availability is enforced
     against the live row, so what a detail view reported stays a snapshot."""
-    return issue_actions.trigger(ActionDeps(tx), key, payload, issue_id)
+    return issue_actions.trigger(ActionDeps(tx), key, payload, ref)
 
 
 # --- codegen --------------------------------------------------------------

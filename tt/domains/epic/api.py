@@ -23,6 +23,7 @@ from tt.platform.db import with_transaction
 def _list_item(epic: Epic) -> schemas.EpicListItem:
     return schemas.EpicListItem(
         id=epic.id,
+        ref=epic.ref,
         project=epic.project.slug,
         title=epic.title,
         status=name_of(epic.status),
@@ -38,6 +39,7 @@ def _list_item(epic: Epic) -> schemas.EpicListItem:
 def _detail(epic: Epic) -> schemas.EpicDetail:
     return schemas.EpicDetail(
         id=epic.id,
+        ref=epic.ref,
         project=epic.project.slug,
         title=epic.title,
         body=epic.body,
@@ -59,17 +61,17 @@ def epic_list(tx: Session, project_slug: str) -> list[schemas.EpicListItem]:
 
 
 @with_transaction
-def epic_get(tx: Session, epic_id: int) -> schemas.EpicDetail | None:
-    epic = queries.get_epic(tx, epic_id)
+def epic_get(tx: Session, ref: str) -> schemas.EpicDetail | None:
+    epic = queries.resolve_ref(tx, ref)
     return _detail(epic) if epic is not None else None
 
 
 @with_transaction
-def epic_detail(tx: Session, epic_id: int) -> tuple[schemas.EpicDetail, list[Offer]]:
+def epic_detail(tx: Session, ref: str) -> tuple[schemas.EpicDetail, list[Offer]]:
     """An epic and what it offers, for a detail view."""
-    epic = queries.get_epic(tx, epic_id)
+    epic = queries.resolve_ref(tx, ref)
     if epic is None:
-        raise Invalid(f"no epic {epic_id}")
+        raise Invalid(f"no epic {ref}")
     return _detail(epic), epic_actions.offers(epic)
 
 
@@ -77,10 +79,10 @@ def epic_detail(tx: Session, epic_id: int) -> tuple[schemas.EpicDetail, list[Off
 
 
 @with_transaction
-def epic_action(tx: Session, key: str, payload: Any, epic_id: int) -> ActionResponse:
+def epic_action(tx: Session, key: str, payload: Any, ref: str) -> ActionResponse:
     """Run an action by key against the addressed epic. Availability is enforced
     against the live row, so what a detail view reported stays a snapshot."""
-    return epic_actions.trigger(ActionDeps(tx), key, payload, epic_id)
+    return epic_actions.trigger(ActionDeps(tx), key, payload, ref)
 
 
 # --- codegen --------------------------------------------------------------

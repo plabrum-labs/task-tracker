@@ -58,8 +58,8 @@ def dispatch(engine: Engine, target: Target, key: str, payload: dict[str, Any]) 
     """Run one action by key against an addressed target, returning its message. A
     refusal raises through ``REFUSALS`` for the caller to surface."""
     match target:
-        case IssueTarget(id=issue_id):
-            return issue_api.issue_action(engine, key, payload, issue_id).message
+        case IssueTarget(ref=ref):
+            return issue_api.issue_action(engine, key, payload, ref).message
         case ProjectTarget(slug=slug):
             return project_api.project_action(engine, key, payload, slug).message
         case RootTarget():

@@ -22,7 +22,6 @@ from tt.frontend.tui.domainview import (
     Layout,
     columns,
     glyph,
-    issue_ref,
     marker,
     status_var,
 )
@@ -40,7 +39,7 @@ class IssueRow(Horizontal):
         issue = self._issue
         yield Static("▌" if self._selected else " ", classes="bar")
         yield Static(glyph(issue.status), classes=f"glyph st-{issue.status}")
-        yield Static(esc(issue_ref(issue.project, issue.id)), classes="ref")
+        yield Static(esc(issue.ref), classes="ref")
         title_classes = "title done" if issue.status == "done" else "title"
         yield Static(esc(issue.title), classes=title_classes)
         yield Static("▲ high" if marker(issue.priority) else "", classes="pri")
@@ -57,7 +56,7 @@ class Card(Static):
 
     def __init__(self, issue: IssueListItem, selected: bool) -> None:
         pri = "[$priority-high]▲[/] " if marker(issue.priority) else ""
-        ref = f"[$text-disabled]{esc(issue_ref(issue.project, issue.id))}[/]"
+        ref = f"[$text-disabled]{esc(issue.ref)}[/]"
         super().__init__(f"{pri}{ref}\n{esc(issue.title)}", classes="sel" if selected else "")
         self._selected = selected
 

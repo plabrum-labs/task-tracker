@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, Index, Text, text
+from sqlalchemy import Date, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.epic.enums import Status
@@ -35,11 +35,17 @@ class Epic(BaseDBModel):
             "status",
             sqlite_where=text("deleted_at IS NULL"),
         ),
+        # Permanent and never reissued, so unique over deleted rows too — see the
+        # note on ``Issue``.
+        UniqueConstraint("project_id", "number", name="uq_epics_project_number"),
     )
 
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
+    # The project-scoped sequence number, drawn at creation. An epic is addressed
+    # and shown as ``<project slug>-<number>`` — the ``ref`` below.
+    number: Mapped[int] = mapped_column()
     title: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[Status] = mapped_column(TextEnum(Status))
@@ -77,5 +83,11 @@ class Epic(BaseDBModel):
     def issue_count(self) -> int:
         return len(self.live_issues)
 
+    @property
+    def ref(self) -> str:
+        """How the epic is addressed and shown: its project's slug and its
+        project-scoped number, ``ENG-3``. Reads the eagerly-loaded project."""
+        return f"{self.project.slug}-{self.number}"
+
     def subject(self) -> str:
-        return f"epic {self.id}"
+        return f"epic {self.ref}"

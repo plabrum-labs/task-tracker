@@ -43,7 +43,6 @@ from tt.frontend.tui.domainview import (
     fits,
     index_of,
     issue_commands,
-    issue_ref,
     move_selection,
     next_layout,
     next_status,
@@ -206,7 +205,7 @@ class MainScreen(Screen[None]):
 
     def _paint_detail(self) -> None:
         issue = self._selected_issue()
-        detail = issue_api.issue_get(self.engine, issue.id) if issue is not None else None
+        detail = issue_api.issue_get(self.engine, issue.ref) if issue is not None else None
         self.query_one(DetailPane).detail = detail
 
     def _paint_footer(self) -> None:
@@ -309,9 +308,9 @@ class MainScreen(Screen[None]):
         if issue is None:
             self.status = "no issue selected"
             return
-        detail, offers = issue_api.issue_detail(self.engine, issue.id)
-        commands = issue_commands(offers, issue.id, detail.model_dump(mode="json"))
-        header = f"{issue_ref(issue.project, issue.id)} · {issue.title}"
+        detail, offers = issue_api.issue_detail(self.engine, issue.ref)
+        commands = issue_commands(offers, issue.ref, detail.model_dump(mode="json"))
+        header = f"{issue.ref} · {issue.title}"
         self.app.push_screen(MenuScreen(header, commands), self._on_command)
 
     def action_project_menu(self) -> None:
@@ -327,8 +326,8 @@ class MainScreen(Screen[None]):
         commands: list[Command] = []
         issue = self._selected_issue()
         if issue is not None:
-            detail, offers = issue_api.issue_detail(self.engine, issue.id)
-            commands.extend(issue_commands(offers, issue.id, detail.model_dump(mode="json")))
+            detail, offers = issue_api.issue_detail(self.engine, issue.ref)
+            commands.extend(issue_commands(offers, issue.ref, detail.model_dump(mode="json")))
         slug = self._slug()
         if slug is not None:
             project_detail, offers = project_api.project_detail(self.engine, slug)
@@ -421,7 +420,7 @@ class MainScreen(Screen[None]):
         if issue is None:
             self.status = "no issue selected"
             return
-        _, offers = issue_api.issue_detail(self.engine, issue.id)
+        _, offers = issue_api.issue_detail(self.engine, issue.ref)
         offer = next((o for o in offers if o.key == "delete"), None)
         if offer is None:
             self.status = "delete: not available"
@@ -429,14 +428,14 @@ class MainScreen(Screen[None]):
         if isinstance(offer.state, Refused):
             self.status = f"delete: {offer.state.reason}"
             return
-        self._run_action(RunAction(IssueTarget(issue.id), "delete", offer.fields), offer.label)
+        self._run_action(RunAction(IssueTarget(issue.ref), "delete", offer.fields), offer.label)
 
     def action_edit(self) -> None:
         issue = self._selected_issue()
         if issue is None:
             self.status = "no issue selected"
             return
-        detail, offers = issue_api.issue_detail(self.engine, issue.id)
+        detail, offers = issue_api.issue_detail(self.engine, issue.ref)
         offer = next((o for o in offers if o.key == "edit"), None)
         if offer is None:
             self.status = "edit: not available"
@@ -447,7 +446,7 @@ class MainScreen(Screen[None]):
         # Seed the form from the issue's current values so the pane opens pre-filled,
         # the same way the menu builds its edit command.
         self._run_action(
-            RunAction(IssueTarget(issue.id), "edit", offer.fields, detail.model_dump(mode="json")),
+            RunAction(IssueTarget(issue.ref), "edit", offer.fields, detail.model_dump(mode="json")),
             offer.label,
         )
 
@@ -461,9 +460,10 @@ class MainScreen(Screen[None]):
             self.status = "no issue selected"
             return
         nxt = next_status(issue.status)
+        target = IssueTarget(issue.ref)
         self._write(
             "setStatus",
-            lambda: data.dispatch(self.engine, IssueTarget(issue.id), "setStatus", {"status": nxt}),
+            lambda: data.dispatch(self.engine, target, "setStatus", {"status": nxt}),
         )
 
     # --- capture ----------------------------------------------------------

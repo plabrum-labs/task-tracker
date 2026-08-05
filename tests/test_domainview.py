@@ -16,6 +16,7 @@ from tt.platform.actions import Offer, Refused, Runnable
 def _item(issue_id: int, status: str = "todo", priority: str = "normal") -> IssueListItem:
     return IssueListItem(
         id=issue_id,
+        ref=f"tt-{issue_id}",
         project="tt",
         title=f"issue {issue_id}",
         status=status,
@@ -113,11 +114,10 @@ def test_match_path_expands_a_stored_tilde() -> None:
 # --- the visual vocabulary ------------------------------------------------
 
 
-def test_glyph_marker_and_ref() -> None:
+def test_glyph_and_marker() -> None:
     assert dv.glyph("doing") == "◐"
     assert dv.marker("high") == "▲"
     assert dv.marker("normal") is None
-    assert dv.issue_ref("tt", 4) == "TT-4"
 
 
 def test_status_var_names_the_theme_variable_and_falls_back_to_muted() -> None:
@@ -133,7 +133,7 @@ def test_a_runnable_offer_carries_its_accelerator_and_a_refused_one_its_reason()
     runnable = Offer(key="delete", label="Delete", state=Runnable(), fields=[])
     refused = Offer(key="delete", label="Delete", state=Refused("archive it first"), fields=[])
 
-    keep = dv.issue_commands([runnable], 1)[0]
+    keep = dv.issue_commands([runnable], "tt-1")[0]
     assert keep.reason is None
     assert keep.hint == "d"  # delete is the one remaining accelerator
 
@@ -149,7 +149,7 @@ def test_the_accelerators_name_the_actions_they_run() -> None:
 
 def test_the_edit_offer_carries_the_e_accelerator() -> None:
     edit = Offer(key="edit", label="Edit", state=Runnable(), fields=[])
-    assert dv.issue_commands([edit], 1)[0].hint == "e"
+    assert dv.issue_commands([edit], "tt-1")[0].hint == "e"
 
 
 def test_next_status_advances_one_step_and_wraps() -> None:

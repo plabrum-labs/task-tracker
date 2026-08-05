@@ -31,7 +31,8 @@ class SetDueDatePayload(BaseModel):
 
 class MilestoneListItem(BaseModel):
     id: int
-    epic: int
+    ref: str
+    epic: str
     title: str
     due_date: date | None
     backlog: int
@@ -43,7 +44,8 @@ class MilestoneListItem(BaseModel):
 
 class MilestoneDetail(BaseModel):
     id: int
-    epic: int
+    ref: str
+    epic: str
     title: str
     due_date: date | None
     backlog: int

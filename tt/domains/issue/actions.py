@@ -14,12 +14,10 @@ action registers by decorating itself with ``issue_actions``.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
-
-from tt.domains.epic.models import Epic
+from tt.domains.epic import queries as epic_queries
 from tt.domains.issue import queries, schemas
 from tt.domains.issue.models import Issue
-from tt.domains.milestone.models import Milestone
+from tt.domains.milestone import queries as milestone_queries
 from tt.domains.tag import queries as tag_queries
 from tt.platform.actions import (
     ActionDeps,
@@ -31,45 +29,41 @@ from tt.platform.actions import (
     ObjectAction,
 )
 
-issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.get_issue)
+issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.resolve_ref)
 
 
-def _resolve_epic(deps: ActionDeps, epic_id: int | None, project_id: int) -> int | None:
-    """The id of the live epic an issue is being filed under, or ``None`` to clear
-    the link. An epic in another project — or none at all — is refused: an issue's
-    epic must belong to the issue's project."""
-    if epic_id is None:
+def _resolve_epic(deps: ActionDeps, epic_ref: str | None, project_id: int) -> int | None:
+    """The id of the live epic an issue is being filed under, addressed by its ref,
+    or ``None`` to clear the link. An epic in another project — or none at all — is
+    refused: an issue's epic must belong to the issue's project."""
+    if epic_ref is None:
         return None
-    epic = deps.tx.scalars(
-        select(Epic).where(Epic.id == epic_id, Epic.deleted_at.is_(None))
-    ).first()
+    epic = epic_queries.resolve_ref(deps.tx, epic_ref)
     if epic is None:
-        raise Conflict(f"no epic {epic_id}")
+        raise Conflict(f"no epic {epic_ref}")
     if epic.project_id != project_id:
-        raise Conflict(f"epic {epic_id} is not in this project")
+        raise Conflict(f"epic {epic_ref} is not in this project")
     return epic.id
 
 
 def _resolve_milestone(
-    deps: ActionDeps, milestone_id: int | None, new_epic_id: int | None, old_epic_id: int | None
+    deps: ActionDeps, milestone_ref: str | None, new_epic_id: int | None, old_epic_id: int | None
 ) -> int | None:
-    """The id of the live milestone an issue is being filed under, or ``None``. A
-    milestone must belong to the issue's (new) epic. A milestone that instead
-    belongs to the epic the issue is *leaving* is dropped rather than blocking the
-    epic move — that is the stale link a re-submit carries. Any other mismatch is an
-    explicit foreign choice, and refused."""
-    if milestone_id is None:
+    """The id of the live milestone an issue is being filed under, addressed by its
+    ref, or ``None``. A milestone must belong to the issue's (new) epic. A milestone
+    that instead belongs to the epic the issue is *leaving* is dropped rather than
+    blocking the epic move — that is the stale link a re-submit carries. Any other
+    mismatch is an explicit foreign choice, and refused."""
+    if milestone_ref is None:
         return None
-    milestone = deps.tx.scalars(
-        select(Milestone).where(Milestone.id == milestone_id, Milestone.deleted_at.is_(None))
-    ).first()
+    milestone = milestone_queries.resolve_ref(deps.tx, milestone_ref)
     if milestone is None:
-        raise Conflict(f"no milestone {milestone_id}")
+        raise Conflict(f"no milestone {milestone_ref}")
     if milestone.epic_id == new_epic_id:
         return milestone.id
     if milestone.epic_id == old_epic_id:
         return None
-    raise Conflict(f"milestone {milestone_id} is not in this epic")
+    raise Conflict(f"milestone {milestone_ref} is not in this epic")
 
 
 @issue_actions

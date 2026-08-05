@@ -19,7 +19,7 @@ from typing import Annotated
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
 from tt.domains.issue.enums import Priority, Status
-from tt.platform.actions import MULTILINE
+from tt.platform.actions import MULTILINE, REFERENCE
 
 
 def _priority_by_name(value: object) -> object:
@@ -54,12 +54,13 @@ class EditIssuePayload(BaseModel):
     due_date: date | None = Field(
         description="When the issue is due, as YYYY-MM-DD. Blank clears it."
     )
-    epic: int | None = Field(
-        description="The id of the epic this issue belongs to. Blank clears it."
+    epic: Annotated[str | None, REFERENCE] = Field(
+        description="The ref of the epic this issue belongs to, e.g. ENG-3. Blank clears it."
     )
-    milestone: int | None = Field(
+    milestone: Annotated[str | None, REFERENCE] = Field(
         description=(
-            "The id of the milestone this issue belongs to, within its epic. Blank clears it."
+            "The ref of the milestone this issue belongs to, within its epic, e.g. ENG-5. "
+            "Blank clears it."
         )
     )
 
@@ -95,25 +96,27 @@ class SetDueDatePayload(BaseModel):
 
 class IssueListItem(BaseModel):
     id: int
+    ref: str
     project: str
     title: str
     status: str
     priority: str
     due_date: date | None
-    epic: int | None
-    milestone: int | None
+    epic: str | None
+    milestone: str | None
 
 
 class IssueDetail(BaseModel):
     id: int
+    ref: str
     project: str
     title: str
     body: str
     status: str
     priority: str
     due_date: date | None
-    epic: int | None
-    milestone: int | None
+    epic: str | None
+    milestone: str | None
     tags: list[str]
     created_at: datetime
     updated_at: datetime

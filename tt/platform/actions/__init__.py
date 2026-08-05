@@ -23,6 +23,7 @@ from tt.platform.actions.base import (
 from tt.platform.actions.deps import ActionDeps
 from tt.platform.actions.form import (
     MULTILINE,
+    REFERENCE,
     Date,
     Enum,
     Field,
@@ -30,6 +31,7 @@ from tt.platform.actions.form import (
     Multiline,
     OptionalText,
     Reference,
+    ReferenceMarker,
     Text,
     decode,
     fields_of,
@@ -52,6 +54,7 @@ __all__ = [
     "Enum",
     "Field",
     "MULTILINE",
+    "REFERENCE",
     "Invalid",
     "Kind",
     "Multiline",
@@ -60,6 +63,7 @@ __all__ = [
     "Offered",
     "OptionalText",
     "Reference",
+    "ReferenceMarker",
     "Refused",
     "Runnable",
     "Text",

@@ -18,7 +18,7 @@ from textual.reactive import reactive
 from textual.widgets import Static
 
 from tt.domains.issue.schemas import IssueDetail
-from tt.frontend.tui.domainview import glyph, issue_ref, marker, status_var
+from tt.frontend.tui.domainview import glyph, marker, status_var
 
 
 class DetailPane(VerticalScroll):
@@ -42,8 +42,9 @@ class DetailPane(VerticalScroll):
         if detail is None:
             yield Static("[$text-disabled]no issue selected[/]", classes="d-empty")
             return
-        ref = issue_ref(detail.project, detail.id)
-        yield Static(f"[$text-muted]{esc(ref)}[/]  [b]{esc(detail.title)}[/]", classes="d-header")
+        yield Static(
+            f"[$text-muted]{esc(detail.ref)}[/]  [b]{esc(detail.title)}[/]", classes="d-header"
+        )
         var = status_var(detail.status)
         pri = "   [$priority-high]▲ high[/]" if marker(detail.priority) else ""
         status = f"[{var}]{glyph(detail.status)} {esc(detail.status)}[/]{pri}"

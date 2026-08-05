@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, Index, Text, text
+from sqlalchemy import Date, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.issue.enums import Priority, Status
@@ -35,11 +35,19 @@ class Issue(BaseDBModel):
             "status",
             sqlite_where=text("deleted_at IS NULL"),
         ),
+        # A number is permanent and never reissued — the sequence only rises — so
+        # its uniqueness within a project holds over deleted rows too, not just live
+        # ones, and this is a plain constraint rather than a partial index.
+        UniqueConstraint("project_id", "number", name="uq_issues_project_number"),
     )
 
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
+    # The project-scoped sequence number, drawn from ``platform.sequences`` at
+    # creation. An issue is addressed and shown as ``<project slug>-<number>``, the
+    # ``ref`` below — not by the global ``id`` it happens to carry.
+    number: Mapped[int] = mapped_column()
     # An epic is optional and lives under the same project; on an epic's hard delete
     # the link falls to null. A live issue never points at a deleted epic, though —
     # ``epic.delete`` refuses while it still holds live issues.
@@ -65,5 +73,11 @@ class Issue(BaseDBModel):
     # number of tags, and a tag any number of issues, through ``issue_tags``.
     tags: Mapped[list[Tag]] = relationship(secondary=issue_tags, lazy="raise")
 
+    @property
+    def ref(self) -> str:
+        """How the issue is addressed and shown: its project's slug and its
+        project-scoped number, ``ENG-12``. Reads the eagerly-loaded project."""
+        return f"{self.project.slug}-{self.number}"
+
     def subject(self) -> str:
-        return f"issue {self.id}"
+        return f"issue {self.ref}"

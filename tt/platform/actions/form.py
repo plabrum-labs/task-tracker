@@ -59,6 +59,18 @@ MULTILINE = Multiline()
 
 
 @dataclass(frozen=True)
+class ReferenceMarker:
+    """Marker annotation for a text field that holds another row's ref
+    (``<slug>-<number>``). Inert to validation — ``fields_of`` reads it off a
+    field's ``Annotated`` metadata and derives the ``Reference`` kind, so a frontend
+    knows the value points at a row rather than being free text. ``REFERENCE`` is
+    the singleton to annotate with (``Annotated[str | None, REFERENCE]``)."""
+
+
+REFERENCE = ReferenceMarker()
+
+
+@dataclass(frozen=True)
 class Text:
     """A required text box. ``multiline`` marks it as prose, drawn as a wrapping
     editor rather than a one-line box."""
@@ -83,9 +95,10 @@ class Date:
 
 @dataclass(frozen=True)
 class Reference:
-    """A pointer at another row, entered as that row's integer id. Its blank state
-    is a real ``null``, the same rule ``OptionalText`` carries. The CLI renders it
-    as a plain id; the candidate-loading picker it leaves room for is future work."""
+    """A pointer at another row, entered as that row's ref (``<slug>-<number>``).
+    Its blank state is a real ``null``, the same rule ``OptionalText`` carries. The
+    CLI renders it as a plain ref; the candidate-loading picker it leaves room for
+    is future work."""
 
 
 @dataclass(frozen=True)
@@ -131,10 +144,10 @@ def _kind_of(base: Any, *, optional: bool, multiline: bool) -> Kind:
         return OptionalText(multiline=multiline) if optional else Text(multiline=multiline)
     if base is datetime.date:
         return Date()
-    if base is int:
-        return Reference()
     # A field the form cannot render is a programming error, not runtime input:
-    # dropping it would draw a form that cannot express the action.
+    # dropping it would draw a form that cannot express the action. A ``Reference``
+    # is not derived from a type — it is marked with ``REFERENCE`` and handled in
+    # ``_field_of`` before this runs.
     raise TypeError(f"no form field for {base!r}")
 
 
@@ -151,10 +164,12 @@ def fields_of(schema_cls: type[BaseModel]) -> list[Field]:
 def _field_of(name: str, info: FieldInfo) -> Field:
     base, optional = _peel(info.annotation)
     multiline = any(isinstance(m, Multiline) for m in info.metadata)
+    reference = any(isinstance(m, ReferenceMarker) for m in info.metadata)
+    kind = Reference() if reference else _kind_of(base, optional=optional, multiline=multiline)
     return Field(
         name=name,
         required=info.is_required(),
-        kind=_kind_of(base, optional=optional, multiline=multiline),
+        kind=kind,
         description=info.description,
     )
 

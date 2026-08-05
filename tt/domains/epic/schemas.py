@@ -54,6 +54,7 @@ class AddMilestonePayload(BaseModel):
 
 class EpicListItem(BaseModel):
     id: int
+    ref: str
     project: str
     title: str
     status: str
@@ -67,6 +68,7 @@ class EpicListItem(BaseModel):
 
 class EpicDetail(BaseModel):
     id: int
+    ref: str
     project: str
     title: str
     body: str

@@ -20,7 +20,7 @@ from tt.platform.actions import (
     ObjectAction,
 )
 
-milestone_actions: ActionGroup[Milestone] = ActionGroup("milestone", locate=queries.get_milestone)
+milestone_actions: ActionGroup[Milestone] = ActionGroup("milestone", locate=queries.resolve_ref)
 
 
 def _issues(n: int) -> str:

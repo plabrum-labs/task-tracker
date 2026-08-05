@@ -27,6 +27,17 @@ It runs as a CLI over a shared per-user SQLite database — the same file the us
 TUI opens — so your writes and their TUI see the same data. You drive it by
 running `tt` in the shell.
 
+## Refs: how issues, epics and milestones are addressed
+
+An issue, epic or milestone is addressed by its **ref** — the project's slug, a
+hyphen, and a per-project number: `ENG-12`. Numbering is scoped to the project, so
+each project counts from 1 and `ENG-1` and `WEB-1` are different objects; the
+number never resets or gets reused. Each object type has its own run, so an issue,
+an epic and a milestone in the same project can each be `ENG-1` — the subcommand
+(`tt issue …` vs `tt epic …`) says which. A `show`/`ls` reports the ref as `ref`.
+Projects are still addressed by their slug, and tags by their `--id` (tags are
+global, not per-project).
+
 ## Invocation
 
 - If `tt` is on `PATH` (the user ran `just install`), call it directly: `tt issue ls`.
@@ -45,20 +56,20 @@ state, so the reliable pattern is to read the current state and then act on it:
      (`backlog`, `planning`, `todo`, `doing`, `done`).
    - `tt issue ls --json` — live issues; add `--project SLUG` to scope to one.
    - `tt epic ls --json` — live epics; add `--project SLUG` to scope to one.
-   - `tt milestone ls --json` — live milestones; add `--epic ID` to scope to one.
+   - `tt milestone ls --json` — live milestones; add `--epic REF` to scope to one.
    - `tt tag ls --json` — the global tag vocabulary.
 2. **Show** the object you will act on:
-   - `tt project show SLUG` / `tt issue show ID` / `tt epic show ID` /
-     `tt milestone show ID`
+   - `tt project show SLUG` / `tt issue show REF` / `tt epic show REF` /
+     `tt milestone show REF`  (REF is `<slug>-<number>`, e.g. `ENG-12`)
    - Returns JSON with the object **and an `actions` array**: every action the
      object offers, each with its `key`, `label`, `state`, and the `arguments`
      its payload takes (`name`, `required`, `type`, and enum `values`). This is
      your source of truth for what you can do and exactly what to send — read it
      before every write.
 3. **Act** with the key and a JSON payload:
-   - `tt issue action ID KEY '<json>'`
-   - `tt epic action ID KEY '<json>'`
-   - `tt milestone action ID KEY '<json>'`
+   - `tt issue action REF KEY '<json>'`
+   - `tt epic action REF KEY '<json>'`
+   - `tt milestone action REF KEY '<json>'`
    - `tt project action KEY '<json>' --slug SLUG`  (omit `--slug` for a top-level create)
    - `tt tag action KEY '<json>' --id ID`  (omit `--id` for a top-level create)
 
@@ -79,11 +90,11 @@ Creating (top-level creates take no address):
 - **Project:** `tt project action createProject '{"slug":"web","title":"Website"}'`
 - **Issue** (a project action): `tt project action addIssue '{"title":"Fix login","priority":"high"}' --slug web`
 - **Epic** (a project action): `tt project action addEpic '{"title":"v1","due_date":"2026-09-01"}' --slug web`
-- **Milestone** (an epic action): `tt epic action ID addMilestone '{"title":"alpha","due_date":"2026-09-01"}'`
+- **Milestone** (an epic action): `tt epic action ENG-3 addMilestone '{"title":"alpha","due_date":"2026-09-01"}'`
 - **Tag** (top-level): `tt tag action createTag '{"name":"bug"}'`
 
 Spelled-out subcommands exist for a person at a prompt
-(`tt issue edit 1 --title … --status …`, `tt issue setDueDate 1 --due_date 2026-09-01`),
+(`tt issue edit ENG-1 --title … --status …`, `tt issue setDueDate ENG-1 --due_date 2026-09-01`),
 but prefer the JSON `action` path from an agent: it takes the same payload `show`
 describes, verbatim.
 
@@ -92,7 +103,7 @@ describes, verbatim.
 An issue's status is one of, in order:
 `backlog` → `requires_planning` → `todo` → `doing` → `done`. There is no status
 machine — any status may follow any other. Use `setStatus` for a quick move
-(`tt issue action ID setStatus '{"status":"doing"}'`), or set `status` as part of
+(`tt issue action ENG-1 setStatus '{"status":"doing"}'`), or set `status` as part of
 the whole-object `edit`.
 
 ## `edit` is a whole-object write — read first
@@ -106,18 +117,19 @@ and send the complete set back.**
 
 An issue's `edit` payload carries `title`, `body`, `status`, `priority`,
 `due_date`, `epic`, and `milestone`. `due_date` is `YYYY-MM-DD` or `null`; `epic`
-and `milestone` are ids or `null`. Blank/`null` clears the field.
+and `milestone` are **refs** (e.g. `"ENG-3"`) or `null`, and must name an epic /
+milestone in the issue's own project. Blank/`null` clears the field.
 
 ```
-tt issue show 1     # read every field as it is now
-tt issue action 1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":null,"milestone":null}'
+tt issue show ENG-1     # read every field as it is now
+tt issue action ENG-1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":null,"milestone":null}'
 ```
 
 Grouping an issue under an epic and milestone (the milestone must belong to that
 epic, else the write is refused):
 
 ```
-tt issue action 1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":3,"milestone":7}'
+tt issue action ENG-1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":"ENG-3","milestone":"ENG-7"}'
 ```
 
 Changing the epic to one the current milestone is not in **clears** the now-stale
@@ -130,8 +142,8 @@ Tags are a many-to-many, not a scalar column, so they are attached and detached 
 
 ```
 tt tag action createTag '{"name":"bug"}'   # the tag must exist first
-tt issue action 1 tagIssue '{"name":"bug"}'
-tt issue action 1 untagIssue '{"name":"bug"}'
+tt issue action ENG-1 tagIssue '{"name":"bug"}'
+tt issue action ENG-1 untagIssue '{"name":"bug"}'
 ```
 
 `tagIssue` is idempotent; an unknown tag name is refused, and so is untagging a tag

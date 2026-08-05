@@ -64,11 +64,6 @@ def marker(priority: str) -> str | None:
     return "▲" if priority == "high" else None
 
 
-def issue_ref(slug: str, issue_id: int) -> str:
-    """The Linear-style id a row and a menu header show, e.g. ``TT-4``."""
-    return f"{slug.upper()}-{issue_id}"
-
-
 def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(value, high))
 
@@ -241,7 +236,7 @@ _HINT = {action_key: keystroke for keystroke, action_key in ACCELERATORS.items()
 
 @dataclass(frozen=True)
 class IssueTarget:
-    id: int
+    ref: str
 
 
 @dataclass(frozen=True)
@@ -307,9 +302,9 @@ def _offer_command(offer: Offer, target: Target, detail: dict[str, Any] | None =
 
 
 def issue_commands(
-    offers: list[Offer], issue_id: int, detail: dict[str, Any] | None = None
+    offers: list[Offer], issue_ref: str, detail: dict[str, Any] | None = None
 ) -> list[Command]:
-    return [_offer_command(offer, IssueTarget(issue_id), detail) for offer in offers]
+    return [_offer_command(offer, IssueTarget(issue_ref), detail) for offer in offers]
 
 
 def project_commands(

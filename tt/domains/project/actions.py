@@ -36,11 +36,12 @@ from tt.platform.actions import (
     ObjectAction,
     TopLevelAction,
 )
+from tt.platform.sequences import next_number
 
 project_actions: ActionGroup[Project] = ActionGroup("project", locate=queries.get_project)
 
-# A slug is uppercased into every issue's Linear-style id, so it stays short enough
-# to leave the id column room to read.
+# A slug prefixes every issue, epic and milestone ref (``<slug>-<number>``), so it
+# is kept short enough to leave the ref readable in a list column.
 SLUG_MAX_LENGTH = 5
 
 
@@ -160,6 +161,7 @@ class AddIssue(ObjectAction[Project, schemas.AddIssuePayload]):
             raise Invalid("title is required")
         issue = Issue(
             project=obj,
+            number=next_number(deps.tx, obj.id, "issue"),
             title=title,
             body=payload.body or "",
             status=payload.status or IssueStatus.TODO,
@@ -196,6 +198,7 @@ class AddEpic(ObjectAction[Project, schemas.AddEpicPayload]):
             raise Invalid("title is required")
         epic = Epic(
             project=obj,
+            number=next_number(deps.tx, obj.id, "epic"),
             title=title,
             body=payload.body or "",
             status=EpicStatus.ACTIVE,

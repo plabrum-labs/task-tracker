@@ -70,10 +70,10 @@ def _fresh() -> Engine:
 
 
 def run_issue[P: BaseModel](
-    engine: Engine, action: type[ObjectAction[Issue, P]], issue_id: int, payload: P
+    engine: Engine, action: type[ObjectAction[Issue, P]], issue_ref: str, payload: P
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
-        obj = issue_queries.get_issue(tx, issue_id)
+        obj = issue_queries.resolve_ref(tx, issue_ref)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -88,19 +88,19 @@ def run_project[P: BaseModel](
 
 
 def run_epic[P: BaseModel](
-    engine: Engine, action: type[ObjectAction[Epic, P]], epic_id: int, payload: P
+    engine: Engine, action: type[ObjectAction[Epic, P]], epic_ref: str, payload: P
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
-        obj = epic_queries.get_epic(tx, epic_id)
+        obj = epic_queries.resolve_ref(tx, epic_ref)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
 
 def run_milestone[P: BaseModel](
-    engine: Engine, action: type[ObjectAction[Milestone, P]], milestone_id: int, payload: P
+    engine: Engine, action: type[ObjectAction[Milestone, P]], milestone_ref: str, payload: P
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
-        obj = milestone_queries.get_milestone(tx, milestone_id)
+        obj = milestone_queries.resolve_ref(tx, milestone_ref)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -197,7 +197,7 @@ def test_edit_sets_every_field_at_once(db: Engine) -> None:
     response = run_issue(
         db,
         issue_actions.EditIssue,
-        seeded.id,
+        seeded.ref,
         _edit(
             title=" new ",
             body="details",
@@ -205,7 +205,7 @@ def test_edit_sets_every_field_at_once(db: Engine) -> None:
             priority=Priority.HIGH,
         ),
     )
-    assert response.message == "issue 1: saved"
+    assert response.message == "issue tt-1: saved"
     with platform_db.reading(db) as s:
         read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
@@ -220,7 +220,7 @@ def test_edit_trims_and_refuses_a_blank_title(db: Engine) -> None:
     seeded = an_issue(db, tt, "old")
 
     with pytest.raises(Invalid):
-        run_issue(db, issue_actions.EditIssue, seeded.id, _edit(title="   "))
+        run_issue(db, issue_actions.EditIssue, seeded.ref, _edit(title="   "))
 
 
 def test_set_status_is_always_offered() -> None:
@@ -245,10 +245,10 @@ def test_set_status_moves_to_each_status(db: Engine) -> None:
         response = run_issue(
             db,
             issue_actions.SetStatus,
-            seeded.id,
+            seeded.ref,
             issue_schemas.SetStatusPayload(status=status),
         )
-        assert response.message == f"issue 1: {status}"
+        assert response.message == f"issue tt-1: {status}"
         with platform_db.reading(db) as s:
             read = issue_queries.get_issue(s, seeded.id)
         assert read is not None
@@ -260,10 +260,10 @@ def test_set_status_refuses_an_unknown_status_or_an_extra_field(db: Engine) -> N
     made = an_issue(db, tt, "one")
     # A value outside the enum is Invalid, the schema having advertised the closed set.
     with pytest.raises(Invalid):
-        issue_api.issue_action(db, "setStatus", {"status": "shipped"}, made.id)
+        issue_api.issue_action(db, "setStatus", {"status": "shipped"}, made.ref)
     # And ``extra="forbid"`` refuses a field the payload does not advertise.
     with pytest.raises(Invalid):
-        issue_api.issue_action(db, "setStatus", {"status": "doing", "title": "x"}, made.id)
+        issue_api.issue_action(db, "setStatus", {"status": "doing", "title": "x"}, made.ref)
 
 
 def test_set_due_date_is_always_offered() -> None:
@@ -281,10 +281,10 @@ def test_set_due_date_sets_and_clears(db: Engine) -> None:
     response = run_issue(
         db,
         issue_actions.SetDueDate,
-        seeded.id,
+        seeded.ref,
         issue_schemas.SetDueDatePayload(due_date=date(2026, 9, 1)),
     )
-    assert response.message == "issue 1: due 2026-09-01"
+    assert response.message == "issue tt-1: due 2026-09-01"
     with platform_db.reading(db) as s:
         read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
@@ -292,9 +292,9 @@ def test_set_due_date_sets_and_clears(db: Engine) -> None:
 
     # A null clears it — no date is a state, not a refusal.
     response = run_issue(
-        db, issue_actions.SetDueDate, seeded.id, issue_schemas.SetDueDatePayload(due_date=None)
+        db, issue_actions.SetDueDate, seeded.ref, issue_schemas.SetDueDatePayload(due_date=None)
     )
-    assert response.message == "issue 1: due cleared"
+    assert response.message == "issue tt-1: due cleared"
     with platform_db.reading(db) as s:
         cleared = issue_queries.get_issue(s, seeded.id)
     assert cleared is not None
@@ -304,7 +304,7 @@ def test_set_due_date_sets_and_clears(db: Engine) -> None:
 def test_edit_carries_the_due_date(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "one")
-    run_issue(db, issue_actions.EditIssue, seeded.id, _edit(due_date=date(2026, 12, 25)))
+    run_issue(db, issue_actions.EditIssue, seeded.ref, _edit(due_date=date(2026, 12, 25)))
     with platform_db.reading(db) as s:
         read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
@@ -315,8 +315,8 @@ def test_delete_hides_an_issue(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
 
-    response = run_issue(db, issue_actions.Delete, seeded.id, Empty())
-    assert response.message == "issue 1: deleted"
+    response = run_issue(db, issue_actions.Delete, seeded.ref, Empty())
+    assert response.message == "issue tt-1: deleted"
     with platform_db.reading(db) as s:
         assert issue_queries.get_issue(s, seeded.id) is None
 
@@ -368,7 +368,7 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
             "epic": None,
             "milestone": None,
         },
-        made.id,
+        made.ref,
     )
     response = project_api.project_action(
         db, "edit", {"title": "renamed", "body": "notes", "status": "active", "path": None}, "tt"
@@ -480,7 +480,7 @@ def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
         "tt",
         project_schemas.AddIssuePayload(title=" ship it ", body=None, priority=None),
     )
-    assert response.message == "issue 1: created"
+    assert response.message == "issue tt-1: created"
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         created = issue_queries.list_issues(s, "tt")[0]
@@ -496,6 +496,46 @@ def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
             "tt",
             project_schemas.AddIssuePayload(title="  ", body=None, priority=None),
         )
+
+
+def test_issue_numbers_restart_per_project(db: Engine) -> None:
+    # The regression the sequence buys: numbering is scoped to the project, not
+    # global, so each project counts from 1 and two projects reuse the same numbers.
+    a_project(db, "eng")
+    a_project(db, "web")
+    for title in ("first", "second"):
+        project_api.project_action(db, "addIssue", {"title": title}, "eng")
+    project_api.project_action(db, "addIssue", {"title": "only"}, "web")
+
+    eng = [i.ref for i in issue_api.issue_list(db, "eng")]
+    web = [i.ref for i in issue_api.issue_list(db, "web")]
+    assert eng == ["eng-1", "eng-2"]
+    assert web == ["web-1"]  # a fresh run, not eng-3
+
+
+def test_a_ref_resolves_the_right_project_scoped_issue(db: Engine) -> None:
+    # eng-1 and web-1 are distinct issues; the ref, not a global id, is what tells
+    # them apart.
+    a_project(db, "eng")
+    a_project(db, "web")
+    project_api.project_action(db, "addIssue", {"title": "in eng"}, "eng")
+    project_api.project_action(db, "addIssue", {"title": "in web"}, "web")
+
+    eng_one = issue_api.issue_get(db, "eng-1")
+    web_one = issue_api.issue_get(db, "web-1")
+    assert eng_one is not None and eng_one.title == "in eng"
+    assert web_one is not None and web_one.title == "in web"
+
+
+def test_a_deleted_number_is_not_reissued(db: Engine) -> None:
+    # The sequence only rises, so deleting an issue does not free its number for the
+    # next create — the unique-per-project constraint holds over the dead row.
+    a_project(db, "eng")
+    project_api.project_action(db, "addIssue", {"title": "one"}, "eng")
+    issue_api.issue_action(db, "delete", {}, "eng-1")
+    project_api.project_action(db, "addIssue", {"title": "two"}, "eng")
+    live = [i.ref for i in issue_api.issue_list(db, "eng")]
+    assert live == ["eng-2"]  # eng-1 is gone and its number was not handed out again
 
 
 def test_add_issue_honors_an_explicit_status(db: Engine) -> None:
@@ -545,10 +585,14 @@ def test_create_project_refuses_a_slug_over_the_length_cap(db: Engine) -> None:
 # --- epics -----------------------------------------------------------------
 
 
-def an_epic(engine: Engine, project_slug: str, title: str) -> int:
+def an_epic(engine: Engine, project_slug: str, title: str) -> str:
+    """Create an epic and return its ref, the address every public call now takes."""
     response = project_api.project_action(engine, "addEpic", {"title": title}, project_slug)
     assert response.created_id is not None
-    return response.created_id
+    with platform_db.reading(engine) as s:
+        epic = epic_queries.get_epic(s, response.created_id)
+        assert epic is not None
+        return epic.ref
 
 
 def epic(*, issues: list[Issue] | None = None) -> Epic:
@@ -583,7 +627,7 @@ def test_add_epic_creates_an_epic_under_the_project(db: Engine) -> None:
         "tt",
         project_schemas.AddEpicPayload(title=" v1 ", body=None, due_date=date(2026, 9, 1)),
     )
-    assert response.message == "epic 1: created"
+    assert response.message == "epic tt-1: created"
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         made = epic_queries.get_epic(s, 1)
@@ -623,18 +667,18 @@ def test_epic_edit_and_status_are_always_offered() -> None:
 
 def test_epic_edit_sets_every_field_and_refuses_a_blank_title(db: Engine) -> None:
     a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "old")
+    epic_ref = an_epic(db, "tt", "old")
     response = run_epic(
         db,
         epic_actions.EditEpic,
-        epic_id,
+        epic_ref,
         _edit_epic(
             title=" done ", body="notes", status=EpicStatus.DONE, due_date=date(2026, 12, 1)
         ),
     )
-    assert response.message == "epic 1: saved"
+    assert response.message == "epic tt-1: saved"
     with platform_db.reading(db) as s:
-        read = epic_queries.get_epic(s, epic_id)
+        read = epic_queries.resolve_ref(s, epic_ref)
     assert read is not None
     assert (read.title, read.body, read.status, read.due_date) == (
         "done",
@@ -644,25 +688,25 @@ def test_epic_edit_sets_every_field_and_refuses_a_blank_title(db: Engine) -> Non
     )
 
     with pytest.raises(Invalid):
-        run_epic(db, epic_actions.EditEpic, epic_id, _edit_epic(title="   "))
+        run_epic(db, epic_actions.EditEpic, epic_ref, _edit_epic(title="   "))
 
 
 def test_epic_set_status_and_due_date_move(db: Engine) -> None:
     a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
+    epic_ref = an_epic(db, "tt", "v1")
     response = run_epic(
-        db, epic_actions.SetStatus, epic_id, epic_schemas.SetStatusPayload(status=EpicStatus.DONE)
+        db, epic_actions.SetStatus, epic_ref, epic_schemas.SetStatusPayload(status=EpicStatus.DONE)
     )
-    assert response.message == "epic 1: done"
+    assert response.message == "epic tt-1: done"
 
     run_epic(
         db,
         epic_actions.SetDueDate,
-        epic_id,
+        epic_ref,
         epic_schemas.SetDueDatePayload(due_date=date(2026, 9, 1)),
     )
     with platform_db.reading(db) as s:
-        read = epic_queries.get_epic(s, epic_id)
+        read = epic_queries.resolve_ref(s, epic_ref)
     assert read is not None
     assert read.status is EpicStatus.DONE
     assert read.due_date == date(2026, 9, 1)
@@ -675,21 +719,21 @@ def test_epic_delete_is_refused_while_it_holds_live_issues(db: Engine) -> None:
     assert epic_actions.Delete.availability(busy) == Refused("reassign or close 1 issue first")
 
     tt = a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
+    epic_ref = an_epic(db, "tt", "v1")
     made = an_issue(db, tt, "under the epic")
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id), made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref), made.ref)
     with pytest.raises(Conflict):
-        run_epic(db, epic_actions.Delete, epic_id, Empty())
+        run_epic(db, epic_actions.Delete, epic_ref, Empty())
 
     # Clear the link, and the epic goes.
-    issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.ref)
     with platform_db.reading(db) as s:
-        empty_epic = epic_queries.get_epic(s, epic_id)
+        empty_epic = epic_queries.resolve_ref(s, epic_ref)
     assert empty_epic is not None
     assert epic_actions.Delete.availability(empty_epic) == Runnable()
-    assert run_epic(db, epic_actions.Delete, epic_id, Empty()).message == "epic 1: deleted"
+    assert run_epic(db, epic_actions.Delete, epic_ref, Empty()).message == "epic tt-1: deleted"
     with platform_db.reading(db) as s:
-        assert epic_queries.get_epic(s, epic_id) is None
+        assert epic_queries.resolve_ref(s, epic_ref) is None
 
 
 # --- an issue's epic link --------------------------------------------------
@@ -713,16 +757,16 @@ def _wire_edit(**over: Any) -> dict[str, Any]:
 
 def test_edit_assigns_and_clears_an_issues_epic(db: Engine) -> None:
     tt = a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
+    epic_ref = an_epic(db, "tt", "v1")
     made = an_issue(db, tt, "wire it")
 
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id), made.id)
-    detail = issue_api.issue_get(db, made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref), made.ref)
+    detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
-    assert detail.epic == epic_id
+    assert detail.epic == epic_ref
 
-    issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.id)
-    cleared = issue_api.issue_get(db, made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.ref)
+    cleared = issue_api.issue_get(db, made.ref)
     assert cleared is not None
     assert cleared.epic is None
 
@@ -733,28 +777,33 @@ def test_edit_refuses_an_epic_from_another_project(db: Engine) -> None:
     other_epic = an_epic(db, "web", "web v1")
     made = an_issue(db, tt, "wire it")
     with pytest.raises(Conflict, match="not in this project"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=other_epic), made.id)
+        issue_api.issue_action(db, "edit", _wire_edit(epic=other_epic), made.ref)
 
 
 def test_edit_refuses_an_unknown_epic(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "wire it")
-    with pytest.raises(Conflict, match="no epic 999"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=999), made.id)
+    with pytest.raises(Conflict, match="no epic tt-999"):
+        issue_api.issue_action(db, "edit", _wire_edit(epic="tt-999"), made.ref)
 
 
-def test_epic_detail_refuses_an_unknown_id(db: Engine) -> None:
+def test_epic_detail_refuses_an_unknown_ref(db: Engine) -> None:
     with pytest.raises(Invalid):
-        epic_api.epic_detail(db, 999)
+        epic_api.epic_detail(db, "tt-999")
 
 
 # --- milestones ------------------------------------------------------------
 
 
-def a_milestone(engine: Engine, epic_id: int, title: str) -> int:
-    response = epic_api.epic_action(engine, "addMilestone", {"title": title}, epic_id)
+def a_milestone(engine: Engine, epic_ref: str, title: str) -> str:
+    """Create a milestone under the epic named by its ref, and return the milestone's
+    own ref."""
+    response = epic_api.epic_action(engine, "addMilestone", {"title": title}, epic_ref)
     assert response.created_id is not None
-    return response.created_id
+    with platform_db.reading(engine) as s:
+        milestone = milestone_queries.get_milestone(s, response.created_id)
+        assert milestone is not None
+        return milestone.ref
 
 
 def milestone(*, issues: list[Issue] | None = None) -> Milestone:
@@ -763,20 +812,21 @@ def milestone(*, issues: list[Issue] | None = None) -> Milestone:
 
 def test_add_milestone_creates_one_under_the_epic(db: Engine) -> None:
     a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
+    epic_ref = an_epic(db, "tt", "v1")
     response = run_epic(
         db,
         epic_actions.AddMilestone,
-        epic_id,
+        epic_ref,
         epic_schemas.AddMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
     )
-    assert response.message == "milestone 1: created"
+    assert response.message == "milestone tt-1: created"
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         made = milestone_queries.get_milestone(s, 1)
     assert made is not None
     assert made.title == "alpha"  # trimmed
-    assert made.epic_id == epic_id
+    # Filed under the epic the ref names: the milestone's epic ref matches.
+    assert f"{made.project.slug}-{made.epic.number}" == epic_ref
     assert made.due_date == date(2026, 9, 1)
 
     # A blank title is the object's refusal.
@@ -784,15 +834,15 @@ def test_add_milestone_creates_one_under_the_epic(db: Engine) -> None:
         run_epic(
             db,
             epic_actions.AddMilestone,
-            epic_id,
+            epic_ref,
             epic_schemas.AddMilestonePayload(title="  ", due_date=None),
         )
 
 
 def test_milestone_edit_and_set_due_date(db: Engine) -> None:
     a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
-    milestone_id = a_milestone(db, epic_id, "old")
+    epic_ref = an_epic(db, "tt", "v1")
+    milestone_ref = a_milestone(db, epic_ref, "old")
 
     seeded = milestone()
     assert milestone_actions.EditMilestone.availability(seeded) == Runnable()
@@ -801,12 +851,12 @@ def test_milestone_edit_and_set_due_date(db: Engine) -> None:
     response = run_milestone(
         db,
         milestone_actions.EditMilestone,
-        milestone_id,
+        milestone_ref,
         milestone_schemas.EditMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
     )
-    assert response.message == "milestone 1: saved"
+    assert response.message == "milestone tt-1: saved"
     with platform_db.reading(db) as s:
-        read = milestone_queries.get_milestone(s, milestone_id)
+        read = milestone_queries.resolve_ref(s, milestone_ref)
     assert read is not None
     assert read.title == "alpha"  # trimmed
     assert read.due_date == date(2026, 9, 1)
@@ -815,18 +865,18 @@ def test_milestone_edit_and_set_due_date(db: Engine) -> None:
         run_milestone(
             db,
             milestone_actions.EditMilestone,
-            milestone_id,
+            milestone_ref,
             milestone_schemas.EditMilestonePayload(title="   ", due_date=None),
         )
 
     run_milestone(
         db,
         milestone_actions.SetDueDate,
-        milestone_id,
+        milestone_ref,
         milestone_schemas.SetDueDatePayload(due_date=None),
     )
     with platform_db.reading(db) as s:
-        cleared = milestone_queries.get_milestone(s, milestone_id)
+        cleared = milestone_queries.resolve_ref(s, milestone_ref)
     assert cleared is not None
     assert cleared.due_date is None
 
@@ -836,20 +886,20 @@ def test_milestone_delete_is_refused_while_it_holds_live_issues(db: Engine) -> N
     assert milestone_actions.Delete.availability(busy) == Refused("reassign or close 1 issue first")
 
     tt = a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
-    milestone_id = a_milestone(db, epic_id, "alpha")
+    epic_ref = an_epic(db, "tt", "v1")
+    milestone_ref = a_milestone(db, epic_ref, "alpha")
     made = an_issue(db, tt, "under the milestone")
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=milestone_id), made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone=milestone_ref), made.ref)
     with pytest.raises(Conflict):
-        run_milestone(db, milestone_actions.Delete, milestone_id, Empty())
+        run_milestone(db, milestone_actions.Delete, milestone_ref, Empty())
 
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=None), made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone=None), made.ref)
     with platform_db.reading(db) as s:
-        empty_milestone = milestone_queries.get_milestone(s, milestone_id)
+        empty_milestone = milestone_queries.resolve_ref(s, milestone_ref)
     assert empty_milestone is not None
     assert milestone_actions.Delete.availability(empty_milestone) == Runnable()
-    assert run_milestone(db, milestone_actions.Delete, milestone_id, Empty()).message == (
-        "milestone 1: deleted"
+    assert run_milestone(db, milestone_actions.Delete, milestone_ref, Empty()).message == (
+        "milestone tt-1: deleted"
     )
 
 
@@ -858,14 +908,14 @@ def test_milestone_delete_is_refused_while_it_holds_live_issues(db: Engine) -> N
 
 def test_edit_assigns_a_milestone_within_the_issues_epic(db: Engine) -> None:
     tt = a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
-    milestone_id = a_milestone(db, epic_id, "alpha")
+    epic_ref = an_epic(db, "tt", "v1")
+    milestone_ref = a_milestone(db, epic_ref, "alpha")
     made = an_issue(db, tt, "wire it")
 
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=milestone_id), made.id)
-    detail = issue_api.issue_get(db, made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone=milestone_ref), made.ref)
+    detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
-    assert (detail.epic, detail.milestone) == (epic_id, milestone_id)
+    assert (detail.epic, detail.milestone) == (epic_ref, milestone_ref)
 
 
 def test_edit_refuses_a_milestone_from_another_epic(db: Engine) -> None:
@@ -876,16 +926,16 @@ def test_edit_refuses_a_milestone_from_another_epic(db: Engine) -> None:
     milestone_b = a_milestone(db, epic_b, "beta")
     made = an_issue(db, tt, "wire it")
     with pytest.raises(Conflict, match="not in this epic"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_b), made.id)
+        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_b), made.ref)
 
 
 def test_edit_refuses_a_milestone_when_the_issue_has_no_epic(db: Engine) -> None:
     tt = a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
-    milestone_id = a_milestone(db, epic_id, "alpha")
+    epic_ref = an_epic(db, "tt", "v1")
+    milestone_ref = a_milestone(db, epic_ref, "alpha")
     made = an_issue(db, tt, "wire it")
     with pytest.raises(Conflict, match="not in this epic"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=None, milestone=milestone_id), made.id)
+        issue_api.issue_action(db, "edit", _wire_edit(epic=None, milestone=milestone_ref), made.ref)
 
 
 def test_changing_the_epic_clears_a_now_stale_milestone(db: Engine) -> None:
@@ -896,11 +946,11 @@ def test_changing_the_epic_clears_a_now_stale_milestone(db: Engine) -> None:
     epic_b = an_epic(db, "tt", "v2")
     milestone_a = a_milestone(db, epic_a, "alpha")
     made = an_issue(db, tt, "wire it")
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_a), made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_a), made.ref)
 
     # Re-submit with the epic changed to B and the stale milestone still named.
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_b, milestone=milestone_a), made.id)
-    detail = issue_api.issue_get(db, made.id)
+    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_b, milestone=milestone_a), made.ref)
+    detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
     assert detail.epic == epic_b
     assert detail.milestone is None
@@ -908,10 +958,10 @@ def test_changing_the_epic_clears_a_now_stale_milestone(db: Engine) -> None:
 
 def test_edit_refuses_an_unknown_milestone(db: Engine) -> None:
     tt = a_project(db, "tt")
-    epic_id = an_epic(db, "tt", "v1")
+    epic_ref = an_epic(db, "tt", "v1")
     made = an_issue(db, tt, "wire it")
-    with pytest.raises(Conflict, match="no milestone 999"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=999), made.id)
+    with pytest.raises(Conflict, match="no milestone tt-999"):
+        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone="tt-999"), made.ref)
 
 
 # --- tags ------------------------------------------------------------------
@@ -964,26 +1014,26 @@ def test_tag_and_untag_attach_detach_and_refuse(db: Engine) -> None:
     a_tag(db, "bug")
 
     # Attach, and attaching again is an idempotent success.
-    assert issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.id).message == (
-        'issue 1: tagged "bug"'
+    assert issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.ref).message == (
+        'issue tt-1: tagged "bug"'
     )
-    issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.id)
-    detail = issue_api.issue_get(db, made.id)
+    issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.ref)
+    detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
     assert detail.tags == ["bug"]
 
     # An unknown name is refused on both verbs.
     with pytest.raises(Conflict, match='no tag "nope"'):
-        issue_api.issue_action(db, "tagIssue", {"name": "nope"}, made.id)
+        issue_api.issue_action(db, "tagIssue", {"name": "nope"}, made.ref)
     with pytest.raises(Conflict, match='no tag "nope"'):
-        issue_api.issue_action(db, "untagIssue", {"name": "nope"}, made.id)
+        issue_api.issue_action(db, "untagIssue", {"name": "nope"}, made.ref)
 
     # Detach, and detaching an absent tag is a refusal.
-    assert issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.id).message == (
-        'issue 1: untagged "bug"'
+    assert issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.ref).message == (
+        'issue tt-1: untagged "bug"'
     )
     with pytest.raises(Conflict, match='not tagged "bug"'):
-        issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.id)
+        issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.ref)
 
 
 def test_detail_surfaces_an_issues_tags_sorted(db: Engine) -> None:
@@ -991,8 +1041,8 @@ def test_detail_surfaces_an_issues_tags_sorted(db: Engine) -> None:
     made = an_issue(db, tt, "wire it")
     for name in ["ui", "bug", "perf"]:
         a_tag(db, name)
-        issue_api.issue_action(db, "tagIssue", {"name": name}, made.id)
-    detail = issue_api.issue_get(db, made.id)
+        issue_api.issue_action(db, "tagIssue", {"name": name}, made.ref)
+    detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
     assert detail.tags == ["bug", "perf", "ui"]
 
@@ -1001,10 +1051,10 @@ def test_deleting_a_tag_clears_it_from_every_issue(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "wire it")
     bug = a_tag(db, "bug")
-    issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.id)
+    issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.ref)
 
     tag_api.tag_action(db, "delete", {}, bug)
-    detail = issue_api.issue_get(db, made.id)
+    detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
     assert detail.tags == []
 
@@ -1072,14 +1122,14 @@ def test_the_api_agrees_with_the_typed_path() -> None:
         "epic": None,
         "milestone": None,
     }
-    via_api = issue_api.issue_action(erased, "edit", wire, seeded.id).message
+    via_api = issue_api.issue_action(erased, "edit", wire, seeded.ref).message
 
     typed = _fresh()
     tt = a_project(typed, "tt")
     seeded = an_issue(typed, tt, "old")
-    via_typed = run_issue(typed, issue_actions.EditIssue, seeded.id, _edit(title=" new ")).message
+    via_typed = run_issue(typed, issue_actions.EditIssue, seeded.ref, _edit(title=" new ")).message
 
-    assert via_api == via_typed == "issue 1: saved"
+    assert via_api == via_typed == "issue tt-1: saved"
 
     # The same for a creator, whose execute writes a different table.
     erased = _fresh()
@@ -1095,7 +1145,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
         project_schemas.AddIssuePayload(title="one", body=None, priority=None),
     ).message
 
-    assert via_api == via_typed == "issue 1: created"
+    assert via_api == via_typed == "issue tt-1: created"
 
 
 def test_a_malformed_payload_is_invalid(db: Engine) -> None:
@@ -1125,7 +1175,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
         },
     ]:
         with pytest.raises(Invalid):
-            issue_api.issue_action(db, "edit", payload, 1)
+            issue_api.issue_action(db, "edit", payload, "tt-1")
     # A value outside the enum, the one the schema could have told the caller
     # about in advance.
     with pytest.raises(Invalid):
@@ -1141,14 +1191,14 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
                 "epic": None,
                 "milestone": None,
             },
-            1,
+            "tt-1",
         )
 
 
 def test_an_action_with_no_arguments_takes_an_empty_object_and_not_null(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
-    assert issue_api.issue_action(db, "delete", {}, seeded.id).message == "issue 1: deleted"
+    assert issue_api.issue_action(db, "delete", {}, seeded.ref).message == "issue tt-1: deleted"
     # ``null`` is refused where an empty object is not — the decode is the same one
     # a dispatch runs.
     assert decode(issue_actions.Delete, {}) == Empty()
@@ -1160,7 +1210,7 @@ def test_an_unknown_key_is_invalid(db: Engine) -> None:
     tt = a_project(db, "tt")
     an_issue(db, tt, "here")
     with pytest.raises(Invalid):
-        issue_api.issue_action(db, "explode", {}, 1)
+        issue_api.issue_action(db, "explode", {}, "tt-1")
     with pytest.raises(Invalid):
         project_api.project_action(db, "explode", {})
 
@@ -1187,7 +1237,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "epic": None,
                 "milestone": None,
             },
-            made.id,
+            made.ref,
         )
     # ``status_note`` is gone from the issue edit, so sending it is an extra field.
     with pytest.raises(Invalid):
@@ -1204,7 +1254,7 @@ def test_one_key_in_two_groups_decodes_against_the_group_it_was_dispatched_on(db
                 "milestone": None,
                 "status_note": "x",
             },
-            made.id,
+            made.ref,
         )
     # An issue status, and an issue-only field, through the project's edit.
     with pytest.raises(Invalid):

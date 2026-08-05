@@ -20,10 +20,17 @@ from tt.platform.db import with_transaction
 # --- reads ----------------------------------------------------------------
 
 
+def _epic_ref(milestone: Milestone) -> str:
+    """The ref of the epic the milestone belongs to. The epic shares the milestone's
+    project, so the ref is that slug and the epic's project-scoped number."""
+    return f"{milestone.project.slug}-{milestone.epic.number}"
+
+
 def _list_item(milestone: Milestone) -> schemas.MilestoneListItem:
     return schemas.MilestoneListItem(
         id=milestone.id,
-        epic=milestone.epic_id,
+        ref=milestone.ref,
+        epic=_epic_ref(milestone),
         title=milestone.title,
         due_date=milestone.due_date,
         backlog=milestone.backlog,
@@ -37,7 +44,8 @@ def _list_item(milestone: Milestone) -> schemas.MilestoneListItem:
 def _detail(milestone: Milestone) -> schemas.MilestoneDetail:
     return schemas.MilestoneDetail(
         id=milestone.id,
-        epic=milestone.epic_id,
+        ref=milestone.ref,
+        epic=_epic_ref(milestone),
         title=milestone.title,
         due_date=milestone.due_date,
         backlog=milestone.backlog,
@@ -56,17 +64,17 @@ def milestone_list(tx: Session, epic_id: int) -> list[schemas.MilestoneListItem]
 
 
 @with_transaction
-def milestone_get(tx: Session, milestone_id: int) -> schemas.MilestoneDetail | None:
-    milestone = queries.get_milestone(tx, milestone_id)
+def milestone_get(tx: Session, ref: str) -> schemas.MilestoneDetail | None:
+    milestone = queries.resolve_ref(tx, ref)
     return _detail(milestone) if milestone is not None else None
 
 
 @with_transaction
-def milestone_detail(tx: Session, milestone_id: int) -> tuple[schemas.MilestoneDetail, list[Offer]]:
+def milestone_detail(tx: Session, ref: str) -> tuple[schemas.MilestoneDetail, list[Offer]]:
     """A milestone and what it offers, for a detail view."""
-    milestone = queries.get_milestone(tx, milestone_id)
+    milestone = queries.resolve_ref(tx, ref)
     if milestone is None:
-        raise Invalid(f"no milestone {milestone_id}")
+        raise Invalid(f"no milestone {ref}")
     return _detail(milestone), milestone_actions.offers(milestone)
 
 
@@ -74,11 +82,11 @@ def milestone_detail(tx: Session, milestone_id: int) -> tuple[schemas.MilestoneD
 
 
 @with_transaction
-def milestone_action(tx: Session, key: str, payload: Any, milestone_id: int) -> ActionResponse:
+def milestone_action(tx: Session, key: str, payload: Any, ref: str) -> ActionResponse:
     """Run an action by key against the addressed milestone. Availability is
     enforced against the live row, so what a detail view reported stays a
     snapshot."""
-    return milestone_actions.trigger(ActionDeps(tx), key, payload, milestone_id)
+    return milestone_actions.trigger(ActionDeps(tx), key, payload, ref)
 
 
 # --- codegen --------------------------------------------------------------

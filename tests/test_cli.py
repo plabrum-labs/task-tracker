@@ -150,7 +150,7 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
     ]
     # The required options come from the schema, so an edit missing them is a usage
     # error rather than a payload the decoder refuses further in.
-    assert invoke(database, "issue", "edit", "1").exit_code == USAGE
+    assert invoke(database, "issue", "edit", "tt-1").exit_code == USAGE
     # A value outside the enum is a usage error listing the alternatives.
     bad_enum = [
         "--title",
@@ -168,14 +168,14 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
         "--milestone",
         "",
     ]
-    assert invoke(database, "issue", "edit", "1", *bad_enum).exit_code == USAGE
+    assert invoke(database, "issue", "edit", "tt-1", *bad_enum).exit_code == USAGE
     # A blank title gets past the parser — what a title has to contain is the
     # action's business — so this is a refusal (123), not a usage error (2).
     blank = invoke(
         database,
         "issue",
         "edit",
-        "1",
+        "tt-1",
         "--title",
         "",
         "--body",
@@ -194,7 +194,7 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
     assert blank.exit_code == cli.REFUSED
     assert "title is required" in blank.output
     # An option the schema does not advertise is rejected.
-    assert invoke(database, "issue", "edit", "1", *full, "--bogus", "x").exit_code == USAGE
+    assert invoke(database, "issue", "edit", "tt-1", *full, "--bogus", "x").exit_code == USAGE
 
 
 def test_the_help_text_carries_the_field_doc_and_the_enum_values(
@@ -217,7 +217,7 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
         database,
         "issue",
         "edit",
-        "1",
+        "tt-1",
         "--title",
         "x",
         "--body",
@@ -238,7 +238,7 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
         database,
         "issue",
         "action",
-        "1",
+        "tt-1",
         "edit",
         '{"title":"x","body":"","status":"doing","priority":"normal","due_date":null,"epic":null,"milestone":null}',
     )
@@ -249,13 +249,13 @@ def test_the_options_and_the_blob_reach_the_same_write(database: str) -> None:
 def test_set_status_is_its_own_subcommand_taking_only_status(database: str) -> None:
     # The focused verb grows a subcommand like any other action; its one option is
     # the status, and it writes the move at once.
-    moved = invoke(database, "issue", "setStatus", "1", "--status", "doing")
+    moved = invoke(database, "issue", "setStatus", "tt-1", "--status", "doing")
     assert moved.exit_code == 0
-    assert "issue 1: doing" in moved.output
-    shown = invoke(database, "issue", "show", "1")
+    assert "issue tt-1: doing" in moved.output
+    shown = invoke(database, "issue", "show", "tt-1")
     assert json.loads(shown.output)["issue"]["status"] == "doing"
     # A value outside the closed set is a usage error listing the alternatives.
-    assert invoke(database, "issue", "setStatus", "1", "--status", "shipped").exit_code == USAGE
+    assert invoke(database, "issue", "setStatus", "tt-1", "--status", "shipped").exit_code == USAGE
 
 
 def test_a_refusal_comes_back_from_the_live_row_and_not_from_the_parser(database: str) -> None:
@@ -267,7 +267,7 @@ def test_a_refusal_comes_back_from_the_live_row_and_not_from_the_parser(database
 
 
 def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None:
-    result = invoke(database, "issue", "show", "1")
+    result = invoke(database, "issue", "show", "tt-1")
     assert result.exit_code == 0
     value = json.loads(result.output)
     assert value["issue"]["project"] == "tt"
@@ -353,7 +353,7 @@ def test_init_refuses_a_directory_another_project_already_owns(
 
 
 def test_an_unknown_object_or_malformed_json_is_invalid_rather_than_a_crash(database: str) -> None:
-    assert invoke(database, "issue", "show", "99").exit_code == cli.REFUSED
+    assert invoke(database, "issue", "show", "tt-99").exit_code == cli.REFUSED
     assert invoke(database, "project", "show", "nope").exit_code == cli.REFUSED
-    malformed = invoke(database, "issue", "action", "1", "edit", "not json")
+    malformed = invoke(database, "issue", "action", "tt-1", "edit", "not json")
     assert malformed.exit_code == cli.REFUSED

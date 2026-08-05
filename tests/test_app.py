@@ -33,6 +33,12 @@ def _main(app: TrackerApp) -> MainScreen:
     return screen
 
 
+def _ref(app: TrackerApp, issue_id: int) -> str:
+    """The ref of a visible issue, looked up by the global id the cursor tracks — the
+    address the api now takes, since the screen still tracks selection by id."""
+    return next(i.ref for i in _main(app).issues if i.id == issue_id)
+
+
 def _seed(engine: Engine) -> None:
     """One project ``tt`` with two issues, high before normal — the load order."""
     project_api.project_action(
@@ -144,7 +150,7 @@ async def test_editing_the_title_in_the_pane_persists_and_returns_to_read(seeded
         await pilot.press("enter")  # save
         await pilot.pause()
         # The write persisted, and the pane is back to the read detail of the survivor.
-        edited = issue_api.issue_get(seeded, selected)
+        edited = issue_api.issue_get(seeded, _ref(app, selected))
         assert edited is not None and edited.title == "renamed in the pane"
         main = _main(app)
         assert main.query_one(DetailPane).display and not main.query_one(EditPane).display
@@ -157,7 +163,7 @@ async def test_escape_abandons_the_pane_editor_without_writing(seeded: Engine) -
         await _scope_tt(pilot)
         selected = _main(app).selected_id
         assert selected is not None
-        before = issue_api.issue_get(seeded, selected)
+        before = issue_api.issue_get(seeded, _ref(app, selected))
         assert before is not None
         await pilot.press("x")  # issue menu
         await pilot.pause()
@@ -168,7 +174,7 @@ async def test_escape_abandons_the_pane_editor_without_writing(seeded: Engine) -
         await pilot.pause()
         main = _main(app)
         assert main.query_one(DetailPane).display and not main.query_one(EditPane).display
-        after = issue_api.issue_get(seeded, selected)
+        after = issue_api.issue_get(seeded, _ref(app, selected))
         assert after is not None and after.title == before.title
 
 
@@ -191,7 +197,7 @@ async def test_s_cycles_the_selected_issue_status_and_keeps_the_selection(seeded
         await pilot.pause()
         selected = _main(app).selected_id
         assert selected is not None
-        before = issue_api.issue_get(seeded, selected)
+        before = issue_api.issue_get(seeded, _ref(app, selected))
         assert before is not None
         assert before.status == "todo"
 
@@ -201,7 +207,7 @@ async def test_s_cycles_the_selected_issue_status_and_keeps_the_selection(seeded
             await pilot.press("s")
             await pilot.pause()
             assert _main(app).selected_id == selected  # selection is retained
-            moved = issue_api.issue_get(seeded, selected)
+            moved = issue_api.issue_get(seeded, _ref(app, selected))
             assert moved is not None
             assert moved.status == expected  # advanced one step and persisted
 
@@ -223,7 +229,7 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
             "epic": first.epic,
             "milestone": first.milestone,
         },
-        first.id,
+        first.ref,
     )
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -384,7 +390,7 @@ async def test_e_opens_the_edit_form_for_the_selected_issue(seeded: Engine) -> N
         await _scope_tt(pilot)  # scope onto tt
         selected = _main(app).selected_id
         assert selected is not None
-        current = issue_api.issue_get(seeded, selected)
+        current = issue_api.issue_get(seeded, _ref(app, selected))
         assert current is not None
         await pilot.press("e")  # browse shortcut straight into the edit form
         await pilot.pause()

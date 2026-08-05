@@ -37,7 +37,7 @@ def _seeded(engine: Engine) -> None:
 
 
 def _dispatch_issue(engine: Engine, key: str, values: dict[str, Any]) -> str:
-    return issue_api.issue_action(engine, key, values, 1).message
+    return issue_api.issue_action(engine, key, values, "tt-1").message
 
 
 def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
@@ -72,27 +72,28 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
             name="epic",
             required=True,
             kind=Reference(),
-            description="The id of the epic this issue belongs to. Blank clears it.",
+            description="The ref of the epic this issue belongs to, e.g. ENG-3. Blank clears it.",
         ),
         Field(
             name="milestone",
             required=True,
             kind=Reference(),
             description=(
-                "The id of the milestone this issue belongs to, within its epic. Blank clears it."
+                "The ref of the milestone this issue belongs to, within its epic, e.g. ENG-5. "
+                "Blank clears it."
             ),
         ),
     ]
 
 
-def test_a_reference_field_derives_from_an_int_base() -> None:
-    # An ``int`` base is a pointer at another row's id; a blank submits the null
-    # that clears the link, the same rule ``OptionalText`` carries.
+def test_a_reference_field_is_marked_and_blanks_to_null() -> None:
+    # A ``Reference`` is a pointer at another row, entered as that row's ref; a blank
+    # submits the null that clears the link, the same rule ``OptionalText`` carries.
     fields = {f.name: f for f in fields_of(issue_schemas.EditIssuePayload)}
     epic = fields["epic"]
     assert epic.kind == Reference()
     assert payload([(epic, "")]) == {"epic": None}
-    assert payload([(epic, "3")]) == {"epic": "3"}
+    assert payload([(epic, "ENG-3")]) == {"epic": "ENG-3"}
 
 
 def test_the_set_due_date_payload_derives_a_single_date_field() -> None:
@@ -139,9 +140,9 @@ def test_an_action_with_no_arguments_renders_a_form_with_no_fields() -> None:
 
 def test_a_field_the_form_cannot_render_fails_the_whole_form() -> None:
     # Dropping the field would render a form that cannot express the action, and
-    # submitting it would produce a payload the decoder refuses for a reason
-    # nothing on screen mentions. ``int`` is now a ``Reference`` control, so the
-    # exemplar of an unrenderable kind is a ``float`` — no control derives from it.
+    # submitting it would produce a payload the decoder refuses for a reason nothing
+    # on screen mentions. A ``Reference`` is marked with ``REFERENCE`` rather than
+    # derived from a type, so a bare numeric field like ``float`` derives no control.
     class Unrenderable(BaseModel):
         ratio: float
 
@@ -169,7 +170,7 @@ def test_a_blank_optional_field_submits_the_null_its_schema_advertises(db: Engin
     a_project(db, "tt")
     response = project_api.project_action(db, "addIssue", built, "tt")
     assert response.created_id is not None
-    issue = issue_api.issue_get(db, response.created_id)
+    issue = issue_api.issue_get(db, "tt-1")
     assert issue is not None
     assert issue.body == ""
 

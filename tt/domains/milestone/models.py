@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, Index, Text, text
+from sqlalchemy import Date, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.issue.enums import Status as IssueStatus
@@ -21,6 +21,7 @@ from tt.platform.db import BaseDBModel
 if TYPE_CHECKING:
     from tt.domains.epic.models import Epic
     from tt.domains.issue.models import Issue
+    from tt.domains.project.models import Project
 
 
 class Milestone(BaseDBModel):
@@ -31,13 +32,27 @@ class Milestone(BaseDBModel):
             "epic_id",
             sqlite_where=text("deleted_at IS NULL"),
         ),
+        # Permanent and never reissued, so unique over deleted rows too — see the
+        # note on ``Issue``.
+        UniqueConstraint("project_id", "number", name="uq_milestones_project_number"),
     )
 
     epic_id: Mapped[int] = mapped_column(ForeignKey("epics.id", ondelete="CASCADE"), index=True)
+    # A milestone's number is scoped to its project, not its epic, so a ref is unique
+    # across the whole project the way an issue's and an epic's are. The epic never
+    # moves projects, so this denormalized ``project_id`` — set from the epic at
+    # creation — is fixed for the milestone's life.
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    # The project-scoped sequence number, drawn at creation. Addressed and shown as
+    # ``<project slug>-<number>`` — the ``ref`` below.
+    number: Mapped[int] = mapped_column()
     title: Mapped[str] = mapped_column(Text)
     due_date: Mapped[date | None] = mapped_column(Date, default=None)
 
     epic: Mapped[Epic] = relationship(lazy="raise")
+    project: Mapped[Project] = relationship(lazy="raise")
     issues: Mapped[list[Issue]] = relationship(back_populates="milestone", lazy="raise")
 
     @property
@@ -70,5 +85,11 @@ class Milestone(BaseDBModel):
     def issue_count(self) -> int:
         return len(self.live_issues)
 
+    @property
+    def ref(self) -> str:
+        """How the milestone is addressed and shown: its project's slug and its
+        project-scoped number, ``ENG-5``. Reads the eagerly-loaded project."""
+        return f"{self.project.slug}-{self.number}"
+
     def subject(self) -> str:
-        return f"milestone {self.id}"
+        return f"milestone {self.ref}"
