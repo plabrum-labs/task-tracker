@@ -20,6 +20,9 @@ description: >-
 - **Issue** — the unit of work. Lives in a project and may *optionally* belong to
   one epic and one milestone (the milestone must be in the issue's epic), carry a
   due date, and wear any number of tags.
+- **Comment** — a dated note under an **issue**: just a body. A thread of them
+  builds up over time; each is editable and deletable. Addressed by its own
+  global `id` (not a ref).
 - **Tag** — a **global** label, many-to-many to issues only, for slicing across
   projects ("all bugs everywhere"). Not owned by any project.
 
@@ -78,11 +81,13 @@ state, so the reliable pattern is to read the current state and then act on it:
 `show` lists the exact actions and their arguments for the object in front of
 you. The full set:
 
-- **Issues** — `edit`, `setStatus`, `setDueDate`, `tagIssue`, `untagIssue`, `delete`.
+- **Issues** — `edit`, `setStatus`, `setDueDate`, `tagIssue`, `untagIssue`,
+  `addComment`, `delete`.
 - **Projects** — `edit`, `delete`, `setPath` (associate a filesystem path),
   `addIssue`, `addEpic`. Plus the top-level `createProject`.
 - **Epics** — `edit`, `setStatus`, `setDueDate`, `addMilestone`, `delete`.
 - **Milestones** — `edit`, `setDueDate`, `delete`.
+- **Comments** — `edit`, `delete`. Created through the issue's `addComment`.
 - **Tags** — `rename`, `delete`. Plus the top-level `createTag`.
 
 Creating (top-level creates take no address):
@@ -91,6 +96,7 @@ Creating (top-level creates take no address):
 - **Issue** (a project action): `tt project action addIssue '{"title":"Fix login","priority":"high"}' --slug web`
 - **Epic** (a project action): `tt project action addEpic '{"title":"v1","due_date":"2026-09-01"}' --slug web`
 - **Milestone** (an epic action): `tt epic action ENG-3 addMilestone '{"title":"alpha","due_date":"2026-09-01"}'`
+- **Comment** (an issue action): `tt issue action ENG-1 addComment '{"body":"first note"}'`
 - **Tag** (top-level): `tt tag action createTag '{"name":"bug"}'`
 
 Spelled-out subcommands exist for a person at a prompt
@@ -148,6 +154,23 @@ tt issue action ENG-1 untagIssue '{"name":"bug"}'
 
 `tagIssue` is idempotent; an unknown tag name is refused, and so is untagging a tag
 the issue does not wear. An issue's current tags show up as `tags` in `issue show`.
+
+## Comments are added on the issue, then edited on their own
+
+A comment is a dated note under an issue. Add one through the issue's `addComment`;
+the issue's live comments (id, body, timestamps) show up as `comments` in
+`issue show`, oldest first. Each comment is then addressed by its own `id` — not a
+ref — for its own `edit` (a whole-object write of the body) and `delete`:
+
+```
+tt issue action ENG-1 addComment '{"body":"first note"}'   # creates comment id N
+tt issue show ENG-1                                         # comments[] lists it
+tt comment show N                                           # the comment + its offers
+tt comment action N edit '{"body":"revised"}'
+tt comment action N delete '{}'
+```
+
+A blank body is refused on both `addComment` and `edit`.
 
 ## Refusals are answers, not errors
 

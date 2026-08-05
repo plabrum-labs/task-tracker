@@ -19,6 +19,11 @@ from sqlalchemy import Engine
 
 from conftest import a_project, an_issue
 from tt import schema
+from tt.domains.comment import Comment
+from tt.domains.comment import actions as comment_actions
+from tt.domains.comment import api as comment_api
+from tt.domains.comment import queries as comment_queries
+from tt.domains.comment import schemas as comment_schemas
 from tt.domains.epic import Epic
 from tt.domains.epic import Status as EpicStatus
 from tt.domains.epic import actions as epic_actions
@@ -101,6 +106,15 @@ def run_milestone[P: BaseModel](
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
         obj = milestone_queries.resolve_ref(tx, milestone_ref)
+        assert obj is not None
+        return action.run(obj, payload, ActionDeps(tx))
+
+
+def run_comment[P: BaseModel](
+    engine: Engine, action: type[ObjectAction[Comment, P]], comment_id: int, payload: P
+) -> ActionResponse:
+    with platform_db.transaction(engine) as tx:
+        obj = comment_queries.get_comment(tx, comment_id)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -1065,6 +1079,93 @@ def test_tag_offers_and_top_level_create() -> None:
     assert tag_actions.tag_actions.top_level_offers()[0].key == "createTag"
 
 
+# --- comments --------------------------------------------------------------
+
+
+def a_comment(engine: Engine, issue_ref: str, body: str) -> int:
+    """Add a comment under the issue named by its ref, and return the comment's id."""
+    response = issue_api.issue_action(engine, "addComment", {"body": body}, issue_ref)
+    assert response.created_id is not None
+    return response.created_id
+
+
+def test_add_comment_creates_one_under_the_issue(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    response = issue_api.issue_action(db, "addComment", {"body": " first note "}, made.ref)
+    assert response.message == "comment 1: created"
+    assert response.created_id == 1
+    with platform_db.reading(db) as s:
+        comment = comment_queries.get_comment(s, 1)
+    assert comment is not None
+    assert comment.body == "first note"  # trimmed
+    # Filed under the issue the ref names.
+    assert comment.issue.ref == made.ref
+
+    # A blank body is the object's refusal.
+    with pytest.raises(Invalid):
+        issue_api.issue_action(db, "addComment", {"body": "   "}, made.ref)
+
+
+def test_comment_edit_rewrites_and_refuses_a_blank_body(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    comment_id = a_comment(db, made.ref, "old note")
+
+    seeded = Comment(id=1, issue_id=1, body="old note")
+    assert comment_actions.EditComment.availability(seeded) == Runnable()
+    assert comment_actions.Delete.availability(seeded) == Runnable()
+
+    response = run_comment(
+        db,
+        comment_actions.EditComment,
+        comment_id,
+        comment_schemas.EditCommentPayload(body=" revised "),
+    )
+    assert response.message == "comment 1: saved"
+    with platform_db.reading(db) as s:
+        read = comment_queries.get_comment(s, comment_id)
+    assert read is not None
+    assert read.body == "revised"  # trimmed
+
+    with pytest.raises(Invalid):
+        run_comment(
+            db,
+            comment_actions.EditComment,
+            comment_id,
+            comment_schemas.EditCommentPayload(body="   "),
+        )
+
+
+def test_comment_delete_stamps_deleted_at(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    comment_id = a_comment(db, made.ref, "note")
+
+    assert run_comment(db, comment_actions.Delete, comment_id, Empty()).message == (
+        "comment 1: deleted"
+    )
+    # A deleted comment no longer resolves.
+    with platform_db.reading(db) as s:
+        assert comment_queries.get_comment(s, comment_id) is None
+
+
+def test_issue_detail_embeds_live_comments_chronologically(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    a_comment(db, made.ref, "first")
+    second = a_comment(db, made.ref, "second")
+    a_comment(db, made.ref, "third")
+
+    # A deleted comment drops out of the issue's thread; the live ones stay in
+    # creation order.
+    comment_api.comment_action(db, "delete", {}, second)
+
+    detail = issue_api.issue_get(db, made.ref)
+    assert detail is not None
+    assert [c.body for c in detail.comments] == ["first", "third"]
+
+
 # --- dispatch through the group -------------------------------------------
 
 
@@ -1079,6 +1180,7 @@ def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
         "setDueDate",
         "tagIssue",
         "untagIssue",
+        "addComment",
         "delete",
     ]
     # An active project with two issues doing: edit is runnable (its archive

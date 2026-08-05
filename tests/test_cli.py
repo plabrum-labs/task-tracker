@@ -59,6 +59,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "setDueDate",
         "tagIssue",
         "untagIssue",
+        "addComment",
         "delete",
     ]
     # ``createProject`` is top-level — no address to hang a subcommand on — so it is
@@ -96,6 +97,9 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
     # ``createTag`` is top-level, reached through the raw ``action`` path rather than
     # generated, so only ``rename`` and ``delete`` grow subcommands.
     assert _names(cli.tag_app) == ["ls", "action", "rename", "delete"]
+    # A comment is created through its issue's ``addComment`` and has no global list,
+    # so its own tree is ``show``/``action`` and the generated ``edit``/``delete``.
+    assert _names(cli.comment_app) == ["show", "action", "edit", "delete"]
 
 
 def test_no_subcommand_opens_the_tui_on_the_chosen_database(
@@ -274,7 +278,15 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
     assert value["issue"]["priority"] == "high"
 
     keys = [action["key"] for action in value["actions"]]
-    assert keys == ["edit", "setStatus", "setDueDate", "tagIssue", "untagIssue", "delete"]
+    assert keys == [
+        "edit",
+        "setStatus",
+        "setDueDate",
+        "tagIssue",
+        "untagIssue",
+        "addComment",
+        "delete",
+    ]
     # Each offer carries a human label alongside its key.
     assert value["actions"][0]["label"] == "Edit"
     # Each action carries its fields, descriptions and all, for an agent to fill in.

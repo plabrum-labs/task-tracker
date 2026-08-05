@@ -14,6 +14,7 @@ action registers by decorating itself with ``issue_actions``.
 
 from datetime import UTC, datetime
 
+from tt.domains.comment.models import Comment
 from tt.domains.epic import queries as epic_queries
 from tt.domains.issue import queries, schemas
 from tt.domains.issue.models import Issue
@@ -174,6 +175,29 @@ class UntagIssue(ObjectAction[Issue, schemas.TagNamePayload]):
             raise Conflict(f'{obj.subject()} is not tagged "{tag.name}"')
         obj.tags.remove(tag)
         return ActionResponse(message=f'{obj.subject()}: untagged "{tag.name}"')
+
+
+@issue_actions
+class AddComment(ObjectAction[Issue, schemas.AddCommentPayload]):
+    # An action on an issue writing to the comments table, the mirror of an epic's
+    # ``AddMilestone``. The store assigns the id, so the message reads the row it
+    # wrote.
+    KEY = "addComment"
+    LABEL = "Add comment"
+    Payload = schemas.AddCommentPayload
+
+    @classmethod
+    def execute(
+        cls, obj: Issue, payload: schemas.AddCommentPayload, deps: ActionDeps
+    ) -> ActionResponse:
+        body = payload.body.strip()
+        if not body:
+            raise Invalid("body is required")
+        comment = Comment(issue=obj, body=body)
+        deps.tx.add(comment)
+        deps.tx.flush()
+        deps.tx.refresh(comment, ["created_at", "updated_at"])
+        return ActionResponse(message=f"{comment.subject()}: created", created_id=comment.id)
 
 
 @issue_actions

@@ -36,6 +36,7 @@ import typer
 from sqlalchemy import Engine
 
 from tt import schema
+from tt.domains.comment import api as comment_api
 from tt.domains.epic import api as epic_api
 from tt.domains.epic.schemas import EpicListItem
 from tt.domains.issue import api as issue_api
@@ -162,6 +163,10 @@ def _tag_write(engine: Engine, tag_id: Any, key: str, payload: dict[str, Any]) -
     return tag_api.tag_action(engine, key, payload, tag_id).message
 
 
+def _comment_write(engine: Engine, comment_id: Any, key: str, payload: dict[str, Any]) -> str:
+    return comment_api.comment_action(engine, key, payload, comment_id).message
+
+
 def _project_init(
     engine: Engine, slug: str, title: str | None, body: str | None, path: str | None
 ) -> str:
@@ -272,6 +277,12 @@ def _issue_show(engine: Engine, ref: str) -> str:
     detail, offers = issue_api.issue_detail(engine, ref)
     actions = [_offer_json(offer) for offer in offers]
     return _pretty({"issue": detail.model_dump(mode="json"), "actions": actions})
+
+
+def _comment_show(engine: Engine, comment_id: int) -> str:
+    detail, offers = comment_api.comment_detail(engine, comment_id)
+    actions = [_offer_json(offer) for offer in offers]
+    return _pretty({"comment": detail.model_dump(mode="json"), "actions": actions})
 
 
 # --- the arguments a typed-in command carries -----------------------------
@@ -519,6 +530,7 @@ issue_app = typer.Typer(help="Issues.", no_args_is_help=True)
 epic_app = typer.Typer(help="Epics.", no_args_is_help=True)
 milestone_app = typer.Typer(help="Milestones.", no_args_is_help=True)
 tag_app = typer.Typer(help="Tags.", no_args_is_help=True)
+comment_app = typer.Typer(help="Comments.", no_args_is_help=True)
 
 
 @project_app.command("ls", help="List live projects.")
@@ -683,6 +695,24 @@ def _tag_action_command(
     _report(lambda: _tag_write(_engine(ctx), id, key, _blob(payload)))
 
 
+@comment_app.command("show", help="Print a comment and what it offers.")
+def _comment_show_command(
+    ctx: typer.Context,
+    id: Annotated[int, typer.Argument(help="The comment's id.")],
+) -> None:
+    _report(lambda: _comment_show(_engine(ctx), id))
+
+
+@comment_app.command("action", help="Run an action by key, passing its arguments as JSON.")
+def _comment_action_command(
+    ctx: typer.Context,
+    id: Annotated[int, typer.Argument(help="The comment's id.")],
+    key: Annotated[str, typer.Argument(help=_KEY_HELP)],
+    payload: Annotated[str, typer.Argument(help=_JSON_HELP)] = "{}",
+) -> None:
+    _report(lambda: _comment_write(_engine(ctx), id, key, _blob(payload)))
+
+
 # The generated subcommands are appended after the fixed ones, so the tree reads
 # ``ls show action`` then a subcommand per action, in the order ``action_schemas``
 # lists them.
@@ -726,12 +756,21 @@ _register_generated(
     "The tag's id.",
     _tag_write,
 )
+_register_generated(
+    comment_app,
+    comment_api.action_schemas(),
+    "id",
+    int,
+    "The comment's id.",
+    _comment_write,
+)
 
 app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
 app.add_typer(epic_app, name="epic")
 app.add_typer(milestone_app, name="milestone")
 app.add_typer(tag_app, name="tag")
+app.add_typer(comment_app, name="comment")
 
 
 def main() -> None:

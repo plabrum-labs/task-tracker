@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from tt.domains.comment.schemas import CommentView
 from tt.domains.issue import queries, schemas
 from tt.domains.issue.actions import issue_actions
 from tt.domains.issue.models import Issue
@@ -54,6 +55,16 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
         epic=_link_ref(issue, issue.epic.number if issue.epic is not None else None),
         milestone=_link_ref(issue, issue.milestone.number if issue.milestone is not None else None),
         tags=sorted(tag.name for tag in issue.tags),
+        comments=[
+            CommentView(
+                id=comment.id,
+                body=comment.body,
+                created_at=comment.created_at,
+                updated_at=comment.updated_at,
+            )
+            for comment in sorted(issue.comments, key=lambda c: c.created_at)
+            if comment.deleted_at is None
+        ],
         created_at=issue.created_at,
         updated_at=issue.updated_at,
     )

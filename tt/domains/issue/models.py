@@ -21,6 +21,7 @@ from tt.platform.db import BaseDBModel
 from tt.platform.enums import IntEnum, TextEnum
 
 if TYPE_CHECKING:
+    from tt.domains.comment.models import Comment
     from tt.domains.epic.models import Epic
     from tt.domains.milestone.models import Milestone
     from tt.domains.project.models import Project
@@ -72,6 +73,10 @@ class Issue(BaseDBModel):
     # Global, cross-cutting, and the one non-exclusive axis: an issue wears any
     # number of tags, and a tag any number of issues, through ``issue_tags``.
     tags: Mapped[list[Tag]] = relationship(secondary=issue_tags, lazy="raise")
+    # The thread of dated notes under the issue. Owned children: a comment lives
+    # and dies with its issue, and is created, edited and deleted through the
+    # comment domain.
+    comments: Mapped[list[Comment]] = relationship(back_populates="issue", lazy="raise")
 
     @property
     def ref(self) -> str:

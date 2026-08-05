@@ -18,6 +18,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
+from tt.domains.comment.schemas import CommentView
 from tt.domains.issue.enums import Priority, Status
 from tt.platform.actions import MULTILINE, REFERENCE
 
@@ -63,6 +64,14 @@ class EditIssuePayload(BaseModel):
             "Blank clears it."
         )
     )
+
+
+class AddCommentPayload(BaseModel):
+    # A comment is created through the issue it hangs off, so its create payload
+    # lives here with the parent, as ``AddMilestonePayload`` lives with the epic.
+    model_config = ConfigDict(extra="forbid")
+
+    body: Annotated[str, MULTILINE] = Field(description="The comment's text.")
 
 
 class SetStatusPayload(BaseModel):
@@ -118,5 +127,6 @@ class IssueDetail(BaseModel):
     epic: str | None
     milestone: str | None
     tags: list[str]
+    comments: list[CommentView]
     created_at: datetime
     updated_at: datetime

@@ -27,6 +27,7 @@ _loaded = (
         selectinload(Issue.epic),
         selectinload(Issue.milestone),
         selectinload(Issue.tags),
+        selectinload(Issue.comments),
     )
     .order_by(Issue.priority.desc(), Issue.created_at.asc())
 )
