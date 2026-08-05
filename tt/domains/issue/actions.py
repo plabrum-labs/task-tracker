@@ -20,6 +20,7 @@ from tt.domains.epic.models import Epic
 from tt.domains.issue import queries, schemas
 from tt.domains.issue.models import Issue
 from tt.domains.milestone.models import Milestone
+from tt.domains.tag import queries as tag_queries
 from tt.platform.actions import (
     ActionDeps,
     ActionGroup,
@@ -135,6 +136,50 @@ class SetDueDate(ObjectAction[Issue, schemas.SetDueDatePayload]):
         obj.due_date = payload.due_date
         when = payload.due_date.isoformat() if payload.due_date is not None else "cleared"
         return ActionResponse(message=f"{obj.subject()}: due {when}")
+
+
+@issue_actions
+class TagIssue(ObjectAction[Issue, schemas.TagNamePayload]):
+    # Attach a tag by name. Idempotent: attaching a tag the issue already wears is a
+    # no-op that still succeeds. An unknown name is refused — a tag is created
+    # through ``createTag``, not conjured by attaching it.
+    KEY = "tagIssue"
+    LABEL = "Tag"
+    Payload = schemas.TagNamePayload
+
+    @classmethod
+    def execute(
+        cls, obj: Issue, payload: schemas.TagNamePayload, deps: ActionDeps
+    ) -> ActionResponse:
+        name = payload.name.strip()
+        tag = tag_queries.get_tag_by_name(deps.tx, name)
+        if tag is None:
+            raise Conflict(f'no tag "{name}"')
+        if tag not in obj.tags:
+            obj.tags.append(tag)
+        return ActionResponse(message=f'{obj.subject()}: tagged "{tag.name}"')
+
+
+@issue_actions
+class UntagIssue(ObjectAction[Issue, schemas.TagNamePayload]):
+    # Detach a tag by name. An unknown name is refused, and so is detaching a tag the
+    # issue does not wear — the request names a link that is not there.
+    KEY = "untagIssue"
+    LABEL = "Untag"
+    Payload = schemas.TagNamePayload
+
+    @classmethod
+    def execute(
+        cls, obj: Issue, payload: schemas.TagNamePayload, deps: ActionDeps
+    ) -> ActionResponse:
+        name = payload.name.strip()
+        tag = tag_queries.get_tag_by_name(deps.tx, name)
+        if tag is None:
+            raise Conflict(f'no tag "{name}"')
+        if tag not in obj.tags:
+            raise Conflict(f'{obj.subject()} is not tagged "{tag.name}"')
+        obj.tags.remove(tag)
+        return ActionResponse(message=f'{obj.subject()}: untagged "{tag.name}"')
 
 
 @issue_actions

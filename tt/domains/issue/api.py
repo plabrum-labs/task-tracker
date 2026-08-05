@@ -44,6 +44,7 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
         due_date=issue.due_date,
         epic=issue.epic_id,
         milestone=issue.milestone_id,
+        tags=sorted(tag.name for tag in issue.tags),
         created_at=issue.created_at,
         updated_at=issue.updated_at,
     )

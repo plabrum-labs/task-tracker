@@ -42,6 +42,11 @@ from tt.domains.project import api as project_api
 from tt.domains.project import queries as project_queries
 from tt.domains.project import schemas as project_schemas
 from tt.domains.project.actions import project_actions as project_group
+from tt.domains.tag import Tag
+from tt.domains.tag import actions as tag_actions
+from tt.domains.tag import api as tag_api
+from tt.domains.tag import queries as tag_queries
+from tt.domains.tag.actions import tag_actions as tag_group
 from tt.platform import db as platform_db
 from tt.platform.actions import (
     ActionDeps,
@@ -895,6 +900,107 @@ def test_edit_refuses_an_unknown_milestone(db: Engine) -> None:
         issue_api.issue_action(db, "edit", _wire_edit(epic=epic_id, milestone=999), made.id)
 
 
+# --- tags ------------------------------------------------------------------
+
+
+def a_tag(engine: Engine, name: str) -> int:
+    response = tag_api.tag_action(engine, "createTag", {"name": name})
+    assert response.created_id is not None
+    return response.created_id
+
+
+def test_create_tag_refuses_a_blank_or_duplicate_live_name(db: Engine) -> None:
+    with platform_db.transaction(db) as tx, pytest.raises(Invalid):
+        tag_group.trigger(ActionDeps(tx), "createTag", {"name": "  "})
+    a_tag(db, "bug")
+    with platform_db.transaction(db) as tx, pytest.raises(Conflict, match="already exists"):
+        tag_group.trigger(ActionDeps(tx), "createTag", {"name": "bug"})
+    # A distinct name goes through.
+    with platform_db.transaction(db) as tx:
+        response = tag_group.trigger(ActionDeps(tx), "createTag", {"name": "ui"})
+    assert response.message == 'tag "ui": created'
+
+
+def test_tag_rename_refuses_a_duplicate_and_delete_frees_the_name(db: Engine) -> None:
+    bug = a_tag(db, "bug")
+    a_tag(db, "ui")
+    # Renaming onto a live name another tag holds is refused.
+    with pytest.raises(Conflict, match="already exists"):
+        tag_api.tag_action(db, "rename", {"name": "ui"}, bug)
+    assert tag_api.tag_action(db, "rename", {"name": "defect"}, bug).message == (
+        'tag "defect": renamed'
+    )
+    with platform_db.reading(db) as s:
+        renamed = tag_queries.get_tag(s, bug)
+    assert renamed is not None
+    assert renamed.name == "defect"
+
+    # A delete frees the name for a new tag — the live-only unique index.
+    tag_api.tag_action(db, "delete", {}, bug)
+    with platform_db.reading(db) as s:
+        assert tag_queries.get_tag(s, bug) is None
+    assert (
+        tag_api.tag_action(db, "createTag", {"name": "defect"}).message == 'tag "defect": created'
+    )
+
+
+def test_tag_and_untag_attach_detach_and_refuse(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    a_tag(db, "bug")
+
+    # Attach, and attaching again is an idempotent success.
+    assert issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.id).message == (
+        'issue 1: tagged "bug"'
+    )
+    issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.id)
+    detail = issue_api.issue_get(db, made.id)
+    assert detail is not None
+    assert detail.tags == ["bug"]
+
+    # An unknown name is refused on both verbs.
+    with pytest.raises(Conflict, match='no tag "nope"'):
+        issue_api.issue_action(db, "tagIssue", {"name": "nope"}, made.id)
+    with pytest.raises(Conflict, match='no tag "nope"'):
+        issue_api.issue_action(db, "untagIssue", {"name": "nope"}, made.id)
+
+    # Detach, and detaching an absent tag is a refusal.
+    assert issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.id).message == (
+        'issue 1: untagged "bug"'
+    )
+    with pytest.raises(Conflict, match='not tagged "bug"'):
+        issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.id)
+
+
+def test_detail_surfaces_an_issues_tags_sorted(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    for name in ["ui", "bug", "perf"]:
+        a_tag(db, name)
+        issue_api.issue_action(db, "tagIssue", {"name": name}, made.id)
+    detail = issue_api.issue_get(db, made.id)
+    assert detail is not None
+    assert detail.tags == ["bug", "perf", "ui"]
+
+
+def test_deleting_a_tag_clears_it_from_every_issue(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = an_issue(db, tt, "wire it")
+    bug = a_tag(db, "bug")
+    issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.id)
+
+    tag_api.tag_action(db, "delete", {}, bug)
+    detail = issue_api.issue_get(db, made.id)
+    assert detail is not None
+    assert detail.tags == []
+
+
+def test_tag_offers_and_top_level_create() -> None:
+    seeded = Tag(id=1, name="bug")
+    assert _keys(tag_group.offers(seeded)) == ["rename", "delete"]
+    assert tag_actions.tag_actions.top_level_offers()[0].key == "createTag"
+
+
 # --- dispatch through the group -------------------------------------------
 
 
@@ -903,7 +1009,14 @@ def _keys(offered: list[Any]) -> list[str]:
 
 
 def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
-    assert _keys(issue_group.offers(issue())) == ["edit", "setStatus", "setDueDate", "delete"]
+    assert _keys(issue_group.offers(issue())) == [
+        "edit",
+        "setStatus",
+        "setDueDate",
+        "tagIssue",
+        "untagIssue",
+        "delete",
+    ]
     # An active project with two issues doing: edit is runnable (its archive
     # precondition is in execute now), delete comes back refused, addIssue runnable
     # — one list, told apart by what each execute writes rather than by which

@@ -71,6 +71,16 @@ class SetStatusPayload(BaseModel):
     status: Status = Field(description="Where the issue is up to.")
 
 
+class TagNamePayload(BaseModel):
+    # Shared by ``tagIssue`` and ``untagIssue``: a tag is addressed by its name, not
+    # its id, because a name is what a person types and what a global vocabulary is
+    # keyed on. Tags stay off the whole-object edit — a many-to-many is not a scalar
+    # column an edit sets — so attaching and detaching are their own focused verbs.
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(description="The name of the tag to attach or detach.")
+
+
 class SetDueDatePayload(BaseModel):
     # The focused due-date move, the mirror of ``SetStatus``: the one field the
     # whole-object edit also carries, sent on its own. A blank clears the date, the
@@ -103,5 +113,6 @@ class IssueDetail(BaseModel):
     due_date: date | None
     epic: int | None
     milestone: int | None
+    tags: list[str]
     created_at: datetime
     updated_at: datetime

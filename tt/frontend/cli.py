@@ -44,6 +44,8 @@ from tt.domains.milestone import api as milestone_api
 from tt.domains.milestone.schemas import MilestoneListItem
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
+from tt.domains.tag import api as tag_api
+from tt.domains.tag.schemas import TagListItem
 from tt.platform import actions
 from tt.platform.actions import REFUSALS, Enum, Field, Invalid, Offer, Refused, Runnable
 
@@ -88,6 +90,10 @@ def _milestone_line(m: MilestoneListItem) -> str:
     progress = f"{m.done}/{total}"
     due = m.due_date.isoformat() if m.due_date is not None else "—"
     return f"{m.id:<4} epic {m.epic:<7} {due:<12} {progress:<8} {m.title}"
+
+
+def _tag_line(t: TagListItem) -> str:
+    return f"{t.id:<4} {t.name}"
 
 
 def _field_json(field: Field) -> dict[str, Any]:
@@ -150,6 +156,10 @@ def _epic_write(engine: Engine, epic_id: Any, key: str, payload: dict[str, Any])
 
 def _milestone_write(engine: Engine, milestone_id: Any, key: str, payload: dict[str, Any]) -> str:
     return milestone_api.milestone_action(engine, key, payload, milestone_id).message
+
+
+def _tag_write(engine: Engine, tag_id: Any, key: str, payload: dict[str, Any]) -> str:
+    return tag_api.tag_action(engine, key, payload, tag_id).message
 
 
 def _project_init(
@@ -247,6 +257,13 @@ def _milestone_show(engine: Engine, milestone_id: int) -> str:
     detail, offers = milestone_api.milestone_detail(engine, milestone_id)
     actions = [_offer_json(offer) for offer in offers]
     return _pretty({"milestone": detail.model_dump(mode="json"), "actions": actions})
+
+
+def _tag_ls(engine: Engine, as_json: bool) -> str:
+    items = tag_api.tag_list(engine)
+    if as_json:
+        return _pretty([item.model_dump(mode="json") for item in items])
+    return "\n".join(_tag_line(t) for t in items)
 
 
 def _issue_show(engine: Engine, issue_id: int) -> str:
@@ -499,6 +516,7 @@ project_app = typer.Typer(help="Projects.", no_args_is_help=True)
 issue_app = typer.Typer(help="Issues.", no_args_is_help=True)
 epic_app = typer.Typer(help="Epics.", no_args_is_help=True)
 milestone_app = typer.Typer(help="Milestones.", no_args_is_help=True)
+tag_app = typer.Typer(help="Tags.", no_args_is_help=True)
 
 
 @project_app.command("ls", help="List live projects.")
@@ -638,6 +656,29 @@ def _milestone_action_command(
     _report(lambda: _milestone_write(_engine(ctx), id, key, _blob(payload)))
 
 
+@tag_app.command("ls", help="List live tags.")
+def _tag_ls_command(
+    ctx: typer.Context,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
+    ] = False,
+) -> None:
+    _report(lambda: _tag_ls(_engine(ctx), as_json))
+
+
+@tag_app.command("action", help="Run an action by key, passing its arguments as JSON.")
+def _tag_action_command(
+    ctx: typer.Context,
+    key: Annotated[str, typer.Argument(help=_KEY_HELP)],
+    payload: Annotated[str, typer.Argument(help=_JSON_HELP)] = "{}",
+    id: Annotated[
+        int | None,
+        typer.Option("--id", help="The tag to run against. Omit for a top-level action."),
+    ] = None,
+) -> None:
+    _report(lambda: _tag_write(_engine(ctx), id, key, _blob(payload)))
+
+
 # The generated subcommands are appended after the fixed ones, so the tree reads
 # ``ls show action`` then a subcommand per action, in the order ``action_schemas``
 # lists them.
@@ -673,11 +714,20 @@ _register_generated(
     "The milestone's id.",
     _milestone_write,
 )
+_register_generated(
+    tag_app,
+    tag_api.action_schemas(),
+    "id",
+    int,
+    "The tag's id.",
+    _tag_write,
+)
 
 app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
 app.add_typer(epic_app, name="epic")
 app.add_typer(milestone_app, name="milestone")
+app.add_typer(tag_app, name="tag")
 
 
 def main() -> None:

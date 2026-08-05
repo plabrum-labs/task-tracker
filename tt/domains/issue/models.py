@@ -16,6 +16,7 @@ from sqlalchemy import Date, ForeignKey, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.issue.enums import Priority, Status
+from tt.domains.tag.models import Tag, issue_tags
 from tt.platform.db import BaseDBModel
 from tt.platform.enums import IntEnum, TextEnum
 
@@ -60,6 +61,9 @@ class Issue(BaseDBModel):
     project: Mapped[Project] = relationship(back_populates="issues", lazy="raise")
     epic: Mapped[Epic | None] = relationship(back_populates="issues", lazy="raise")
     milestone: Mapped[Milestone | None] = relationship(back_populates="issues", lazy="raise")
+    # Global, cross-cutting, and the one non-exclusive axis: an issue wears any
+    # number of tags, and a tag any number of issues, through ``issue_tags``.
+    tags: Mapped[list[Tag]] = relationship(secondary=issue_tags, lazy="raise")
 
     def subject(self) -> str:
         return f"issue {self.id}"

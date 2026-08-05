@@ -7,7 +7,7 @@ row. Liveness is carried by construction: an issue is live when its own
 """
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, contains_eager
+from sqlalchemy.orm import Session, contains_eager, selectinload
 
 from tt.domains.issue.models import Issue
 from tt.domains.project.models import Project
@@ -15,7 +15,7 @@ from tt.domains.project.models import Project
 _loaded = (
     select(Issue)
     .join(Issue.project)
-    .options(contains_eager(Issue.project))
+    .options(contains_eager(Issue.project), selectinload(Issue.tags))
     .order_by(Issue.priority.desc(), Issue.created_at.asc())
 )
 
