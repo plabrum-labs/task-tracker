@@ -71,8 +71,13 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
 
 
 @with_transaction
-def issue_list(tx: Session, project_slug: str) -> list[schemas.IssueListItem]:
-    return [_list_item(issue) for issue in queries.list_issues(tx, project_slug)]
+def issue_list(
+    tx: Session,
+    project_slug: str,
+    filter: queries.IssueFilter | None = None,
+    sort: queries.IssueSort | None = None,
+) -> list[schemas.IssueListItem]:
+    return [_list_item(issue) for issue in queries.list_issues(tx, project_slug, filter, sort)]
 
 
 @with_transaction

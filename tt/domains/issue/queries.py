@@ -10,13 +10,23 @@ own ``deleted_at`` is null, and both list reads add that its project is live too
 ``get_issue`` addresses by the global id — the path a create's ``created_id`` and a
 test's seed take. ``resolve_ref`` addresses by the ``<slug>-<number>`` ref, and is
 the ``locate`` the action dispatch runs through.
+
+``list_issues`` narrows and orders through an ``IssueFilter`` and an ``IssueSort``.
+The filter's epic and milestone are ids, not refs: resolving a ref to the row it
+names is a frontend's job, so this layer only names columns and never a ``<slug>-
+<number>`` string.
 """
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, contains_eager, selectinload
+from dataclasses import dataclass
+from typing import Any
 
+from sqlalchemy import Case, UnaryExpression, case, nulls_last, select
+from sqlalchemy.orm import InstrumentedAttribute, Session, contains_eager, selectinload
+
+from tt.domains.issue.enums import Direction, SortField, Status
 from tt.domains.issue.models import Issue
 from tt.domains.project.models import Project
+from tt.domains.tag.models import Tag
 from tt.platform.refs import parse_ref
 
 # The eager loads every read shares. The list read adds the ordering; the two
@@ -35,13 +45,100 @@ _loaded = (
 )
 
 
-def list_issues(db: Session, project_slug: str) -> list[Issue]:
-    """Live issues of a live project, high priority first then oldest first."""
+@dataclass(frozen=True)
+class IssueFilter:
+    """What narrows a list of issues. Each axis is optional and they combine with
+    AND, so an empty filter is every live issue of the project."""
+
+    tag: str | None = None
+    epic_id: int | None = None
+    milestone_id: int | None = None
+
+
+@dataclass(frozen=True)
+class IssueSort:
+    """How a list of issues is ordered. ``direction`` left at ``None`` takes the
+    field's natural direction, so ``--sort due`` reads soonest-first without the
+    caller spelling it out."""
+
+    field: SortField = SortField.PRIORITY
+    direction: Direction | None = None
+
+
+# The direction a field sorts by when the caller names none: priority and how
+# recently a row was touched read high-first, a date or the workflow order reads
+# ascending.
+_NATURAL: dict[SortField, Direction] = {
+    SortField.PRIORITY: Direction.DESC,
+    SortField.CREATED: Direction.ASC,
+    SortField.UPDATED: Direction.DESC,
+    SortField.DUE: Direction.ASC,
+    SortField.STATUS: Direction.ASC,
+}
+
+
+def _status_rank() -> Case[int]:
+    """The workflow position of an issue's status. The column stores the member
+    name, whose alphabetical order (``backlog``, ``doing``, ``done`` …) is not the
+    workflow order, so the sort ranks by the enum's declared order instead."""
+    return case(
+        *[(Issue.status == status, rank) for rank, status in enumerate(Status)],
+        else_=len(Status),
+    )
+
+
+# The sort columns are a mapped attribute or the status ``CASE``. The ``Any`` is
+# the element type, which ``InstrumentedAttribute`` is invariant in, so the four
+# differently-typed columns and the int rank cannot share a narrower parameter.
+def _column(field: SortField) -> InstrumentedAttribute[Any] | Case[Any]:
+    match field:
+        case SortField.PRIORITY:
+            return Issue.priority
+        case SortField.CREATED:
+            return Issue.created_at
+        case SortField.UPDATED:
+            return Issue.updated_at
+        case SortField.DUE:
+            return Issue.due_date
+        case SortField.STATUS:
+            return _status_rank()
+
+
+def _ordering(sort: IssueSort) -> list[UnaryExpression[Any]]:
+    """The ``ORDER BY`` terms for a sort: the chosen key, then a stable tiebreak so
+    equal keys keep a fixed order and an undated issue sorts last however the date
+    axis runs."""
+    direction = sort.direction or _NATURAL[sort.field]
+    column = _column(sort.field)
+    primary = column.desc() if direction is Direction.DESC else column.asc()
+    if sort.field is SortField.DUE:
+        primary = nulls_last(primary)
+    return [primary, Issue.created_at.asc(), Issue.id.asc()]
+
+
+def list_issues(
+    db: Session,
+    project_slug: str,
+    filter: IssueFilter | None = None,
+    sort: IssueSort | None = None,
+) -> list[Issue]:
+    """Live issues of a live project the filter admits, in the sort's order.
+    Defaults to every issue, high priority first then oldest first."""
+    filter = filter or IssueFilter()
+    sort = sort or IssueSort()
     stmt = _loaded.where(
         Issue.deleted_at.is_(None),
         Project.deleted_at.is_(None),
         Project.slug == project_slug,
-    ).order_by(Issue.priority.desc(), Issue.created_at.asc())
+    ).order_by(*_ordering(sort))
+    if filter.tag is not None:
+        # ``any`` rather than a join so an issue wearing the tag is returned once,
+        # not once per matching link row.
+        stmt = stmt.where(Issue.tags.any((Tag.name == filter.tag) & Tag.deleted_at.is_(None)))
+    if filter.epic_id is not None:
+        stmt = stmt.where(Issue.epic_id == filter.epic_id)
+    if filter.milestone_id is not None:
+        stmt = stmt.where(Issue.milestone_id == filter.milestone_id)
     return list(db.scalars(stmt))
 
 

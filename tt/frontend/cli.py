@@ -40,6 +40,8 @@ from tt.domains.comment import api as comment_api
 from tt.domains.epic import api as epic_api
 from tt.domains.epic.schemas import EpicListItem
 from tt.domains.issue import api as issue_api
+from tt.domains.issue.enums import Direction, SortField
+from tt.domains.issue.queries import IssueFilter, IssueSort
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.milestone import api as milestone_api
 from tt.domains.milestone.schemas import MilestoneListItem
@@ -49,6 +51,7 @@ from tt.domains.tag import api as tag_api
 from tt.domains.tag.schemas import TagListItem
 from tt.platform import actions
 from tt.platform.actions import REFUSALS, Enum, Field, Invalid, Offer, Refused, Runnable
+from tt.platform.refs import parse_ref
 
 # A refusal is the object's answer, not a usage error, so it is neither Click's 2
 # nor a success. 123 is what the Rust and OCaml spikes both return for the same
@@ -197,14 +200,79 @@ def _project_ls(engine: Engine, as_json: bool) -> str:
     return "\n".join(_project_line(p) for p in items)
 
 
-def _issue_ls(engine: Engine, project_slug: str | None, as_json: bool) -> str:
-    if project_slug is not None:
+def _parse_sort(raw: str | None) -> IssueSort:
+    """A ``--sort`` value, ``<field>[:<direction>]``, as the sort it names. A bad
+    field or direction is a usage error listing what is allowed, not a refusal — it
+    is the invocation that is wrong, not the data."""
+    if raw is None:
+        return IssueSort()
+    field_text, sep, direction_text = raw.partition(":")
+    try:
+        field = SortField(field_text)
+    except ValueError as e:
+        allowed = ", ".join(f.value for f in SortField)
+        raise typer.BadParameter(
+            f"unknown sort field {field_text!r}; choose one of {allowed}"
+        ) from e
+    if not sep:
+        return IssueSort(field=field)
+    try:
+        direction = Direction(direction_text)
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"unknown sort direction {direction_text!r}; use asc or desc"
+        ) from e
+    return IssueSort(field=field, direction=direction)
+
+
+def _epic_id(engine: Engine, project_slug: str, ref: str) -> int:
+    """The id of the epic a ref names within the project, or a refusal. The ref
+    carries its own project's slug, so one from another project is no epic here."""
+    epic = epic_api.epic_get(engine, ref)
+    if epic is None or epic.project != project_slug:
+        raise Invalid(f"no epic {ref} in project {project_slug!r}")
+    return epic.id
+
+
+def _milestone_id(engine: Engine, project_slug: str, ref: str) -> int:
+    """The id of the milestone a ref names within the project, or a refusal. A
+    milestone's ref is ``<project slug>-<number>`` like an epic's, so its slug is
+    what places it in the project."""
+    milestone = milestone_api.milestone_get(engine, ref)
+    parsed = parse_ref(ref)
+    if milestone is None or parsed is None or parsed[0] != project_slug:
+        raise Invalid(f"no milestone {ref} in project {project_slug!r}")
+    return milestone.id
+
+
+def _issue_ls(
+    engine: Engine,
+    project_slug: str | None,
+    tag: str | None,
+    epic: str | None,
+    milestone: str | None,
+    sort: IssueSort,
+    as_json: bool,
+) -> str:
+    if project_slug is None:
+        # An epic or milestone ref is project-scoped, so filtering by one only makes
+        # sense once a project is named; a bare ref would range over every project.
+        if epic is not None or milestone is not None:
+            raise typer.BadParameter("--epic and --milestone need --project")
+        slugs = [p.slug for p in project_api.project_list(engine)]
+        filter = IssueFilter(tag=tag)
+    else:
         if project_api.project_get(engine, project_slug) is None:
             raise Invalid(f"no project {project_slug!r}")
         slugs = [project_slug]
-    else:
-        slugs = [p.slug for p in project_api.project_list(engine)]
-    items = [issue for slug in slugs for issue in issue_api.issue_list(engine, slug)]
+        filter = IssueFilter(
+            tag=tag,
+            epic_id=_epic_id(engine, project_slug, epic) if epic is not None else None,
+            milestone_id=_milestone_id(engine, project_slug, milestone)
+            if milestone is not None
+            else None,
+        )
+    items = [issue for slug in slugs for issue in issue_api.issue_list(engine, slug, filter, sort)]
     if as_json:
         return _pretty([item.model_dump(mode="json") for item in items])
     return "\n".join(_issue_line(i) for i in items)
@@ -587,11 +655,34 @@ def _project_init_command(
 def _issue_ls_command(
     ctx: typer.Context,
     project: Annotated[str | None, typer.Option("--project", help="Only this project.")] = None,
+    tag: Annotated[str | None, typer.Option("--tag", help="Only issues wearing this tag.")] = None,
+    epic: Annotated[
+        str | None,
+        typer.Option("--epic", help="Only this epic's issues, by ref e.g. eng-3. Needs --project."),
+    ] = None,
+    milestone: Annotated[
+        str | None,
+        typer.Option(
+            "--milestone",
+            help="Only this milestone's issues, by ref e.g. eng-5. Needs --project.",
+        ),
+    ] = None,
+    sort: Annotated[
+        str | None,
+        typer.Option(
+            "--sort",
+            help=(
+                "Order as <field>[:asc|desc], field one of priority, created, updated, due, status."
+            ),
+        ),
+    ] = None,
     as_json: Annotated[
         bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
     ] = False,
 ) -> None:
-    _report(lambda: _issue_ls(_engine(ctx), project, as_json))
+    _report(
+        lambda: _issue_ls(_engine(ctx), project, tag, epic, milestone, _parse_sort(sort), as_json)
+    )
 
 
 @issue_app.command("show", help="Print an issue and what it offers.")

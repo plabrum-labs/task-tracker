@@ -58,6 +58,9 @@ state, so the reliable pattern is to read the current state and then act on it:
    - `tt project ls --json` — live projects, each with its issue rollup
      (`backlog`, `planning`, `todo`, `doing`, `done`).
    - `tt issue ls --json` — live issues; add `--project SLUG` to scope to one.
+     Filter with `--tag NAME`, `--epic REF`, `--milestone REF` (the last two need
+     `--project`), and order with `--sort <field>[:asc|desc]`, field one of
+     `priority`, `created`, `updated`, `due`, `status` (e.g. `--sort due:desc`).
    - `tt epic ls --json` — live epics; add `--project SLUG` to scope to one.
    - `tt milestone ls --json` — live milestones; add `--epic REF` to scope to one.
    - `tt tag ls --json` — the global tag vocabulary.

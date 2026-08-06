@@ -11,18 +11,23 @@ the transaction it writes, the way an action does, so an edit is a mutation the
 session flushes and a delete stamps ``deleted_at`` inline.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from conftest import a_project, an_issue
+from tt.domains.epic import api as epic_api
 from tt.domains.issue import Issue, Priority, Status
 from tt.domains.issue import queries as issue_queries
+from tt.domains.issue.enums import Direction, SortField
+from tt.domains.issue.queries import IssueFilter, IssueSort
 from tt.domains.project import Project
 from tt.domains.project import Status as ProjectStatus
+from tt.domains.project import api as project_api
 from tt.domains.project import queries as project_queries
+from tt.domains.tag.models import Tag
 from tt.platform import db as platform_db
 
 
@@ -242,3 +247,108 @@ def test_the_enum_round_trips_through_the_column_it_is_stored_in(db: Engine) -> 
         archived = project_queries.get_project(s, "tt")
     assert archived is not None
     assert archived.status == ProjectStatus.ARCHIVED
+
+
+# --- filtering and sorting ------------------------------------------------
+
+
+def _set(db: Engine, issue_id: int, **columns: object) -> None:
+    """Set columns on a live issue in its own transaction — the way an action
+    would, so a filter and sort test reads back what the database persisted."""
+    with platform_db.transaction(db) as tx:
+        issue = issue_queries.get_issue(tx, issue_id)
+        assert issue is not None
+        for name, value in columns.items():
+            setattr(issue, name, value)
+
+
+def test_sort_by_priority_takes_its_direction(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    an_issue(db, tt, "lo", Priority.LOW)
+    an_issue(db, tt, "hi", Priority.URGENT)
+    an_issue(db, tt, "mid", Priority.MEDIUM)
+    with platform_db.reading(db) as s:
+        ascending = issue_queries.list_issues(
+            s, "tt", sort=IssueSort(SortField.PRIORITY, Direction.ASC)
+        )
+    assert _titles(ascending) == ["lo", "mid", "hi"]
+
+
+def test_sort_by_due_date_keeps_undated_last_either_way(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    soon = an_issue(db, tt, "soon")
+    later = an_issue(db, tt, "later")
+    an_issue(db, tt, "undated")
+    _set(db, soon.id, due_date=date(2026, 1, 1))
+    _set(db, later.id, due_date=date(2026, 6, 1))
+
+    with platform_db.reading(db) as s:
+        ascending = issue_queries.list_issues(s, "tt", sort=IssueSort(SortField.DUE))
+    assert _titles(ascending) == ["soon", "later", "undated"]
+
+    # Reversing the date axis flips the two dated rows but the undated one, having
+    # no date to place, stays at the end rather than jumping to the front.
+    with platform_db.reading(db) as s:
+        descending = issue_queries.list_issues(
+            s, "tt", sort=IssueSort(SortField.DUE, Direction.DESC)
+        )
+    assert _titles(descending) == ["later", "soon", "undated"]
+
+
+def test_sort_by_status_follows_the_workflow_not_the_member_name(db: Engine) -> None:
+    # backlog < todo < doing by workflow order, but backlog < doing < todo by the
+    # alphabetical order of the stored names, so the two orders disagree and the
+    # result shows which one the sort uses.
+    tt = a_project(db, "tt")
+    doing = an_issue(db, tt, "doing_one")
+    backlog = an_issue(db, tt, "backlog_one")
+    todo = an_issue(db, tt, "todo_one")
+    _set(db, doing.id, status=Status.DOING)
+    _set(db, backlog.id, status=Status.BACKLOG)
+    _set(db, todo.id, status=Status.TODO)
+    with platform_db.reading(db) as s:
+        rows = issue_queries.list_issues(s, "tt", sort=IssueSort(SortField.STATUS))
+    assert _titles(rows) == ["backlog_one", "todo_one", "doing_one"]
+
+
+def test_filter_by_tag_keeps_only_the_tagged_issues(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    tagged = an_issue(db, tt, "tagged")
+    an_issue(db, tt, "untagged")
+    with platform_db.transaction(db) as tx:
+        issue = issue_queries.get_issue(tx, tagged.id)
+        assert issue is not None
+        bug = Tag(name="bug")
+        tx.add(bug)
+        issue.tags.append(bug)
+    with platform_db.reading(db) as s:
+        rows = issue_queries.list_issues(s, "tt", filter=IssueFilter(tag="bug"))
+    assert _titles(rows) == ["tagged"]
+
+
+def test_filter_by_epic_keeps_only_that_epics_issues(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    made = project_api.project_action(db, "addEpic", {"title": "v1"}, "tt")
+    epic_id = made.created_id
+    assert epic_id is not None
+    inside = an_issue(db, tt, "inside")
+    an_issue(db, tt, "outside")
+    _set(db, inside.id, epic_id=epic_id)
+    with platform_db.reading(db) as s:
+        rows = issue_queries.list_issues(s, "tt", filter=IssueFilter(epic_id=epic_id))
+    assert _titles(rows) == ["inside"]
+
+
+def test_filter_by_milestone_keeps_only_that_milestones_issues(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    epic = project_api.project_action(db, "addEpic", {"title": "v1"}, "tt")
+    assert epic.created_id is not None
+    milestone = epic_api.epic_action(db, "addMilestone", {"title": "m1"}, "tt-1")
+    milestone_id = milestone.created_id
+    assert milestone_id is not None
+    inside = an_issue(db, tt, "inside")
+    an_issue(db, tt, "outside")
+    _set(db, inside.id, epic_id=epic.created_id, milestone_id=milestone_id)
+    with platform_db.reading(db) as s:
+        rows = issue_queries.list_issues(s, "tt", filter=IssueFilter(milestone_id=milestone_id))
+    assert _titles(rows) == ["inside"]

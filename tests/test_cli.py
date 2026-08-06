@@ -369,3 +369,55 @@ def test_an_unknown_object_or_malformed_json_is_invalid_rather_than_a_crash(data
     assert invoke(database, "project", "show", "nope").exit_code == cli.REFUSED
     malformed = invoke(database, "issue", "action", "tt-1", "edit", "not json")
     assert malformed.exit_code == cli.REFUSED
+
+
+def test_issue_ls_epic_and_milestone_filters_need_a_project(database: str) -> None:
+    # A project-scoped ref has nowhere to resolve without a project, so pairing one
+    # with no ``--project`` is a usage error, not a refusal from a live row.
+    assert invoke(database, "issue", "ls", "--epic", "tt-1").exit_code == USAGE
+    assert invoke(database, "issue", "ls", "--milestone", "tt-1").exit_code == USAGE
+
+
+def test_issue_ls_rejects_an_unknown_sort_as_a_usage_error(database: str) -> None:
+    bad_field = invoke(database, "issue", "ls", "--project", "tt", "--sort", "bogus")
+    assert bad_field.exit_code == USAGE
+    bad_direction = invoke(database, "issue", "ls", "--project", "tt", "--sort", "due:sideways")
+    assert bad_direction.exit_code == USAGE
+
+
+def test_issue_ls_unknown_or_foreign_epic_is_a_refusal(database: str) -> None:
+    # An epic that names no row, and one that lives in another project, are both the
+    # object answer "no such epic here" (123), distinct from a malformed invocation.
+    assert invoke(database, "issue", "ls", "--project", "tt", "--epic", "tt-99").exit_code == (
+        cli.REFUSED
+    )
+    invoke(database, "project", "action", "createProject", '{"slug":"web","title":"Web"}')
+    invoke(database, "project", "action", "addEpic", '{"title":"v1"}', "--slug", "web")
+    foreign = invoke(database, "issue", "ls", "--project", "tt", "--epic", "web-1")
+    assert foreign.exit_code == cli.REFUSED
+
+
+def test_issue_ls_filters_by_tag_and_sorts_by_the_chosen_field(database: str) -> None:
+    invoke(
+        database,
+        "project",
+        "action",
+        "addIssue",
+        '{"title":"later","priority":"low"}',
+        "--slug",
+        "tt",
+    )
+    invoke(database, "tag", "action", "createTag", '{"name":"bug"}')
+    invoke(database, "issue", "action", "tt-1", "tagIssue", '{"name":"bug"}')
+
+    tagged = json.loads(
+        invoke(database, "issue", "ls", "--project", "tt", "--tag", "bug", "--json").output
+    )
+    assert [row["ref"] for row in tagged] == ["tt-1"]
+
+    ascending = json.loads(
+        invoke(
+            database, "issue", "ls", "--project", "tt", "--sort", "priority:asc", "--json"
+        ).output
+    )
+    assert [row["title"] for row in ascending] == ["later", "ship the mvp"]
