@@ -303,6 +303,25 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
     }
 
 
+def test_add_dependency_over_the_cli_and_a_cycle_is_a_refusal(database: str) -> None:
+    # The generated subcommand takes the blocker as a ref option. tt-1 is the
+    # fixture's issue; tt-2 is added here and blocked by tt-1.
+    invoke(database, "project", "action", "addIssue", '{"title":"b"}', "--slug", "tt")
+    added = invoke(database, "issue", "addDependency", "tt-2", "--blocker", "tt-1")
+    assert added.exit_code == 0
+    assert "blocked by tt-1" in added.output
+    shown = json.loads(invoke(database, "issue", "show", "tt-2").output)
+    assert shown["issue"]["blocked_by"] == ["tt-1"]
+    assert shown["issue"]["blocked"] is True
+    # The blocked issue carries the marker in the text list.
+    listed = invoke(database, "issue", "ls", "--project", "tt")
+    assert "⊘" in listed.output
+    # Closing the loop the other way is the object's refusal (123), not a usage error.
+    cycle = invoke(database, "issue", "addDependency", "tt-1", "--blocker", "tt-2")
+    assert cycle.exit_code == cli.REFUSED
+    assert "cycle" in cycle.output
+
+
 def test_ls_json_emits_a_structured_array_and_text_stays_the_default(database: str) -> None:
     projects = invoke(database, "project", "ls", "--json")
     assert projects.exit_code == 0
