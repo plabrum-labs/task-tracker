@@ -59,6 +59,8 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "setDueDate",
         "tagIssue",
         "untagIssue",
+        "addDependency",
+        "removeDependency",
         "addComment",
         "delete",
     ]
@@ -284,6 +286,8 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
         "setDueDate",
         "tagIssue",
         "untagIssue",
+        "addDependency",
+        "removeDependency",
         "addComment",
         "delete",
     ]

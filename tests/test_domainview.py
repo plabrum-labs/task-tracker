@@ -15,7 +15,9 @@ from tt.frontend.tui import domainview as dv
 from tt.platform.actions import Offer, Refused, Runnable
 
 
-def _item(issue_id: int, status: str = "todo", priority: str = "medium") -> IssueListItem:
+def _item(
+    issue_id: int, status: str = "todo", priority: str = "medium", blocked: bool = False
+) -> IssueListItem:
     return IssueListItem(
         id=issue_id,
         ref=f"tt-{issue_id}",
@@ -26,6 +28,7 @@ def _item(issue_id: int, status: str = "todo", priority: str = "medium") -> Issu
         due_date=None,
         epic=None,
         milestone=None,
+        blocked=blocked,
     )
 
 

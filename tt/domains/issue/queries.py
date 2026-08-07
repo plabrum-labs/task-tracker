@@ -17,14 +17,21 @@ names is a frontend's job, so this layer only names columns and never a ``<slug>
 <number>`` string.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Case, UnaryExpression, case, nulls_last, select
-from sqlalchemy.orm import InstrumentedAttribute, Session, contains_eager, selectinload
+from sqlalchemy.orm import (
+    InstrumentedAttribute,
+    Session,
+    aliased,
+    contains_eager,
+    selectinload,
+)
 
 from tt.domains.issue.enums import Direction, SortField, Status
-from tt.domains.issue.models import Issue
+from tt.domains.issue.models import Issue, issue_dependencies
 from tt.domains.project.models import Project
 from tt.domains.tag.models import Tag
 from tt.platform.refs import parse_ref
@@ -41,6 +48,8 @@ _loaded = (
         selectinload(Issue.milestone),
         selectinload(Issue.tags),
         selectinload(Issue.comments),
+        selectinload(Issue.blocked_by),
+        selectinload(Issue.blocks),
     )
 )
 
@@ -166,3 +175,48 @@ def resolve_ref(db: Session, ref: str) -> Issue | None:
         Issue.number == number,
     )
     return db.scalars(stmt).first()
+
+
+def _live_edges(db: Session) -> list[tuple[int, int]]:
+    """Every blocking edge whose two endpoints are both live, as ``(blocker_id,
+    blocked_id)`` pairs. A soft-deleted issue drops out of the graph — it neither
+    blocks nor is blocked — so a dead intermediary cannot carry a cycle."""
+    blocker = aliased(Issue)
+    blocked = aliased(Issue)
+    stmt = (
+        select(issue_dependencies.c.blocker_id, issue_dependencies.c.blocked_id)
+        .join(blocker, blocker.id == issue_dependencies.c.blocker_id)
+        .join(blocked, blocked.id == issue_dependencies.c.blocked_id)
+        .where(blocker.deleted_at.is_(None), blocked.deleted_at.is_(None))
+    )
+    return [(int(a), int(b)) for a, b in db.execute(stmt).all()]
+
+
+def blocks_downstream(edges: Iterable[tuple[int, int]], start: int) -> set[int]:
+    """Every node reachable from ``start`` by following blocker→blocked edges,
+    ``start`` itself excluded. Pure over the edge list so the cycle guard's
+    reachability is driven directly in tests, no database in sight."""
+    forward: dict[int, set[int]] = {}
+    for blocker, blocked in edges:
+        forward.setdefault(blocker, set()).add(blocked)
+    reached: set[int] = set()
+    _reach(forward, start, reached)
+    return reached
+
+
+def _reach(forward: dict[int, set[int]], node: int, reached: set[int]) -> None:
+    """Accumulate into ``reached`` every node forward-reachable from ``node``.
+    Recursive rather than a work-list: a dependency graph is small and shallow, and
+    ``reached`` guards against revisiting a node so a cycle already in the data
+    terminates the walk."""
+    for nxt in forward.get(node, frozenset()):
+        if nxt not in reached:
+            reached.add(nxt)
+            _reach(forward, nxt, reached)
+
+
+def blocks_closure(db: Session, issue_id: int) -> set[int]:
+    """Every live issue the given one transitively blocks. The engine behind the
+    cycle guard: adding ``blocker`` → ``obj`` would close a loop exactly when ``obj``
+    already sits in the set of issues ``blocker`` reaches."""
+    return blocks_downstream(_live_edges(db), issue_id)

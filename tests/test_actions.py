@@ -1079,6 +1079,144 @@ def test_tag_offers_and_top_level_create() -> None:
     assert tag_actions.tag_actions.top_level_offers()[0].key == "createTag"
 
 
+# --- dependencies ----------------------------------------------------------
+
+
+def test_add_dependency_records_a_blocker_and_surfaces_it(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "groundwork")
+    b = an_issue(db, tt, "depends on a")
+
+    # b is blocked by a: the ref names the blocker.
+    assert issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, b.ref).message == (
+        f"issue {b.ref}: blocked by {a.ref}"
+    )
+    b_detail = issue_api.issue_get(db, b.ref)
+    assert b_detail is not None
+    assert b_detail.blocked_by == [a.ref]
+    assert b_detail.blocks == []
+    # The mirror: a blocks b, read from a's own end.
+    a_detail = issue_api.issue_get(db, a.ref)
+    assert a_detail is not None
+    assert a_detail.blocks == [b.ref]
+    assert a_detail.blocked_by == []
+
+
+def test_add_dependency_is_idempotent(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "groundwork")
+    b = an_issue(db, tt, "depends on a")
+    issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, b.ref)
+    # Adding the same edge again succeeds and does not double it.
+    issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, b.ref)
+    detail = issue_api.issue_get(db, b.ref)
+    assert detail is not None
+    assert detail.blocked_by == [a.ref]
+
+
+def test_add_dependency_refuses_self_unknown_and_cross_project(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    web = a_project(db, "web")
+    a = an_issue(db, tt, "here")
+    foreign = an_issue(db, web, "elsewhere")
+
+    with pytest.raises(Conflict, match="cannot block itself"):
+        issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, a.ref)
+    with pytest.raises(Conflict, match="no issue tt-999"):
+        issue_api.issue_action(db, "addDependency", {"blocker": "tt-999"}, a.ref)
+    with pytest.raises(Conflict, match="not in this project"):
+        issue_api.issue_action(db, "addDependency", {"blocker": foreign.ref}, a.ref)
+
+
+def test_remove_dependency_drops_an_edge_and_refuses_an_absent_one(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "groundwork")
+    b = an_issue(db, tt, "depends on a")
+
+    # Removing an edge that is not there is a refusal.
+    with pytest.raises(Conflict, match=f"is not blocked by {a.ref}"):
+        issue_api.issue_action(db, "removeDependency", {"blocker": a.ref}, b.ref)
+
+    issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, b.ref)
+    assert issue_api.issue_action(db, "removeDependency", {"blocker": a.ref}, b.ref).message == (
+        f"issue {b.ref}: no longer blocked by {a.ref}"
+    )
+    detail = issue_api.issue_get(db, b.ref)
+    assert detail is not None
+    assert detail.blocked_by == []
+
+
+def test_add_dependency_refuses_an_unknown_blocker_on_remove_too(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "here")
+    with pytest.raises(Conflict, match="no issue tt-999"):
+        issue_api.issue_action(db, "removeDependency", {"blocker": "tt-999"}, a.ref)
+
+
+def test_add_dependency_refuses_a_direct_two_node_cycle(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "a")
+    b = an_issue(db, tt, "b")
+    # a is blocked by b; now blocking b by a would close a 2-node loop.
+    issue_api.issue_action(db, "addDependency", {"blocker": b.ref}, a.ref)
+    with pytest.raises(Conflict, match="would create a dependency cycle"):
+        issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, b.ref)
+
+
+def test_add_dependency_refuses_a_transitive_cycle(db: Engine) -> None:
+    # A blocks B blocks C; closing C→block→A would make the chain a loop.
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "a")
+    b = an_issue(db, tt, "b")
+    c = an_issue(db, tt, "c")
+    issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, b.ref)  # B blocked by A
+    issue_api.issue_action(db, "addDependency", {"blocker": b.ref}, c.ref)  # C blocked by B
+    with pytest.raises(Conflict, match="would create a dependency cycle"):
+        issue_api.issue_action(db, "addDependency", {"blocker": c.ref}, a.ref)  # A blocked by C
+
+
+def test_blocked_is_true_until_the_blocker_is_done_and_false_when_deleted(db: Engine) -> None:
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "groundwork")
+    b = an_issue(db, tt, "depends on a")
+    issue_api.issue_action(db, "addDependency", {"blocker": a.ref}, b.ref)
+
+    # An unfinished blocker blocks b, in the detail and the list row alike.
+    detail = issue_api.issue_get(db, b.ref)
+    assert detail is not None and detail.blocked is True
+    row = next(i for i in issue_api.issue_list(db, "tt") if i.ref == b.ref)
+    assert row.blocked is True
+
+    # Finishing the blocker clears it.
+    issue_api.issue_action(db, "setStatus", {"status": "done"}, a.ref)
+    detail = issue_api.issue_get(db, b.ref)
+    assert detail is not None and detail.blocked is False
+
+    # Reopening the blocker blocks b again — so the delete below, not the earlier
+    # done, is what clears it.
+    issue_api.issue_action(db, "setStatus", {"status": "todo"}, a.ref)
+    reopened = issue_api.issue_get(db, b.ref)
+    assert reopened is not None and reopened.blocked is True
+
+    # A deleted blocker does not count and drops out of the ref list.
+    issue_api.issue_action(db, "delete", {}, a.ref)
+    detail = issue_api.issue_get(db, b.ref)
+    assert detail is not None
+    assert detail.blocked is False
+    assert detail.blocked_by == []
+
+
+def test_blocks_downstream_is_the_forward_reachable_set() -> None:
+    # A→B→C and A→D: from A the closure is B, C, D; from a leaf it is empty. Pure,
+    # no database — the reachability the cycle guard rides on.
+    edges = [(1, 2), (2, 3), (1, 4)]
+    assert issue_queries.blocks_downstream(edges, 1) == {2, 3, 4}
+    assert issue_queries.blocks_downstream(edges, 2) == {3}
+    assert issue_queries.blocks_downstream(edges, 3) == set()
+    # A cycle already in the data terminates rather than looping forever.
+    assert issue_queries.blocks_downstream([(1, 2), (2, 1)], 1) == {1, 2}
+
+
 # --- comments --------------------------------------------------------------
 
 
@@ -1180,6 +1318,8 @@ def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
         "setDueDate",
         "tagIssue",
         "untagIssue",
+        "addDependency",
+        "removeDependency",
         "addComment",
         "delete",
     ]

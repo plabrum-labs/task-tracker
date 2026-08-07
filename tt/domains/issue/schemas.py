@@ -92,6 +92,18 @@ class TagNamePayload(BaseModel):
     name: str = Field(description="The name of the tag to attach or detach.")
 
 
+class DependencyRefPayload(BaseModel):
+    # Shared by ``addDependency`` and ``removeDependency``: the blocker is addressed
+    # by ref, so the TUI renders a reference field rather than free text. From the
+    # issue's own view "add a dependency" means "this issue is blocked by X", so the
+    # ref names X, the blocker.
+    model_config = ConfigDict(extra="forbid")
+
+    blocker: Annotated[str, REFERENCE] = Field(
+        description="The ref of the issue that blocks this one, e.g. ENG-3."
+    )
+
+
 class SetDueDatePayload(BaseModel):
     # The focused due-date move, the mirror of ``SetStatus``: the one field the
     # whole-object edit also carries, sent on its own. A blank clears the date, the
@@ -113,6 +125,9 @@ class IssueListItem(BaseModel):
     due_date: date | None
     epic: str | None
     milestone: str | None
+    # Derived, not stored: the issue has a blocker that is not yet done. The margin
+    # flags it so a blocked issue reads as blocked without opening it.
+    blocked: bool
 
 
 class IssueDetail(BaseModel):
@@ -128,5 +143,11 @@ class IssueDetail(BaseModel):
     milestone: str | None
     tags: list[str]
     comments: list[CommentView]
+    # The blocking graph, as refs: ``blocked_by`` is what must finish before this
+    # issue can start, ``blocks`` what waits on it. ``blocked`` is the derived state,
+    # true when a live blocker is not yet done.
+    blocked_by: list[str]
+    blocks: list[str]
+    blocked: bool
     created_at: datetime
     updated_at: datetime
