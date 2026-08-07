@@ -12,7 +12,16 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, Index, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Column,
+    Date,
+    ForeignKey,
+    Index,
+    Table,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.issue.enums import Priority, Status
@@ -25,6 +34,18 @@ if TYPE_CHECKING:
     from tt.domains.epic.models import Epic
     from tt.domains.milestone.models import Milestone
     from tt.domains.project.models import Project
+
+
+# A blocking edge between two issues of the same project: ``blocker`` must be done
+# before ``blocked`` can start. Issue-internal, so it lives here rather than in the
+# tag module ``issue_tags`` sits in; a plain two-column link with no lifecycle of
+# its own, cascaded away when either endpoint is hard-deleted.
+issue_dependencies = Table(
+    "issue_dependencies",
+    BaseDBModel.metadata,
+    Column("blocker_id", ForeignKey("issues.id", ondelete="CASCADE"), primary_key=True),
+    Column("blocked_id", ForeignKey("issues.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class Issue(BaseDBModel):
@@ -77,6 +98,26 @@ class Issue(BaseDBModel):
     # and dies with its issue, and is created, edited and deleted through the
     # comment domain.
     comments: Mapped[list[Comment]] = relationship(back_populates="issue", lazy="raise")
+    # The blocking graph, self-referential over ``issue_dependencies`` and split by
+    # which end of the edge this issue sits on. ``blocked_by`` is the issues that
+    # block this one (this row is ``blocked_id``); ``blocks`` is the issues this one
+    # blocks (this row is ``blocker_id``). Same-project, no self-edge and no cycles
+    # are the actions' rules, not the mapping's. The two map the same table from
+    # opposite ends, so exactly one may own the writes: an edge is added and removed
+    # through ``blocked_by``, and ``blocks`` is the read-only mirror.
+    blocked_by: Mapped[list[Issue]] = relationship(
+        secondary=issue_dependencies,
+        primaryjoin=lambda: Issue.id == issue_dependencies.c.blocked_id,
+        secondaryjoin=lambda: Issue.id == issue_dependencies.c.blocker_id,
+        lazy="raise",
+    )
+    blocks: Mapped[list[Issue]] = relationship(
+        secondary=issue_dependencies,
+        primaryjoin=lambda: Issue.id == issue_dependencies.c.blocker_id,
+        secondaryjoin=lambda: Issue.id == issue_dependencies.c.blocked_id,
+        viewonly=True,
+        lazy="raise",
+    )
 
     @property
     def ref(self) -> str:
