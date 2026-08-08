@@ -777,6 +777,15 @@ def test_pane_split_stacks_below_when_thin() -> None:
     assert dv.pane_split(dv.DETAIL_BESIDE_MIN_WIDTH // 2) == "below"  # clearly too thin
 
 
+def test_the_rail_stands_only_in_the_ultra_wide_band() -> None:
+    assert dv.shows_rail(dv.RAIL_MIN_WIDTH + 40)  # comfortably wide
+    assert dv.shows_rail(dv.RAIL_MIN_WIDTH)  # exactly wide enough
+    assert not dv.shows_rail(dv.RAIL_MIN_WIDTH - 1)  # one short collapses it
+    # Wide enough for the detail pane beside the list is still not wide enough for a
+    # third column: the rail's band sits above the pane's.
+    assert not dv.shows_rail(dv.DETAIL_BESIDE_MIN_WIDTH)
+
+
 # --- cwd resolution -------------------------------------------------------
 
 

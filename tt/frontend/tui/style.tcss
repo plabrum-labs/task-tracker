@@ -38,6 +38,43 @@ ChipsBar {
     height: 1fr;
 }
 
+/* The ultra-wide band's third column, left of the list: the grouping, the facets in
+   force and the saved views, standing instead of hidden behind their overlays. Hidden
+   here and shown by the screen, which is what owns the width band. */
+Rail {
+    display: none;
+    width: 30;
+    height: 1fr;
+    padding: 0 1;
+    border-right: solid $border;
+}
+/* ``auto``, not ``1``: a height of one is the whole box, so the blank line above
+   would push the head's own line out of it. */
+.rail-head {
+    height: auto;
+    padding-top: 1;
+}
+.rail-row {
+    height: auto;
+    padding-left: 1;
+    color: $foreground;
+}
+.rail-empty {
+    height: 1;
+    padding-left: 1;
+    color: $text-disabled;
+}
+/* A chip in the rail is the chips bar's, stacked down a column rather than along a
+   row: ``width: auto`` so the tint hugs its text instead of filling the rail. */
+.rail-chip {
+    width: auto;
+    height: auto;
+    margin-left: 1;
+    padding: 0 1;
+    background: $primary 14%;
+    color: $foreground;
+}
+
 Body {
     width: 1fr;
     height: 1fr;
