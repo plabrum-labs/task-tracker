@@ -287,17 +287,22 @@ EditPane TextArea:focus {
     height: 8;
 }
 
+/* Two rows, not one: the rule the border draws is a row of the box, so a height of
+   one leaves the text nothing to sit on and the bar reads as a bare line. The filter
+   carries the same border and height, so swapping one for the other does not move
+   the row the text sits on. */
 StatusBar {
     dock: bottom;
-    height: 1;
+    height: 2;
     border-top: solid $border;
     padding: 0 1;
 }
 
 FilterInput {
     dock: bottom;
-    height: 1;
+    height: 2;
     border: none;
+    border-top: solid $border;
     padding: 0 1;
     background: ansi_default;
     /* Hidden until ``/`` — and while hidden it is not focusable, so browse keys

@@ -48,6 +48,7 @@ from tt.frontend.tui.widgets.body import (
 )
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import EditPane
+from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
 from tt.frontend.tui.widgets.rail import Rail, RailRow
 from tt.frontend.tui.widgets.rollup import RollupRow
 from tt.frontend.tui.widgets.topbar import ChipsBar
@@ -1055,6 +1056,24 @@ async def test_the_quick_line_is_the_text_facet_and_ands_with_the_rest(seeded: E
         await pilot.pause()
         assert _main(app).view_filter == Filter(priority="high")
         assert _titles(app) == ["ship the mvp"]
+
+
+async def test_the_bottom_bar_has_a_row_to_say_it_on(seeded: Engine) -> None:
+    """The rule the border draws is a row of the box, so a one-row bar spends its
+    whole height on the line and leaves the status nowhere to be seen."""
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bar = _main(app).query_one(StatusBar)
+        assert bar.content_region.height == 1
+        assert "j/k move" in str(bar.render())
+        row = bar.region
+
+        # The filter takes the bar's slot, so it stands on the same rows rather than
+        # moving the line the text sits on.
+        await pilot.press("slash")
+        await pilot.pause()
+        assert _main(app).query_one(FilterInput).region == row
 
 
 async def test_the_due_facet_is_typed_as_a_date_and_refuses_one_that_does_not_parse(
