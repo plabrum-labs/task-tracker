@@ -3,7 +3,11 @@
 Bindings map every browse key to an ``action_*`` method; nothing here parses a key
 event. The screen holds the scope, the grouping and its render, rows, selection and
 filter as reactives, and mutation methods assign them so watchers repaint the
-affected widget. The body is grouped by the one or two dimensions ``g`` picks — nested
+affected widget. The list is narrowed by the facets ``f`` picks — each drawn as a chip
+under the top bar, ``F`` dropping the lot — and ``/`` is the quick title search, which
+is the text facet under another key. Entering an epic, a milestone or a tag applies
+that facet rather than navigating anywhere. The body is grouped by the one or two
+dimensions ``g`` picks — nested
 as a tree when there are two — and drawn stacked or as columns by the ``[``/``]``
 toggle; the board is the status groups as columns. ``z`` opens the fold chord over that
 tree, and which of its nodes are shut is remembered per grouping for the session.
@@ -19,6 +23,7 @@ address the selected comment instead.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 from typing import Any
 
 from sqlalchemy import Engine
@@ -42,15 +47,18 @@ from tt.domains.tag import api as tag_api
 from tt.frontend.tui import data
 from tt.frontend.tui.domainview import (
     EXPANDED,
+    FACET_LABELS,
     FAR,
     GROUP_LABELS,
     HALF,
     LEVEL_SEPARATOR,
+    NO_FILTER,
     AllScope,
     Collapsed,
     Command,
     CommentTarget,
     Cursor,
+    Filter,
     GroupBy,
     Grouping,
     GroupNode,
@@ -64,8 +72,16 @@ from tt.frontend.tui.domainview import (
     Scope,
     Split,
     Target,
+    ValueFacet,
+    apply,
     comment_commands,
+    drill_commands,
+    drill_facet,
     epic_commands,
+    facet_commands,
+    facet_of,
+    facet_values,
+    filter_commands,
     fits_columns,
     fold_all,
     fold_target,
@@ -89,6 +105,9 @@ from tt.frontend.tui.domainview import (
     tag_commands,
     toggle_fold,
     visible_stops,
+    with_due,
+    with_facet,
+    without_facet,
 )
 from tt.frontend.tui.screens.capture import CaptureScreen
 from tt.frontend.tui.screens.cheatsheet import CheatsheetScreen
@@ -98,14 +117,23 @@ from tt.frontend.tui.widgets.body import Body
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import Edit, EditPane
 from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
-from tt.frontend.tui.widgets.topbar import TopBar
+from tt.frontend.tui.widgets.topbar import ChipsBar, TopBar
 from tt.platform import config
-from tt.platform.actions import REFUSALS, Offer, Refused
+from tt.platform.actions import REFUSALS, Date, Field, Invalid, Offer, Refused
 from tt.platform.config import ThemeName
 
-BROWSING = "j/k move · enter open · x actions · s status · g group · / filter · ? keys · q quit"
+BROWSING = "j/k move · enter open · x actions · s status · g group · f filter · ? keys · q quit"
 READING = "j/k comments · x/e/d act on the one selected · esc back"
 EDITING = "^s save · esc cancel"
+
+# The due facet is a date rather than a pick off a list, so it is typed into the same
+# one-field form an action with a date field opens.
+DUE_FIELD = Field(
+    name="due_before",
+    required=False,
+    kind=Date(),
+    description="Show only issues due before this date, as YYYY-MM-DD. Blank clears it.",
+)
 
 
 class MainScreen(Screen[None]):
@@ -136,6 +164,8 @@ class MainScreen(Screen[None]):
         Binding("question_mark", "cheatsheet", "keys", show=False),
         Binding("comma", "settings", "settings", show=False),
         Binding("slash", "filter", "filter", show=False),
+        Binding("f", "filter_menu", "filter facets", show=False),
+        Binding("F", "clear_filters", "clear filters", show=False),
         Binding("R", "refresh", "refresh", show=False),
         Binding("n", "capture", "new issue", show=False),
         Binding("c", "comment", "add comment", show=False),
@@ -157,7 +187,7 @@ class MainScreen(Screen[None]):
     # What the cursor is on: an issue by id, or the header of a group standing for an
     # epic, a milestone or a tag.
     cursor: reactive[Cursor | None] = reactive[Cursor | None](None)
-    filter: reactive[str] = reactive("")
+    view_filter: reactive[Filter] = reactive[Filter](NO_FILTER)
     status: reactive[str] = reactive(BROWSING)
 
     def __init__(self, engine: Engine) -> None:
@@ -173,6 +203,7 @@ class MainScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield TopBar(id="topbar")
+        yield ChipsBar(id="chips")
         with Horizontal(id="content"):
             yield Body(id="body")
             yield DetailPane(id="detail")
@@ -201,10 +232,7 @@ class MainScreen(Screen[None]):
     # --- the visible slice and the selected row ---------------------------
 
     def _visible(self) -> list[IssueListItem]:
-        if not self.filter:
-            return self.issues
-        needle = self.filter.lower()
-        return [i for i in self.issues if needle in i.title.lower()]
+        return apply(self.issues, self.view_filter)
 
     def _selected_issue(self) -> IssueListItem | None:
         cursor = self.cursor
@@ -286,10 +314,12 @@ class MainScreen(Screen[None]):
         self.query_one(TopBar).show(
             self.scope, self.projects, self.view_group, self.view_render, len(self._visible())
         )
+        self.query_one(ChipsBar).show(self.view_filter)
 
     def _paint_body(self) -> None:
         body = self.query_one(Body)
         body.scoped = isinstance(self.scope, ProjectScope)
+        body.filtered = self.view_filter != NO_FILTER
         body.view_render = self.view_render
         body.nodes = self._tree()
         body.collapsed = self._collapsed()
@@ -340,7 +370,7 @@ class MainScreen(Screen[None]):
             self.query_one(Body).cursor = self.cursor
             self._paint_detail()
 
-    def watch_filter(self) -> None:
+    def watch_view_filter(self) -> None:
         if self._ready:
             self._paint_topbar()
             self._paint_body()
@@ -434,6 +464,107 @@ class MainScreen(Screen[None]):
     def _save_view(self) -> None:
         config.save_layout(saved_layout(self.view_group, self.view_render))
 
+    # --- filtering --------------------------------------------------------
+
+    def action_filter_menu(self) -> None:
+        commands = filter_commands(self.view_filter)
+        self.app.push_screen(MenuScreen("Filter", commands), self._on_command)
+
+    def _apply_filter(self, narrowed: Filter) -> None:
+        """Put a filter in force, keeping the selection when the row it is on survives
+        the narrowing and falling to the first visible stop when it does not."""
+        self.view_filter = narrowed
+        if self.cursor not in visible_stops(self._tree(), self._collapsed()):
+            self.cursor = self._first_visible()
+
+    def _pick_facet(self, name: str) -> None:
+        """The filter menu's first step. A facet with a closed or loaded list of values
+        opens its value menu; the two that are typed rather than picked open their own
+        input — the quick title line for text, a one-field form for the due cutoff."""
+        facet = facet_of(name)
+        if facet is None:
+            self.status = f"{name}: not a facet"
+            return
+        match facet:
+            case "due":
+                self._due_form()
+            case "text":
+                self.action_filter()
+            case _:
+                self._facet_menu(facet)
+
+    def _facet_menu(self, facet: ValueFacet) -> None:
+        values = facet_values(self.issues, facet)
+        if not values:
+            self.status = f"no {FACET_LABELS[facet].lower()} to filter by"
+            return
+        self.app.push_screen(
+            MenuScreen(
+                f"Filter · {FACET_LABELS[facet]}",
+                facet_commands(facet, values, self.view_filter),
+            ),
+            lambda picked: self._set_facet(facet, picked),
+        )
+
+    def _set_facet(self, facet: ValueFacet, command: Command | None) -> None:
+        """The filter menu's second step. Backing out of it leaves the filter alone
+        rather than applying the facet half-picked."""
+        if command is None or not isinstance(command.run, Navigate) or command.run.arg is None:
+            return
+        self._apply_filter(with_facet(self.view_filter, facet, command.run.arg))
+        self.status = BROWSING
+
+    def _drop_facet(self, name: str) -> None:
+        facet = facet_of(name)
+        if facet is None:
+            self.status = f"{name}: not a facet"
+            return
+        if facet == "text":
+            # The quick line holds the text facet's value, so clearing one clears both.
+            self.query_one(FilterInput).value = ""
+        self._apply_filter(without_facet(self.view_filter, facet))
+        self.status = BROWSING
+
+    def action_clear_filters(self) -> None:
+        if self.view_filter == NO_FILTER:
+            self.status = "nothing filtered"
+            return
+        self.query_one(FilterInput).value = ""
+        self._apply_filter(NO_FILTER)
+        self.status = BROWSING
+
+    def _due_form(self) -> None:
+        cutoff = self.view_filter.due_before
+        seed = {"due_before": f"{cutoff:%Y-%m-%d}"} if cutoff is not None else None
+        self._begin_edit(
+            Edit(f"Filter · {FACET_LABELS['due']}", [DUE_FIELD], seed, self._submit_due)
+        )
+
+    def _submit_due(self, payload: dict[str, Any]) -> str:
+        """The due facet's form runs through the edit pane the way an action's does, but
+        it narrows the list rather than writing. A date that does not parse is raised as
+        a refusal, which is what keeps the pane open with the reason shown inline."""
+        typed = payload.get("due_before")
+        if typed is None:
+            self._apply_filter(with_due(self.view_filter, None))
+            return "due filter cleared"
+        try:
+            cutoff = date.fromisoformat(str(typed))
+        except ValueError as error:
+            raise Invalid(f"{typed}: not a date (YYYY-MM-DD)") from error
+        self._apply_filter(with_due(self.view_filter, cutoff))
+        return f"filtered to due before {cutoff:%Y-%m-%d}"
+
+    def _drill(self, name: str, value: str) -> None:
+        """Enter an epic, a milestone or a tag: applying that facet is the whole of the
+        move, so there is nothing to navigate to."""
+        facet = facet_of(name)
+        if facet is None or facet == "due":
+            self.status = f"{name}: not something to enter"
+            return
+        self._apply_filter(with_facet(self.view_filter, facet, value))
+        self.status = BROWSING
+
     # --- folding ----------------------------------------------------------
 
     def _set_folds(self, collapsed: Collapsed) -> None:
@@ -487,9 +618,18 @@ class MainScreen(Screen[None]):
     # --- overlays ---------------------------------------------------------
 
     def action_focus_detail(self) -> None:
-        # Enter drills into the selected issue: move focus into the always-present
-        # detail pane so its ``j``/``k`` scroll a body taller than the pane. Escape
-        # returns to browse. No selection means nothing to read.
+        # Enter drills into what the cursor is on. On a group header that is the epic,
+        # the milestone or the tag it stands for, and entering one is applying its facet.
+        # On an issue it is the detail: move focus into the always-present pane so its
+        # ``j``/``k`` scroll a body taller than it. Escape returns to browse.
+        header = self._selected_header()
+        if header is not None:
+            facet = drill_facet(header.by)
+            if facet is None:
+                self.status = f"{header.value}: nothing to enter"
+                return
+            self._drill(facet, header.value)
+            return
         if self._selected_issue() is None:
             self.status = "no issue selected"
             return
@@ -596,6 +736,9 @@ class MainScreen(Screen[None]):
         if issue is not None:
             detail, offers = issue_api.issue_detail(self.engine, issue.ref)
             commands.extend(issue_commands(offers, issue.ref, detail.model_dump(mode="json")))
+            # What the detail shows the issue is filed under, as the same enter-is-filter
+            # move a group header makes.
+            commands.extend(drill_commands(issue))
         slug = self._slug()
         if slug is not None:
             project_detail, offers = project_api.project_detail(self.engine, slug)
@@ -605,6 +748,7 @@ class MainScreen(Screen[None]):
             [
                 Command("Switch project", None, "P", Navigate("switcher")),
                 Command("Group by…", None, "g", Navigate("group")),
+                Command("Filter…", None, "f", Navigate("filter")),
                 Command("Toggle columns", None, "[", Navigate("render")),
                 Command("Refresh", None, "R", Navigate("refresh")),
             ]
@@ -634,6 +778,16 @@ class MainScreen(Screen[None]):
                 self._set_group(nav.arg)
             case "group":
                 self.action_group_menu()
+            case "facet" if nav.arg is not None:
+                self._pick_facet(nav.arg)
+            case "unfacet" if nav.arg is not None:
+                self._drop_facet(nav.arg)
+            case "clearFilters":
+                self.action_clear_filters()
+            case "filter":
+                self.action_filter_menu()
+            case "enter" if nav.arg is not None and nav.value is not None:
+                self._drill(nav.arg, nav.value)
             case "render":
                 self.action_cycle_render()
             case "switcher":
@@ -833,15 +987,17 @@ class MainScreen(Screen[None]):
 
     def action_filter(self) -> None:
         filter_input = self.query_one(FilterInput)
-        filter_input.value = self.filter
+        filter_input.value = self.view_filter.text
         filter_input.can_focus = True
         filter_input.display = True
         self.query_one(StatusBar).display = False
         filter_input.focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
+        # The quick line is the text facet under another key, so what is typed goes into
+        # the filter and ANDs with whatever else is in force.
         if isinstance(event.input, FilterInput):
-            self.filter = event.value
+            self.view_filter = with_facet(self.view_filter, "text", event.value)
             self.cursor = self._first_visible()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -858,17 +1014,19 @@ class MainScreen(Screen[None]):
             self.set_focus(None)
             self.status = BROWSING
             return
-        if self.query_one(FilterInput).display or self.filter:
+        if self.query_one(FilterInput).display or self.view_filter.text:
             self._close_filter(keep=False)
 
     def _close_filter(self, *, keep: bool) -> None:
+        # Only the text facet is the quick line's; escaping it drops that one and leaves
+        # the chips picked from the facet menu standing.
         filter_input = self.query_one(FilterInput)
         filter_input.display = False
         filter_input.can_focus = False
         self.query_one(StatusBar).display = True
         self.set_focus(None)
         if not keep:
-            self.filter = ""
+            self.view_filter = without_facet(self.view_filter, "text")
             filter_input.value = ""
             self.cursor = self._first_visible()
         self.status = BROWSING
