@@ -11,7 +11,7 @@ from rich.markup import escape as esc
 from textual.widgets import Static
 
 from tt.domains.project.schemas import ProjectListItem
-from tt.frontend.tui.domainview import GroupBy, GroupRender, ProjectScope, Scope
+from tt.frontend.tui.domainview import Grouping, GroupRender, ProjectScope, Scope, grouping_label
 
 
 class TopBar(Static):
@@ -22,7 +22,7 @@ class TopBar(Static):
         self,
         scope: Scope,
         projects: list[ProjectListItem],
-        by: GroupBy,
+        by: Grouping,
         render: GroupRender,
         count: int,
     ) -> None:
@@ -34,6 +34,8 @@ class TopBar(Static):
             name = "[$primary]◆[/] [b]all projects[/]"
         # The flat list is grouped by nothing, so it says so as a shape rather than as
         # a dimension; the render is named only when it is the one you chose.
-        grouping = "flat" if by == "none" else f"by {by}"
         fan = "  [$text-disabled]·[/] [$text-muted]columns[/]" if render == "columns" else ""
-        self.update(f"  {name}   [$text-muted]{count} issues[/]    [b $primary]{grouping}[/]{fan}")
+        self.update(
+            f"  {name}   [$text-muted]{count} issues[/]"
+            f"    [b $primary]{esc(grouping_label(by))}[/]{fan}"
+        )
