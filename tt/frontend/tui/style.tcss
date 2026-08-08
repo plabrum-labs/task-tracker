@@ -308,6 +308,18 @@ Body RollupRow {
     padding: 1 0 0 2;
 }
 
+/* A second dimension nests inside the first, so its headers and the issues under them
+   step in one indent — the outer level's headers stay the spine the eye follows down
+   the page. The gutter the rows draw their cursor bar in is two cells wide, so a
+   header indents by two more than the rows it heads to line their text up. Two levels
+   is the cap, so ``lvl-1`` is the only nesting depth there is. */
+Body RollupRow.lvl-1 {
+    padding: 0 0 0 4;
+}
+IssueRow.lvl-1 {
+    padding-left: 2;
+}
+
 /* The columns lay across a row; the wrapper is what makes their ``1fr`` widths
    divide the width rather than each take all of it. */
 .board {

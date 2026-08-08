@@ -27,7 +27,14 @@ from tt.frontend.tui.domainview import (
 )
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
-from tt.frontend.tui.widgets.body import Body, Card, GroupColumn, IssueRow
+from tt.frontend.tui.widgets.body import (
+    CARET_OPEN,
+    CARET_SHUT,
+    Body,
+    Card,
+    GroupColumn,
+    IssueRow,
+)
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import EditPane
 from tt.frontend.tui.widgets.rollup import RollupRow
@@ -587,14 +594,23 @@ async def test_detail_pane_stacks_below_the_list_when_narrow(seeded: Engine) -> 
         assert _main(narrow).query_one("#content").has_class("below")  # stacked under the list
 
 
-async def _group_by_status(pilot: Pilot[None]) -> None:
-    """Group the body by status, the way a user does: ``g`` opens the picker and
-    ``Status`` is the row under ``No grouping``."""
+async def _group_by(pilot: Pilot[None], *steps: int) -> None:
+    """Group the body the way a user does: ``g`` opens the picker, each step is how far
+    down that step's list the dimension sits, and the second step leaves the grouping
+    one level deep unless it is asked for one."""
     await pilot.press("g")
     await pilot.pause()
-    await pilot.press("down")
-    await pilot.press("enter")
-    await pilot.pause()
+    for down in (*steps, 0)[:2]:
+        for _ in range(down):
+            await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+
+async def _group_by_status(pilot: Pilot[None]) -> None:
+    """Group the body by status: ``Status`` is the row under ``No grouping``, with no
+    second level nested inside it."""
+    await _group_by(pilot, 1)
 
 
 async def test_the_group_picker_sets_the_grouping_and_heads_each_group(seeded: Engine) -> None:
@@ -602,11 +618,11 @@ async def test_the_group_picker_sets_the_grouping_and_heads_each_group(seeded: E
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         body = _main(app).query_one(Body)
-        assert _main(app).view_group == "none"  # opens flat, no headers
+        assert _main(app).view_group == ("none",)  # opens flat, no headers
         assert not body.query(RollupRow)
 
         await _group_by_status(pilot)
-        assert _main(app).view_group == "status"
+        assert _main(app).view_group == ("status",)
         # One header per group, and the rows are still the flat list's rows.
         assert len(body.query(RollupRow)) == 3
         assert len(body.query(IssueRow)) == 2
@@ -638,13 +654,13 @@ async def test_the_board_persists_across_restarts(seeded: Engine) -> None:
         await _group_by_status(pilot)
         await pilot.press("]")  # switch to the board
         await pilot.pause()
-        assert (_main(first).view_group, _main(first).view_render) == ("status", "columns")
+        assert (_main(first).view_group, _main(first).view_render) == (("status",), "columns")
 
     # A fresh app over the same config reopens on the board, not the default list.
     second = _app(seeded)
     async with second.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        assert (_main(second).view_group, _main(second).view_render) == ("status", "columns")
+        assert (_main(second).view_group, _main(second).view_render) == (("status",), "columns")
 
 
 async def test_a_saved_board_falls_back_to_the_list_when_it_no_longer_fits(seeded: Engine) -> None:
@@ -660,7 +676,7 @@ async def test_a_saved_board_falls_back_to_the_list_when_it_no_longer_fits(seede
     narrow = _app(seeded)
     async with narrow.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        assert (_main(narrow).view_group, _main(narrow).view_render) == ("none", "stacked")
+        assert (_main(narrow).view_group, _main(narrow).view_render) == (("none",), "stacked")
 
 
 async def test_group_columns_sit_side_by_side(seeded: Engine) -> None:
@@ -677,6 +693,97 @@ async def test_group_columns_sit_side_by_side(seeded: Engine) -> None:
         assert len({c.region.y for c in cols}) == 1
         xs = [c.region.x for c in cols]
         assert xs == sorted(xs) and len(set(xs)) == 3
+
+
+def _headers(app: TrackerApp) -> list[RollupRow]:
+    """The group headers on screen, in reading order. The body's, not the detail
+    pane's — that draws the selected issue's epic in the same widget."""
+    return list(_main(app).query_one(Body).query(RollupRow))
+
+
+def _caret(header: RollupRow) -> str:
+    return str(header.query_one(".r-id").render())[0]
+
+
+async def test_the_picker_nests_a_second_dimension_inside_the_first(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        # Status, then Priority nested inside it. Both seeded issues are todo, one high
+        # and one medium, so one status group splits into two priority groups.
+        await _group_by(pilot, 1, 4)
+        assert _main(app).view_group == ("status", "priority")
+        headers = _headers(app)
+        assert [str(h.query_one(".r-id").render())[2:] for h in headers] == [
+            "todo",
+            "high",
+            "medium",
+            "doing",
+            "done",
+        ]
+        # The nested level draws indented; the outer one is the spine it hangs off.
+        assert [h.has_class("lvl-1") for h in headers] == [False, True, True, False, False]
+
+
+async def test_folding_takes_a_group_off_the_page_and_expanding_brings_it_back(
+    seeded: Engine,
+) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _group_by_status(pilot)
+        body = _main(app).query_one(Body)
+        assert len(body.query(IssueRow)) == 2
+        assert all(_caret(h) == CARET_OPEN for h in _headers(app))
+
+        await pilot.press("z", "M")
+        await pilot.pause()
+        # The rows go; the headers stay, turned shut, so the shape is still readable.
+        assert len(body.query(IssueRow)) == 0
+        assert len(_headers(app)) == 3
+        assert all(_caret(h) == CARET_SHUT for h in _headers(app))
+
+        # ``R`` on its own is refresh; as the second half of the chord it expands, which
+        # it could not do if the binding had eaten the keystroke first.
+        await pilot.press("z", "R")
+        await pilot.pause()
+        assert len(body.query(IssueRow)) == 2
+        assert all(_caret(h) == CARET_OPEN for h in _headers(app))
+
+
+async def test_za_folds_the_group_the_cursor_is_in(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _group_by_status(pilot)
+        body = _main(app).query_one(Body)
+        # The cursor opens on the first issue, which is in ``todo`` along with the other.
+        await pilot.press("z", "a")
+        await pilot.pause()
+        assert [_caret(h) for h in _headers(app)] == [CARET_SHUT, CARET_OPEN, CARET_OPEN]
+        assert len(body.query(IssueRow)) == 0
+        # The selection stays on the issue it shut away, so the chord toggles back.
+        await pilot.press("z", "a")
+        await pilot.pause()
+        assert len(body.query(IssueRow)) == 2
+
+
+async def test_folds_are_remembered_per_grouping_for_the_session(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _group_by_status(pilot)
+        await pilot.press("z", "M")
+        await pilot.pause()
+        body = _main(app).query_one(Body)
+        assert len(body.query(IssueRow)) == 0
+
+        await _group_by(pilot, 5)  # Priority — a grouping first reached opens expanded
+        assert _main(app).view_group == ("priority",)
+        assert len(body.query(IssueRow)) == 2
+
+        await _group_by_status(pilot)  # and back: the same groups are still shut
+        assert len(body.query(IssueRow)) == 0
 
 
 async def test_the_menu_opens_on_the_list_with_the_filter_hidden(seeded: Engine) -> None:

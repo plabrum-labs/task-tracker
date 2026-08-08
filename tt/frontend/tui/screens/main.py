@@ -3,8 +3,10 @@
 Bindings map every browse key to an ``action_*`` method; nothing here parses a key
 event. The screen holds the scope, the grouping and its render, rows, selection and
 filter as reactives, and mutation methods assign them so watchers repaint the
-affected widget. The body is grouped by the dimension ``g`` picks and drawn stacked
-or as columns by the ``[``/``]`` toggle — the board is the status groups as columns.
+affected widget. The body is grouped by the one or two dimensions ``g`` picks — nested
+as a tree when there are two — and drawn stacked or as columns by the ``[``/``]``
+toggle; the board is the status groups as columns. ``z`` opens the fold chord over that
+tree, and which of its nodes are shut is remembered per grouping for the session.
 Everything you can do to the selected object is reached through what that offers — a
 ``MenuScreen`` overlay for the list, and for an action with fields the ``EditPane``
 that takes over the right pane where the read detail was — so this screen names only
@@ -35,13 +37,18 @@ from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
 from tt.frontend.tui import data
 from tt.frontend.tui.domainview import (
+    EXPANDED,
     FAR,
+    GROUP_LABELS,
     HALF,
+    LEVEL_SEPARATOR,
     AllScope,
+    Collapsed,
     Command,
     CommentTarget,
-    Group,
     GroupBy,
+    Grouping,
+    GroupNode,
     GroupRender,
     IssueTarget,
     Navigate,
@@ -53,12 +60,16 @@ from tt.frontend.tui.domainview import (
     Target,
     comment_commands,
     fits_columns,
-    group,
+    fold_all,
+    fold_target,
     group_by,
     group_commands,
+    group_tree,
+    grouping,
     index_of,
     issue_commands,
     move_selection,
+    nest_commands,
     next_render,
     next_status,
     opening_view,
@@ -67,6 +78,7 @@ from tt.frontend.tui.domainview import (
     saved_layout,
     surviving_id,
     switcher_commands,
+    toggle_fold,
 )
 from tt.frontend.tui.screens.capture import CaptureScreen
 from tt.frontend.tui.screens.cheatsheet import CheatsheetScreen
@@ -127,7 +139,7 @@ class MainScreen(Screen[None]):
     # ``view_render`` rather than ``render``: a ``Screen`` is a ``Widget`` whose
     # ``render`` draws it, and a reactive of that name would shadow it.
     scope: reactive[Scope] = reactive[Scope](AllScope())
-    view_group: reactive[GroupBy] = reactive[GroupBy]("none")
+    view_group: reactive[Grouping] = reactive[Grouping](("none",))
     view_render: reactive[GroupRender] = reactive[GroupRender]("stacked")
     split: reactive[Split] = reactive[Split]("beside")
     projects: reactive[list[ProjectListItem]] = reactive(list)
@@ -140,6 +152,12 @@ class MainScreen(Screen[None]):
         super().__init__()
         self.engine = engine
         self._ready = False
+        # The folded nodes of each grouping, for this session only: going off to
+        # another dimension and back finds the same subtrees shut, and a restart opens
+        # everything. Nothing about a fold belongs in the preferences file.
+        self._folds: dict[Grouping, Collapsed] = {}
+        # ``z`` opens a fold chord and this holds it until the next keystroke closes it.
+        self._fold_chord = False
 
     def compose(self) -> ComposeResult:
         yield TopBar(id="topbar")
@@ -158,7 +176,7 @@ class MainScreen(Screen[None]):
         # falls back to the flat list rather than opening cramped.
         by, render = opening_view(config.load().layout)
         if render == "stacked" or fits_columns(
-            len(group(self._visible(), by)), self.size.width, self.size.height
+            by, len(group_tree(self._visible(), by)), self.size.width, self.size.height
         ):
             self.view_group = by
             self.view_render = render
@@ -191,13 +209,18 @@ class MainScreen(Screen[None]):
     def _slug(self) -> str | None:
         return self.scope.slug if isinstance(self.scope, ProjectScope) else None
 
-    def _groups(self) -> list[Group]:
-        """The visible issues as the groups the current dimension files them under —
-        what the body draws and what the cursor walks, computed once for both."""
-        return group(self._visible(), self.view_group)
+    def _tree(self) -> list[GroupNode]:
+        """The visible issues as the tree the current grouping files them under — what
+        the body draws and what the cursor walks, computed once for both."""
+        return group_tree(self._visible(), self.view_group)
+
+    def _collapsed(self) -> Collapsed:
+        """The nodes folded shut under the grouping in force; a grouping first reached
+        this session opens all expanded."""
+        return self._folds.get(self.view_group, EXPANDED)
 
     def _first_visible(self) -> int | None:
-        return move_selection(self._groups(), self.view_render, None, 0, 0)
+        return move_selection(self._tree(), self.view_render, self._collapsed(), None, 0, 0)
 
     # --- loading ----------------------------------------------------------
 
@@ -237,7 +260,8 @@ class MainScreen(Screen[None]):
         body = self.query_one(Body)
         body.scoped = isinstance(self.scope, ProjectScope)
         body.view_render = self.view_render
-        body.groups = self._groups()
+        body.nodes = self._tree()
+        body.collapsed = self._collapsed()
         body.selected_id = self.selected_id
 
     def _paint_detail(self) -> None:
@@ -298,7 +322,7 @@ class MainScreen(Screen[None]):
 
     def _move(self, dr: int, dc: int) -> None:
         self.selected_id = move_selection(
-            self._groups(), self.view_render, self.selected_id, dr, dc
+            self._tree(), self.view_render, self._collapsed(), self.selected_id, dr, dc
         )
 
     def action_move_down(self) -> None:
@@ -327,7 +351,11 @@ class MainScreen(Screen[None]):
 
     def action_cycle_render(self) -> None:
         self.view_render = next_render(
-            self.view_render, len(self._groups()), self.size.width, self.size.height
+            self.view_render,
+            self.view_group,
+            len(self._tree()),
+            self.size.width,
+            self.size.height,
         )
         self._save_view()
 
@@ -338,17 +366,84 @@ class MainScreen(Screen[None]):
         self.app.push_screen(MenuScreen("Group by", commands), self._on_command)
 
     def _set_group(self, name: str) -> None:
+        """The picker's first step. A dimension to group by leads to the second step —
+        what to nest inside it — while grouping by nothing has no inside to fill."""
         by = group_by(name)
-        if by is not None:
-            self.view_group = by
-            # The groups the previous dimension fanned across the width are not these
-            # ones, so a render that no longer fits falls back to the stack.
-            if not fits_columns(len(self._groups()), self.size.width, self.size.height):
-                self.view_render = "stacked"
-            self._save_view()
+        if by is None:
+            self.status = f"{name}: not a dimension"
+            return
+        if by == "none":
+            self._apply_group(grouping("none"))
+            return
+        commands = nest_commands(by, self.view_group)
+        header = f"{GROUP_LABELS[by]} {LEVEL_SEPARATOR} then by"
+        self.app.push_screen(
+            MenuScreen(header, commands), lambda picked: self._nest_group(by, picked)
+        )
+
+    def _nest_group(self, first: GroupBy, command: Command | None) -> None:
+        """The picker's second step. Backing out of it leaves the grouping alone rather
+        than applying the first dimension half-picked."""
+        if command is None or not isinstance(command.run, Navigate) or command.run.arg is None:
+            return
+        second = group_by(command.run.arg)
+        if second is None:
+            self.status = f"{command.run.arg}: not a dimension"
+            return
+        self._apply_group(grouping(first, second))
+
+    def _apply_group(self, by: Grouping) -> None:
+        self.view_group = by
+        # The groups the previous grouping fanned across the width are not these ones,
+        # so a render that no longer fits falls back to the stack.
+        if not fits_columns(by, len(self._tree()), self.size.width, self.size.height):
+            self.view_render = "stacked"
+        self._save_view()
 
     def _save_view(self) -> None:
         config.save_layout(saved_layout(self.view_group, self.view_render))
+
+    # --- folding ----------------------------------------------------------
+
+    def _set_folds(self, collapsed: Collapsed) -> None:
+        self._folds[self.view_group] = collapsed
+        self._paint_body()
+
+    def action_toggle_fold(self) -> None:
+        path = fold_target(self._tree(), self.selected_id)
+        if path is None:
+            self.status = "nothing to fold here"
+            return
+        self._set_folds(toggle_fold(self._collapsed(), path))
+
+    def action_fold_all(self) -> None:
+        self._set_folds(fold_all(self._tree()))
+
+    def action_expand_all(self) -> None:
+        self._set_folds(EXPANDED)
+
+    def on_key(self, event: events.Key) -> None:
+        """The ``z`` fold chord. A screen binding names one key, so the prefix is read
+        here instead: the keystroke after ``z`` is the other half of the chord and is
+        stopped before the bindings see it — otherwise ``zR`` would also refresh."""
+        if self.focused is not None:
+            return
+        if self._fold_chord:
+            self._fold_chord = False
+            event.stop()
+            match event.key:
+                case "a":
+                    self.action_toggle_fold()
+                case "M":
+                    self.action_fold_all()
+                case "R":
+                    self.action_expand_all()
+                case _:
+                    self.status = f"z{event.key}: not a fold key"
+            return
+        if event.key == "z":
+            self._fold_chord = True
+            event.stop()
 
     # --- scope ------------------------------------------------------------
 
