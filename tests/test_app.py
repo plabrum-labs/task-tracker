@@ -17,7 +17,12 @@ from textual.widgets import Input, OptionList, Static, TextArea
 from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
 from tt.frontend.tui.app import TrackerApp
-from tt.frontend.tui.domainview import DETAIL_BESIDE_MIN_WIDTH, CommentTarget, RunAction
+from tt.frontend.tui.domainview import (
+    BLOCKED_GLYPH,
+    DETAIL_BESIDE_MIN_WIDTH,
+    CommentTarget,
+    RunAction,
+)
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.widgets.body import BoardColumn, Card, IssueRow
@@ -292,6 +297,33 @@ async def test_the_detail_pane_shows_the_comment_thread_and_its_empty_state(seed
         assert pane.detail is not None and pane.detail.id == issues[1].id
         rendered = _rendered(pane)
         assert "COMMENTS · 0" in rendered and "no comments" in rendered
+
+
+async def test_the_detail_pane_and_row_flag_a_blocked_issue(seeded: Engine) -> None:
+    # tt-1 (high) sorts first and is blocked by tt-2 (medium); the selection opens on
+    # it, so the pane shows its blockers and the margin flags the row.
+    issues = issue_api.issue_list(seeded, "tt")
+    blocker, blocked = issues[1].ref, issues[0].ref
+    issue_api.issue_action(seeded, "addDependency", {"blocker": blocker}, blocked)
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        rendered = _rendered(pane)
+        assert "DEPENDENCIES" in rendered
+        assert "BLOCKED BY · 1" in rendered
+        assert blocker in rendered
+        assert "blocked" in rendered  # the status-line badge
+        # The blocked row carries the glyph in its margin cell.
+        cells = [str(row.query_one(".blocked").render()) for row in _main(app).query(IssueRow)]
+        assert any(BLOCKED_GLYPH in cell for cell in cells)
+
+        # Moving to the blocker shows the other end of the edge: it blocks tt-1.
+        await pilot.press("j")
+        await pilot.pause()
+        assert pane.detail is not None and pane.detail.ref == blocker
+        moved = _rendered(pane)
+        assert "BLOCKS · 1" in moved and blocked in moved
 
 
 async def test_c_adds_a_comment_and_the_thread_reflects_it(seeded: Engine) -> None:

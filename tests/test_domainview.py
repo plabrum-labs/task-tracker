@@ -166,6 +166,11 @@ def test_glyph_and_marker() -> None:
     assert dv.priority_mark("none") is None
 
 
+def test_blocked_mark_flags_only_a_blocked_issue() -> None:
+    assert dv.blocked_mark(True) == dv.BLOCKED_GLYPH
+    assert dv.blocked_mark(False) is None
+
+
 def test_status_var_names_the_theme_variable_and_falls_back_to_muted() -> None:
     assert dv.status_var("doing") == "$warning"
     assert dv.status_var("done") == "$success"

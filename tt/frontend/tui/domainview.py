@@ -84,6 +84,18 @@ def priority_mark(priority: str) -> PriorityMark | None:
     return PRIORITY_MARK.get(priority)
 
 
+# The glyph a blocked issue carries in the margins, in the warning colour — an
+# issue held back by an unfinished blocker is flagged the way a priority mark flags
+# an exception, and the unblocked common case shows nothing.
+BLOCKED_GLYPH = "⊘"
+BLOCKED_VAR = "$warning"
+
+
+def blocked_mark(blocked: bool) -> str | None:
+    """The margin glyph a blocked issue draws, or ``None`` when it is not blocked."""
+    return BLOCKED_GLYPH if blocked else None
+
+
 def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(value, high))
 
