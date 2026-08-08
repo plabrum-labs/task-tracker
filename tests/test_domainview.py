@@ -161,6 +161,12 @@ def _epic_milestone() -> list[IssueListItem]:
     ]
 
 
+def _header(*path: str) -> dv.HeaderAt:
+    """The cursor on a header of the epic › milestone tree, addressed by the values
+    down to it: one level in is an epic's header, two a milestone's."""
+    return dv.HeaderAt(path, "epic" if len(path) == 1 else "milestone", path[-1])
+
+
 def test_group_tree_nests_the_second_dimension_inside_the_first() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
     assert _nested(nodes) == [
@@ -317,28 +323,36 @@ def test_move_selection_crosses_group_boundaries_when_stacked() -> None:
 def test_move_selection_steps_over_a_folded_subtree() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
     shut = frozenset({("tt-9", "tt-5")})  # hides issues 1 and 2
-    # Down out of the group before the folded one lands past it, not inside it.
-    assert dv.move_selection(nodes, "stacked", shut, 3, -1, 0) == 3  # nothing above it now
-    assert dv.move_selection(nodes, "stacked", shut, 4, -1, 0) == 3
-    assert dv.move_selection(nodes, "stacked", shut, 3, 1, 0) == 4
-    # The whole epic shut, and the walk skips it from either side.
+    # Down out of the group before the folded one lands past it, not inside it. The
+    # epic and milestone headers stand for objects, so they are stops of their own and
+    # the walk crosses them on the way.
+    assert dv.move_selection(nodes, "stacked", shut, 3, -1, 0) == _header("tt-9", "tt-5")
+    assert dv.move_selection(nodes, "stacked", shut, 4, -1, 0) == _header("tt-4", "tt-7")
+    assert dv.move_selection(nodes, "stacked", shut, 3, 1, 0) == _header("tt-4")
+    # The whole epic shut, and the walk skips what it holds from either side.
     epic_shut = frozenset({("tt-9",)})
-    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == 4
+    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == _header("tt-4", "tt-7")
     assert dv.move_selection(nodes, "stacked", epic_shut, 4, 1, 0) == 5
 
 
 def test_a_selection_folded_out_of_sight_moves_to_the_edge_of_what_hid_it() -> None:
     # ``za`` leaves the cursor on the issue it shut away, so toggling back restores it.
-    # Until then a move lands on the row after the hidden run, or the row before it.
+    # Until then a move lands on the stop after the hidden run, or the one before it.
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
     shut = frozenset({("tt-9", "tt-5")})
     assert dv.move_selection(nodes, "stacked", shut, 1, 1, 0) == 3  # first row after
-    assert dv.move_selection(nodes, "stacked", shut, 2, -1, 0) == 3  # nothing before it
+    # Nothing of the epic's is left before it but the header that shut it away.
+    assert dv.move_selection(nodes, "stacked", shut, 2, -1, 0) == _header("tt-9", "tt-5")
     epic_shut = frozenset({("tt-9",)})
-    assert dv.move_selection(nodes, "stacked", epic_shut, 1, 1, 0) == 4
-    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == 4
-    # Everything shut leaves no row to land on, so the selection waits where it is.
-    assert dv.move_selection(nodes, "stacked", dv.fold_all(nodes), 1, 1, 0) == 1
+    assert dv.move_selection(nodes, "stacked", epic_shut, 1, 1, 0) == _header("tt-4")
+    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == _header("tt-4", "tt-7")
+    # Everything shut leaves only the headers, and an epic's is a stop, so the cursor
+    # lands on the one after the run it was hidden in.
+    assert dv.move_selection(nodes, "stacked", dv.fold_all(nodes), 1, 1, 0) == _header("tt-4")
+    # Where no header stands for an object there is nothing left to land on, and the
+    # selection waits where it is until a node is opened again.
+    statuses = dv.group_tree([_item(1, "todo"), _item(2, "done")], ("status",))
+    assert dv.move_selection(statuses, "stacked", dv.fold_all(statuses), 1, 1, 0) == 1
 
 
 def test_move_selection_moves_within_and_between_columns() -> None:
@@ -360,6 +374,57 @@ def test_move_selection_skips_an_empty_column() -> None:
     shut = frozenset({("doing",)})
     nodes = dv.group_tree([_item(1, "todo"), _item(2, "doing"), _item(3, "done")], ("status",))
     assert dv.move_selection(nodes, "columns", shut, 1, 0, 1) == 3
+
+
+def test_the_cursor_stops_on_the_headers_that_stand_for_an_object() -> None:
+    # An epic, a milestone and a tag are rows something can be done to, so the cursor
+    # lands on their headers; the group of issues carrying none of them is not one.
+    epics = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
+    assert dv.visible_stops(epics, dv.EXPANDED) == [
+        _header("tt-9"),
+        _header("tt-9", "tt-5"),
+        1,
+        2,
+        3,  # under "(no milestone)", whose header stands for nothing
+        _header("tt-4"),
+        _header("tt-4", "tt-7"),
+        4,
+        5,  # under "(no epic)" › "(no milestone)", neither of them a stop
+    ]
+    tags = dv.group_tree([_item(1, tags=["api"]), _item(2)], ("tag",))
+    assert dv.visible_stops(tags, dv.EXPANDED) == [dv.HeaderAt(("api",), "tag", "api"), 1, 2]
+
+
+def test_the_cursor_steps_over_a_header_that_stands_for_no_object() -> None:
+    # A status, a priority and a due bucket are ways of reading the list, not rows, so
+    # their headers are display only and the walk crosses them as it always did.
+    for by in ("status", "priority", "due"):
+        nodes = dv.group_tree(
+            [_item(1, "todo", "high", due_date=TODAY), _item(2, "done", "low")],
+            (dv.group_by(by) or "none",),
+            TODAY,
+        )
+        assert dv.visible_stops(nodes, dv.EXPANDED) == [1, 2], by
+    # And the flat list has no header at all to stop on.
+    assert dv.visible_stops(_flat([_item(1), _item(2)]), dv.EXPANDED) == [1, 2]
+
+
+def test_move_selection_walks_onto_and_off_an_object_header() -> None:
+    nodes = dv.group_tree(_epic_milestone(), ("epic",))
+    # Nothing selected takes the first stop, which is the first epic's header.
+    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, None, 1, 0) == _header("tt-9")
+    # Down off the header onto the first issue it heads, and back up onto it.
+    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, _header("tt-9"), 1, 0) == 1
+    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, 1, -1, 0) == _header("tt-9")
+    # A folded header keeps its stop: it is still drawn, so the cursor still reaches it.
+    shut = frozenset({("tt-9",)})
+    assert dv.move_selection(nodes, "stacked", shut, _header("tt-9"), 1, 0) == _header("tt-4")
+
+
+def test_fold_target_is_the_node_whose_header_the_cursor_is_on() -> None:
+    nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
+    assert dv.fold_target(nodes, _header("tt-9")) == ("tt-9",)
+    assert dv.fold_target(nodes, _header("tt-9", "tt-5")) == ("tt-9", "tt-5")
 
 
 def test_surviving_id_keeps_the_issue_or_takes_its_neighbour() -> None:
@@ -588,6 +653,41 @@ def test_a_refused_comment_offer_carries_its_reason_rather_than_running() -> Non
 def test_the_edit_offer_carries_the_e_accelerator() -> None:
     edit = Offer(key="edit", label="Edit", state=Runnable(), fields=[])
     assert dv.issue_commands([edit], "tt-1")[0].hint == "e"
+
+
+def test_the_commands_of_a_header_address_the_object_it_stands_for() -> None:
+    # Each builder addresses its object the way its own api takes one: an epic and a
+    # milestone by ref, a tag by the id behind the name issues wear.
+    edit = Offer(key="edit", label="Edit", state=Runnable(), fields=[], seed=True)
+    delete = Offer(key="delete", label="Delete", state=Runnable(), fields=[])
+    rename = Offer(key="rename", label="Rename", state=Runnable(), fields=[], seed=True)
+
+    epic_detail = {"ref": "tt-9", "title": "the parser"}
+    epic_edit, epic_delete = dv.epic_commands([edit, delete], "tt-9", epic_detail)
+    assert isinstance(epic_edit.run, dv.RunAction) and epic_edit.run.target == dv.EpicTarget("tt-9")
+    assert epic_edit.run.seed == epic_detail  # seeds from the epic it opens on
+    assert isinstance(epic_delete.run, dv.RunAction) and epic_delete.run.seed is None
+    assert (epic_edit.hint, epic_delete.hint) == ("e", "d")  # the map already covers both
+
+    milestone = dv.milestone_commands([edit], "tt-5", {"ref": "tt-5"})[0]
+    assert isinstance(milestone.run, dv.RunAction)
+    assert milestone.run.target == dv.MilestoneTarget("tt-5")
+
+    tag = dv.tag_commands([rename], 7, {"id": 7, "name": "api"})[0]
+    assert isinstance(tag.run, dv.RunAction) and tag.run.target == dv.TagTarget(7)
+    assert tag.run.seed == {"id": 7, "name": "api"}
+    # The top-level create addresses no tag at all.
+    create = Offer(key="createTag", label="Create tag", state=Runnable(), fields=[])
+    top = dv.tag_commands([create], None)[0]
+    assert isinstance(top.run, dv.RunAction) and top.run.target == dv.TagTarget(None)
+
+
+def test_a_refused_header_offer_carries_its_reason_rather_than_running() -> None:
+    refused = Offer(
+        key="delete", label="Delete", state=Refused("reassign 2 issues first"), fields=[]
+    )
+    assert dv.epic_commands([refused], "tt-9")[0].reason == "reassign 2 issues first"
+    assert dv.milestone_commands([refused], "tt-5")[0].reason == "reassign 2 issues first"
 
 
 def test_the_group_picker_offers_every_dimension_and_marks_the_one_in_force() -> None:

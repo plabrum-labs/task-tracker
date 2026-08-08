@@ -316,6 +316,12 @@ Body RollupRow {
 Body RollupRow.lvl-1 {
     padding: 0 0 0 4;
 }
+
+/* A header standing for an epic, a milestone or a tag is a place the cursor lands, so
+   it carries the selection the way a row does. */
+Body RollupRow.sel {
+    background: $primary 14%;
+}
 IssueRow.lvl-1 {
     padding-left: 2;
 }
