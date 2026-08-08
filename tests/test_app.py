@@ -23,12 +23,15 @@ from tt.frontend.tui.app import TrackerApp
 from tt.frontend.tui.domainview import (
     DETAIL_BESIDE_MIN_WIDTH,
     FACETS,
+    SAVE_VIEW,
     WAITING_GLYPH,
+    AllScope,
     CommentTarget,
     EpicTarget,
     Filter,
     HeaderAt,
     Navigate,
+    ProjectScope,
     RunAction,
     TagTarget,
 )
@@ -46,7 +49,8 @@ from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import EditPane
 from tt.frontend.tui.widgets.rollup import RollupRow
 from tt.frontend.tui.widgets.topbar import ChipsBar
-from tt.platform.config import ThemeName
+from tt.platform import config
+from tt.platform.config import SavedFilter, ThemeName
 
 
 def _main(app: TrackerApp) -> MainScreen:
@@ -1131,11 +1135,123 @@ async def test_the_palette_enters_what_the_selected_issue_is_filed_under(seeded:
         assert _titles(app) == ["ship the mvp"]
 
 
+async def _save_current_view(pilot: Pilot[None], name: str) -> None:
+    """Save the live state the way a user does: ``v`` opens the overlay, the save row
+    sits under whatever is already saved, and the prompt takes the name."""
+    await pilot.press("v")
+    await pilot.pause()
+    menu = pilot.app.screen
+    assert isinstance(menu, MenuScreen)
+    save_row = next(i for i, c in enumerate(menu._commands) if c.label == SAVE_VIEW)
+    for _ in range(save_row):
+        await pilot.press("down")
+    await pilot.press("enter")
+    await pilot.pause()
+    for char in name:
+        await pilot.press(char if char != " " else "space")
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+async def test_v_saves_the_live_state_verbatim(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _scope_tt(pilot)
+        await _filter_by(pilot, 1, 1)  # Priority › high
+        await _group_by_status(pilot)
+        await _save_current_view(pilot, "hot")
+
+        stored = config.load().views
+        assert [view.name for view in stored] == ["hot"]
+        # The scope, the grouping and the filter as they stood, not as they default.
+        assert stored[0].project == "tt"
+        assert stored[0].group == ("status",)
+        assert stored[0].filter == SavedFilter(priority="high")
+
+
+async def test_a_saved_view_is_recalled_in_one_keystroke_across_sessions(seeded: Engine) -> None:
+    first = _app(seeded)
+    async with first.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _scope_tt(pilot)
+        await _filter_by(pilot, 1, 1)  # Priority › high
+        await _group_by_status(pilot)
+        await _save_current_view(pilot, "hot")
+
+    # A fresh app over the same config: the view is on the overlay, and picking it puts
+    # the filter, the grouping and the scope back at once.
+    second = _app(seeded)
+    async with second.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert _main(second).scope == AllScope()
+        assert _main(second).view_filter == Filter()
+
+        await pilot.press("v")
+        await pilot.pause()
+        await pilot.press("enter")  # the saved view is the first row
+        await pilot.pause()
+        main = _main(second)
+        assert main.scope == ProjectScope("tt")
+        assert main.view_group == ("status",)
+        assert main.view_filter == Filter(priority="high")
+        assert _titles(second) == ["ship the mvp"]
+
+
+async def test_a_recalled_view_spans_every_project(seeded: Engine) -> None:
+    project_api.project_action(
+        seeded, "createProject", {"slug": "web", "title": "the site", "path": "/repo/web"}
+    )
+    project_api.project_action(seeded, "addIssue", {"title": "fix the nav"}, "web")
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        # Saved from all-projects, so recalling it after scoping onto one spans them
+        # again rather than staying pinned.
+        await _save_current_view(pilot, "everywhere")
+        await _scope_tt(pilot)
+        assert _titles(app) == ["ship the mvp", "write readme"]
+
+        await pilot.press("v")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _main(app).scope == AllScope()
+        assert "fix the nav" in _titles(app)
+
+
+async def test_the_overlay_deletes_a_view(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _save_current_view(pilot, "hot")
+        assert [view.name for view in config.load().views] == ["hot"]
+
+        await pilot.press("v")
+        await pilot.pause()
+        await pilot.press("down")  # past the view itself
+        await pilot.press("down")  # past the save row, onto Delete hot
+        await pilot.press("enter")
+        await pilot.pause()
+        assert config.load().views == ()
+
+
+async def test_saving_over_a_name_replaces_that_view(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _save_current_view(pilot, "hot")
+        await _filter_by(pilot, 1, 1)  # Priority › high
+        await _save_current_view(pilot, "hot")
+        stored = config.load().views
+        # One row under the name, holding what was live the second time.
+        assert [view.name for view in stored] == ["hot"]
+        assert stored[0].filter == SavedFilter(priority="high")
+
+
 async def test_comma_switches_theme_and_persists(
     db: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tt.platform import config
-
     monkeypatch.setenv("TT_CONFIG", str(tmp_path / "config.toml"))
     _seed(db)
     # No pinned theme: the app reads the (absent) preference and opens on the default.

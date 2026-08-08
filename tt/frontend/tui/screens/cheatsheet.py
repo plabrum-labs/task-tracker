@@ -28,6 +28,7 @@ _CHEATS: list[tuple[str, str]] = [
     ("n", "new issue"),
     ("f / F", "filter facets / clear them"),
     ("/", "filter by title (the text facet)"),
+    ("v", "saved views: recall, save the current one, delete"),
     (",", "settings"),
     ("P", "switch project"),
     ("R", "refresh"),

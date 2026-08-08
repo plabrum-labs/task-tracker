@@ -1,9 +1,11 @@
 """The per-user preferences file, and the settings it holds today.
 
-A flat TOML table under the XDG config home (``~/.config/tt/config.toml``),
-mirroring ``db.py``'s path logic — ``TT_CONFIG`` overrides it, which is how a
-test points at a tmp file. This module knows nothing of textual: the theme and
-layout are plain values here, and the frontend maps them onto its widgets.
+A TOML table under the XDG config home (``~/.config/tt/config.toml``), mirroring
+``db.py``'s path logic — ``TT_CONFIG`` overrides it, which is how a test points at
+a tmp file. This module knows nothing of textual: the theme, the layout and the
+saved views are plain values here, and the frontend maps them onto its widgets.
+That is why a stored view holds strings rather than a filter or a grouping — the
+dimensions and the facets are the frontend's vocabulary, not the file's.
 
 ``load`` is total. A missing file, a parse error, or an unrecognised value for
 any field all fall back to that field's default rather than crashing the TUI on
@@ -13,7 +15,8 @@ app starting.
 
 import os
 import tomllib
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -35,9 +38,36 @@ LAYOUTS: tuple[Layout, ...] = ("list", "board")
 
 
 @dataclass(frozen=True)
+class SavedFilter:
+    """The facets a stored view narrows on, as the file holds them: plain strings, with
+    the due cutoff an ISO date. A facet the view does not use holds nothing."""
+
+    status: str | None = None
+    priority: str | None = None
+    epic: str | None = None
+    milestone: str | None = None
+    tag: str | None = None
+    due_before: str | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True)
+class SavedView:
+    """A named slice of the tracker: the project it pins (``None`` spans every project,
+    which is how one view cuts across them), the dimensions it groups by outermost
+    first, and the facets it narrows on."""
+
+    name: str
+    project: str | None = None
+    group: tuple[str, ...] = ()
+    filter: SavedFilter = field(default_factory=SavedFilter)
+
+
+@dataclass(frozen=True)
 class Prefs:
     theme: ThemeName = ThemeName.DARK
     layout: Layout = "list"
+    views: tuple[SavedView, ...] = ()
 
 
 def config_path() -> Path:
@@ -68,6 +98,49 @@ def _layout(value: object) -> Layout:
     return _DEFAULTS.layout
 
 
+def _text(table: Mapping[str, object], key: str) -> str | None:
+    value = table.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _saved_filter(value: object) -> SavedFilter:
+    table: Mapping[str, object] = value if isinstance(value, dict) else {}
+    return SavedFilter(
+        status=_text(table, "status"),
+        priority=_text(table, "priority"),
+        epic=_text(table, "epic"),
+        milestone=_text(table, "milestone"),
+        tag=_text(table, "tag"),
+        due_before=_text(table, "due_before"),
+        text=_text(table, "text") or "",
+    )
+
+
+def _saved_view(entry: object) -> SavedView | None:
+    """One stored view, or ``None`` when the entry cannot be one: a view is recalled and
+    deleted by name, so an entry carrying none is dropped rather than loaded nameless."""
+    if not isinstance(entry, dict):
+        return None
+    table: Mapping[str, object] = entry
+    name = _text(table, "name")
+    if not name:
+        return None
+    group = table.get("group")
+    levels = group if isinstance(group, list) else []
+    return SavedView(
+        name=name,
+        project=_text(table, "project"),
+        group=tuple(level for level in levels if isinstance(level, str)),
+        filter=_saved_filter(table.get("filter")),
+    )
+
+
+def _views(value: object) -> tuple[SavedView, ...]:
+    if not isinstance(value, list):
+        return _DEFAULTS.views
+    return tuple(view for view in (_saved_view(entry) for entry in value) if view is not None)
+
+
 def load() -> Prefs:
     """Read the preferences, defaulting each field past anything the file cannot
     supply — a bad value for one setting never discards the others."""
@@ -79,15 +152,47 @@ def load() -> Prefs:
         return Prefs()
     ui = data.get("ui")
     ui = ui if isinstance(ui, dict) else {}
-    return Prefs(theme=_theme(ui.get("theme")), layout=_layout(ui.get("layout")))
+    return Prefs(
+        theme=_theme(ui.get("theme")),
+        layout=_layout(ui.get("layout")),
+        views=_views(data.get("views")),
+    )
+
+
+def _filter_table(narrowing: SavedFilter) -> dict[str, str]:
+    # TOML has no null, so a facet the view does not use is left out of its table
+    # altogether; a blank text facet is no facet at all and goes the same way.
+    held: list[tuple[str, str | None]] = [
+        ("status", narrowing.status),
+        ("priority", narrowing.priority),
+        ("epic", narrowing.epic),
+        ("milestone", narrowing.milestone),
+        ("tag", narrowing.tag),
+        ("due_before", narrowing.due_before),
+        ("text", narrowing.text or None),
+    ]
+    return {name: value for name, value in held if value is not None}
+
+
+def _view_table(view: SavedView) -> dict[str, object]:
+    table: dict[str, object] = {"name": view.name, "group": list(view.group)}
+    if view.project is not None:
+        table["project"] = view.project
+    narrowing = _filter_table(view.filter)
+    if narrowing:
+        table["filter"] = narrowing
+    return table
 
 
 def save(prefs: Prefs) -> None:
     """Write the preferences, creating the config directory on demand."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    document: dict[str, object] = {"ui": {"theme": prefs.theme.value, "layout": prefs.layout}}
+    if prefs.views:
+        document["views"] = [_view_table(view) for view in prefs.views]
     with path.open("wb") as handle:
-        tomli_w.dump({"ui": {"theme": prefs.theme.value, "layout": prefs.layout}}, handle)
+        tomli_w.dump(document, handle)
 
 
 def save_theme(theme: ThemeName) -> None:
@@ -98,3 +203,8 @@ def save_theme(theme: ThemeName) -> None:
 def save_layout(layout: Layout) -> None:
     """Persist the layout you switched to, leaving the other preferences intact."""
     save(replace(load(), layout=layout))
+
+
+def save_views(views: Sequence[SavedView]) -> None:
+    """Persist the saved views, leaving the other preferences intact."""
+    save(replace(load(), views=tuple(views)))
