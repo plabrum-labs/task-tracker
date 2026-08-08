@@ -125,6 +125,7 @@ class IssueListItem(BaseModel):
     due_date: date | None
     epic: str | None
     milestone: str | None
+    tags: list[str]
     # Derived, not stored: the issue depends on something that is not yet done. The
     # margin flags it so a waiting issue reads as waiting without opening it.
     waiting: bool

@@ -55,6 +55,7 @@ def _list_item(issue: Issue) -> schemas.IssueListItem:
         due_date=issue.due_date,
         epic=_link_ref(issue, issue.epic.number if issue.epic is not None else None),
         milestone=_link_ref(issue, issue.milestone.number if issue.milestone is not None else None),
+        tags=sorted(tag.name for tag in issue.tags),
         waiting=_waiting(issue),
     )
 
