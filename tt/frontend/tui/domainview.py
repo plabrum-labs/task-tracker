@@ -3,9 +3,10 @@
 Everything here is a pure function or a plain dataclass; nothing imports textual,
 so it is driven directly in tests with no terminal. The screens in the package
 above turn these values into widgets — the glyphs and colours a status reads as,
-the facets a filter narrows on and the chips they draw as, the tree one or two
-dimensions file issues under and which of its nodes are folded shut, where the
-cursor lands after a move, and the commands a menu draws from an object's offers.
+the facets a filter narrows on and the chips they draw as, the named slice a saved
+view recalls, the tree one or two dimensions file issues under and which of its
+nodes are folded shut, where the cursor lands after a move, and the commands a menu
+draws from an object's offers.
 This module never touches a widget or the database.
 """
 
@@ -26,7 +27,7 @@ from tt.platform.actions import (
     Offer,
     Refused,
 )
-from tt.platform.config import Layout
+from tt.platform.config import Layout, SavedFilter, SavedView
 
 # --- the visual vocabulary ------------------------------------------------
 
@@ -684,6 +685,88 @@ def drill_facet(by: GroupBy) -> ValueFacet | None:
             return None
 
 
+# --- saved views ----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class View:
+    """A named slice of the tracker: the scope it is read over — one project it pins, or
+    every project at once — the dimensions it groups by, and what it narrows to. The
+    three go into force together, which is what makes one keystroke worth a name."""
+
+    name: str
+    scope: Scope
+    by: Grouping
+    filter: Filter = NO_FILTER
+
+
+def _stored_grouping(stored: Sequence[str]) -> Grouping:
+    """The grouping a stored view recalls: the levels naming a real dimension, outermost
+    first and at most two, and the flat list when the file names none."""
+    named: list[GroupBy] = []
+    for level in stored:
+        by = group_by(level)
+        if by is not None:
+            named.append(by)
+    kept = levels(named)
+    return grouping(
+        kept[0] if kept else "none",
+        kept[1] if len(kept) > 1 else "none",
+    )
+
+
+def _stored_date(value: str | None) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def view_of(stored: SavedView) -> View:
+    """The view a stored entry recalls. Total the way ``config.load`` is: a level naming
+    no dimension and a cutoff that is not a date drop out rather than raising, so a
+    hand-edited file still opens."""
+    narrowing = stored.filter
+    return View(
+        name=stored.name,
+        scope=ProjectScope(stored.project) if stored.project is not None else AllScope(),
+        by=_stored_grouping(stored.group),
+        filter=Filter(
+            status=narrowing.status,
+            priority=narrowing.priority,
+            epic=narrowing.epic,
+            milestone=narrowing.milestone,
+            tag=narrowing.tag,
+            due_before=_stored_date(narrowing.due_before),
+            text=narrowing.text,
+        ),
+    )
+
+
+def saved_view(view: View) -> SavedView:
+    """The view as the preferences file stores it — the inverse of ``view_of``. An
+    all-projects view pins no project, which is how a slice cuts across them."""
+    narrowing = view.filter
+    return SavedView(
+        name=view.name,
+        project=view.scope.slug if isinstance(view.scope, ProjectScope) else None,
+        group=tuple(view.by),
+        filter=SavedFilter(
+            status=narrowing.status,
+            priority=narrowing.priority,
+            epic=narrowing.epic,
+            milestone=narrowing.milestone,
+            tag=narrowing.tag,
+            due_before=(
+                f"{narrowing.due_before:%Y-%m-%d}" if narrowing.due_before is not None else None
+            ),
+            text=narrowing.text,
+        ),
+    )
+
+
 # --- folding --------------------------------------------------------------
 
 # What a node is addressed by while it is folded: the dimension values from the
@@ -1189,6 +1272,33 @@ def facet_commands(facet: ValueFacet, values: Sequence[str], current: Filter) ->
     in force marked."""
     held = facet_value(current, facet)
     return [_pick(value, value == held, "facetValue", value) for value in values]
+
+
+# The row of the view overlay that captures the live state under a name.
+SAVE_VIEW = "Save current as…"
+
+# What an all-projects view reads as where a pinned one names its project.
+EVERYWHERE = "all projects"
+
+
+def view_label(view: View) -> str:
+    """What a saved view reads as in the overlay: its name, then the slice it stands
+    for — recalling one is a jump, so the row says where it lands."""
+    where = view.scope.slug if isinstance(view.scope, ProjectScope) else EVERYWHERE
+    return f"{view.name}   {where} · {grouping_label(view.by)}"
+
+
+def view_commands(views: Sequence[View]) -> list[Command]:
+    """The rows of the view overlay: one per saved view, which recalls it, then the row
+    that saves the live state under a name, then a delete row per view — the filter
+    menu's shape, where what takes something away sits under what puts it in force."""
+    rows = [Command(view_label(view), None, None, Navigate("view", view.name)) for view in views]
+    rows.append(Command(SAVE_VIEW, None, None, Navigate("saveView")))
+    rows.extend(
+        Command(f"Delete {view.name}", None, None, Navigate("deleteView", view.name))
+        for view in views
+    )
+    return rows
 
 
 def drill_commands(issue: IssueListItem) -> list[Command]:

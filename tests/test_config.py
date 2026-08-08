@@ -1,4 +1,5 @@
-"""The preferences file: a round-trip, and the ways a bad file falls back.
+"""The preferences file: a round-trip of every setting it holds — the theme, the
+layout, and the list of saved views — and the ways a bad file falls back.
 
 ``TT_CONFIG`` points every case at a tmp path, so nothing here touches the real
 ``~/.config``. ``load`` is total — no input should raise — so the malformed cases
@@ -9,7 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from tt.platform.config import Prefs, ThemeName, load, save, save_layout, save_theme
+from tt.platform.config import (
+    Prefs,
+    SavedFilter,
+    SavedView,
+    ThemeName,
+    load,
+    save,
+    save_layout,
+    save_theme,
+    save_views,
+)
 
 
 @pytest.fixture
@@ -61,4 +72,76 @@ def test_an_unknown_theme_loads_the_default(config_file: Path) -> None:
 
 def test_an_empty_table_loads_the_default(config_file: Path) -> None:
     config_file.write_text("[ui]\n")
+    assert load() == Prefs()
+
+
+# --- saved views ----------------------------------------------------------
+
+_VIEWS = (
+    SavedView(
+        name="bugs everywhere",
+        # No project: the view spans them all, which is what cuts a tag across projects.
+        project=None,
+        group=("tag", "status"),
+        filter=SavedFilter(tag="bug", text="parser"),
+    ),
+    SavedView(
+        name="tt board",
+        project="tt",
+        group=("status",),
+        filter=SavedFilter(
+            status="doing",
+            priority="high",
+            epic="tt-e1",
+            milestone="tt-m1",
+            due_before="2026-08-15",
+        ),
+    ),
+)
+
+
+def test_save_then_load_round_trips_a_list_of_views(config_file: Path) -> None:
+    save(Prefs(theme=ThemeName.LIGHT, layout="board", views=_VIEWS))
+    assert load() == Prefs(theme=ThemeName.LIGHT, layout="board", views=_VIEWS)
+
+
+def test_a_view_with_no_scope_group_or_filter_round_trips(config_file: Path) -> None:
+    # Every field but the name is empty, so the written table has almost nothing in it —
+    # what comes back must still be the same view rather than a defaulted one.
+    bare = (SavedView(name="everything"),)
+    save(Prefs(views=bare))
+    assert load().views == bare
+
+
+def test_saving_views_leaves_the_other_preferences_intact(config_file: Path) -> None:
+    save_theme(ThemeName.LIGHT)
+    save_layout("board")
+    save_views(_VIEWS)
+    assert load() == Prefs(theme=ThemeName.LIGHT, layout="board", views=_VIEWS)
+
+
+def test_saving_the_theme_leaves_the_views_intact(config_file: Path) -> None:
+    save_views(_VIEWS)
+    save_theme(ThemeName.LIGHT)
+    assert load().views == _VIEWS
+
+
+def test_a_file_with_no_views_loads_none(config_file: Path) -> None:
+    config_file.write_text('[ui]\ntheme = "tt-light"\n')
+    assert load().views == ()
+
+
+def test_a_nameless_view_is_dropped_and_the_rest_load(config_file: Path) -> None:
+    # A view is recalled and deleted by name, so an entry carrying none is unusable; it
+    # goes the way a bad theme does, without taking the readable entries with it.
+    config_file.write_text(
+        '[ui]\ntheme = "tt-dark"\n\n'
+        '[[views]]\ngroup = ["status"]\n\n'
+        '[[views]]\nname = "mine"\nproject = "tt"\n'
+    )
+    assert [view.name for view in load().views] == ["mine"]
+
+
+def test_views_that_are_not_tables_load_as_none(config_file: Path) -> None:
+    config_file.write_text('views = ["mine", 3]\n\n[ui]\ntheme = "tt-dark"\n')
     assert load() == Prefs()

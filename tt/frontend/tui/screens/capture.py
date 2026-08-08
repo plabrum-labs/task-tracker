@@ -1,8 +1,9 @@
-"""The quick-capture overlay: one text box for a new issue's title.
+"""The quick-capture overlay: one text box for one line — a new issue's title, the
+name a view is saved under.
 
-Enter dismisses with the trimmed title (or ``None`` when it is blank); escape
-dismisses with ``None``. The screen writes nothing itself — the main screen takes
-the title and runs ``addIssue`` against the scoped project.
+Enter dismisses with the trimmed line (or ``None`` when it is blank); escape
+dismisses with ``None``. The screen writes nothing itself and knows nothing of what
+it is prompting for — the main screen names the prompt and acts on what comes back.
 """
 
 from __future__ import annotations
@@ -15,20 +16,23 @@ from textual.widgets import Input, Static
 
 
 class CaptureScreen(ModalScreen["str | None"]):
-    """A single-field prompt. Its result is the new title, or ``None``."""
+    """A single-field prompt. Its result is the line that was typed, or ``None``."""
 
     BINDINGS = [("escape", "cancel", "cancel")]
 
-    def __init__(self, slug: str) -> None:
+    def __init__(self, prompt: str, subject: str, placeholder: str) -> None:
         super().__init__()
-        self._slug = slug
+        self._prompt = prompt
+        self._subject = subject
+        self._placeholder = placeholder
 
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
             yield Static(
-                f"[$overlay-text-muted]New issue in [b]{esc(self._slug)}[/][/]", classes="ov-header"
+                f"[$overlay-text-muted]{esc(self._prompt)} [b]{esc(self._subject)}[/][/]",
+                classes="ov-header",
             )
-            yield Input(placeholder="title", id="capture-input")
+            yield Input(placeholder=self._placeholder, id="capture-input")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()

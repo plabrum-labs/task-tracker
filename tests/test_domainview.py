@@ -13,6 +13,7 @@ from tt.domains.comment.schemas import CommentView
 from tt.domains.issue.schemas import IssueListItem
 from tt.frontend.tui import domainview as dv
 from tt.platform.actions import Offer, Refused, Runnable
+from tt.platform.config import SavedFilter, SavedView
 
 
 def _item(
@@ -376,6 +377,67 @@ def test_filtering_composes_with_grouping() -> None:
     issues = _fleet()
     narrowed = dv.apply(issues, dv.Filter(epic="tt-9"))
     assert _shape(dv.group_tree(narrowed, ("tag",))) == [("#api", [1, 2]), ("#ui", [2])]
+
+
+# --- saved views ----------------------------------------------------------
+
+
+def test_a_view_round_trips_through_the_shape_the_file_stores() -> None:
+    spanning = dv.View(
+        name="bugs everywhere",
+        scope=dv.AllScope(),
+        by=("tag", "status"),
+        filter=dv.Filter(tag="bug", due_before=date(2026, 8, 15), text="parser"),
+    )
+    assert dv.view_of(dv.saved_view(spanning)) == spanning
+    # And the same for a view that pins a project and narrows on nothing.
+    pinned = dv.View(name="tt", scope=dv.ProjectScope("tt"), by=("none",))
+    assert dv.view_of(dv.saved_view(pinned)) == pinned
+
+
+def test_a_spanning_view_stores_no_project_and_a_pinned_one_its_slug() -> None:
+    spanning = dv.saved_view(dv.View("everywhere", dv.AllScope(), ("none",)))
+    assert spanning.project is None
+    pinned = dv.saved_view(dv.View("here", dv.ProjectScope("tt"), ("none",)))
+    assert pinned.project == "tt"
+
+
+def test_a_stored_view_drops_what_it_cannot_name() -> None:
+    stored = SavedView(
+        name="hand edited",
+        group=("spreadsheet", "status", "epic", "tag"),
+        filter=SavedFilter(due_before="next tuesday"),
+    )
+    view = dv.view_of(stored)
+    # The level naming no dimension drops out, and two levels is the cap.
+    assert view.by == ("status", "epic")
+    assert view.filter.due_before is None
+    assert view.scope == dv.AllScope()
+
+
+def test_a_stored_view_naming_no_dimension_is_the_flat_list() -> None:
+    assert dv.view_of(SavedView(name="flat")).by == ("none",)
+    assert dv.view_of(SavedView(name="flat", group=("none",))).by == ("none",)
+
+
+def test_the_view_overlay_recalls_saves_and_deletes() -> None:
+    views = [dv.View("mine", dv.ProjectScope("tt"), ("status",))]
+    rows = dv.view_commands(views)
+    # The view's own row recalls it, and says where it lands.
+    assert rows[0].run == dv.Navigate("view", "mine")
+    assert rows[0].label == "mine   tt · by status"
+    # Then the save row, then the deletes — what takes a view away sits under the rest.
+    assert rows[1].label == dv.SAVE_VIEW and rows[1].run == dv.Navigate("saveView")
+    assert rows[2].label == "Delete mine" and rows[2].run == dv.Navigate("deleteView", "mine")
+
+
+def test_a_spanning_views_row_says_so() -> None:
+    row = dv.view_commands([dv.View("hot", dv.AllScope(), ("none",))])[0]
+    assert row.label == f"hot   {dv.EVERYWHERE} · flat"
+
+
+def test_the_view_overlay_of_an_empty_file_only_offers_the_save_row() -> None:
+    assert [row.run for row in dv.view_commands([])] == [dv.Navigate("saveView")]
 
 
 # --- folding --------------------------------------------------------------

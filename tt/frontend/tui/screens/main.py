@@ -10,7 +10,9 @@ that facet rather than navigating anywhere. The body is grouped by the one or tw
 dimensions ``g`` picks — nested
 as a tree when there are two — and drawn stacked or as columns by the ``[``/``]``
 toggle; the board is the status groups as columns. ``z`` opens the fold chord over that
-tree, and which of its nodes are shut is remembered per grouping for the session.
+tree, and which of its nodes are shut is remembered per grouping for the session. ``v``
+opens the saved views: a name recalls the filter, grouping and scope it was saved with,
+and the overlay is also where the live state is saved under a name or one is deleted.
 Everything you can do to the selected object is reached through what that offers — a
 ``MenuScreen`` overlay for the list, and for an action with fields the ``EditPane``
 that takes over the right pane where the read detail was — so this screen names only
@@ -46,6 +48,7 @@ from tt.domains.project.schemas import ProjectListItem
 from tt.domains.tag import api as tag_api
 from tt.frontend.tui import data
 from tt.frontend.tui.domainview import (
+    EVERYWHERE,
     EXPANDED,
     FACET_LABELS,
     FAR,
@@ -73,6 +76,7 @@ from tt.frontend.tui.domainview import (
     Split,
     Target,
     ValueFacet,
+    View,
     apply,
     comment_commands,
     drill_commands,
@@ -100,10 +104,13 @@ from tt.frontend.tui.domainview import (
     pane_split,
     project_commands,
     saved_layout,
+    saved_view,
     surviving_id,
     switcher_commands,
     tag_commands,
     toggle_fold,
+    view_commands,
+    view_of,
     visible_stops,
     with_due,
     with_facet,
@@ -166,6 +173,7 @@ class MainScreen(Screen[None]):
         Binding("slash", "filter", "filter", show=False),
         Binding("f", "filter_menu", "filter facets", show=False),
         Binding("F", "clear_filters", "clear filters", show=False),
+        Binding("v", "views", "saved views", show=False),
         Binding("R", "refresh", "refresh", show=False),
         Binding("n", "capture", "new issue", show=False),
         Binding("c", "comment", "add comment", show=False),
@@ -418,7 +426,7 @@ class MainScreen(Screen[None]):
             self.size.width,
             self.size.height,
         )
-        self._save_view()
+        self._save_layout()
 
     # --- grouping ---------------------------------------------------------
 
@@ -459,9 +467,9 @@ class MainScreen(Screen[None]):
         # so a render that no longer fits falls back to the stack.
         if not fits_columns(by, len(self._tree()), self.size.width, self.size.height):
             self.view_render = "stacked"
-        self._save_view()
+        self._save_layout()
 
-    def _save_view(self) -> None:
+    def _save_layout(self) -> None:
         config.save_layout(saved_layout(self.view_group, self.view_render))
 
     # --- filtering --------------------------------------------------------
@@ -564,6 +572,56 @@ class MainScreen(Screen[None]):
             return
         self._apply_filter(with_facet(self.view_filter, facet, value))
         self.status = BROWSING
+
+    # --- saved views ------------------------------------------------------
+
+    def _views(self) -> list[View]:
+        """The saved views, read off the preferences file each time: the overlay is the
+        only thing that holds them, so there is no copy here to fall out of date."""
+        return [view_of(stored) for stored in config.load().views]
+
+    def action_views(self) -> None:
+        self.app.push_screen(MenuScreen("Views", view_commands(self._views())), self._on_command)
+
+    def _recall_view(self, name: str) -> None:
+        view = next((v for v in self._views() if v.name == name), None)
+        if view is None:
+            self.status = f"{name}: no such view"
+            return
+        self._apply_view(view)
+
+    def _apply_view(self, view: View) -> None:
+        """Recall a view: its filter, its grouping and its scope all go into force at
+        once, and the list is read back over the project it pins."""
+        # The quick line holds the text facet's value, so it is put back with the rest —
+        # otherwise a line left over from before would still read as what is filtered.
+        self.query_one(FilterInput).value = view.filter.text
+        self.view_filter = view.filter
+        self._apply_group(view.by)
+        self._switch_scope(view.scope)
+        self.status = f"view {view.name}"
+
+    def _save_current_view(self) -> None:
+        where = self._slug() or EVERYWHERE
+        self.app.push_screen(CaptureScreen("Save this view of", where, "name"), self._name_view)
+
+    def _name_view(self, name: str | None) -> None:
+        if name is None:
+            return
+        current = saved_view(View(name, self.scope, self.view_group, self.view_filter))
+        # A name addresses one view, so saving over one replaces it rather than leaving
+        # two rows nothing can tell apart.
+        kept = [view for view in config.load().views if view.name != name]
+        config.save_views([*kept, current])
+        self.status = f"saved view {name}"
+
+    def _delete_view(self, name: str) -> None:
+        views = config.load().views
+        if all(view.name != name for view in views):
+            self.status = f"{name}: no such view"
+            return
+        config.save_views([view for view in views if view.name != name])
+        self.status = f"deleted view {name}"
 
     # --- folding ----------------------------------------------------------
 
@@ -749,6 +807,7 @@ class MainScreen(Screen[None]):
                 Command("Switch project", None, "P", Navigate("switcher")),
                 Command("Group by…", None, "g", Navigate("group")),
                 Command("Filter…", None, "f", Navigate("filter")),
+                Command("Views…", None, "v", Navigate("views")),
                 Command("Toggle columns", None, "[", Navigate("render")),
                 Command("Refresh", None, "R", Navigate("refresh")),
             ]
@@ -786,6 +845,14 @@ class MainScreen(Screen[None]):
                 self.action_clear_filters()
             case "filter":
                 self.action_filter_menu()
+            case "views":
+                self.action_views()
+            case "view" if nav.arg is not None:
+                self._recall_view(nav.arg)
+            case "saveView":
+                self._save_current_view()
+            case "deleteView" if nav.arg is not None:
+                self._delete_view(nav.arg)
             case "enter" if nav.arg is not None and nav.value is not None:
                 self._drill(nav.arg, nav.value)
             case "render":
@@ -957,7 +1024,10 @@ class MainScreen(Screen[None]):
         if slug is None:
             self.status = "pick a project first (P)"
             return
-        self.app.push_screen(CaptureScreen(slug), lambda title: self._add_issue(slug, title))
+        self.app.push_screen(
+            CaptureScreen("New issue in", slug, "title"),
+            lambda title: self._add_issue(slug, title),
+        )
 
     def _add_issue(self, slug: str, title: str | None) -> None:
         if title is None:
