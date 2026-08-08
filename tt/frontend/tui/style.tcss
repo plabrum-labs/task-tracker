@@ -219,7 +219,7 @@ IssueRow.sel {
     padding-right: 1;
     color: $text-muted;
 }
-.blocked {
+.waiting {
     width: 2;
 }
 .title {

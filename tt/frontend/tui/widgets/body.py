@@ -18,14 +18,14 @@ from textual.widgets import Static
 
 from tt.domains.issue.schemas import IssueListItem
 from tt.frontend.tui.domainview import (
-    BLOCKED_VAR,
+    WAITING_VAR,
     Column,
     Layout,
-    blocked_mark,
     columns,
     glyph,
     priority_mark,
     status_var,
+    waiting_mark,
 )
 
 
@@ -42,8 +42,8 @@ class IssueRow(Horizontal):
         yield Static("▌" if self._selected else " ", classes="bar")
         yield Static(glyph(issue.status), classes=f"glyph st-{issue.status}")
         yield Static(esc(issue.ref), classes="ref")
-        bmark = blocked_mark(issue.blocked)
-        yield Static(f"[{BLOCKED_VAR}]{bmark}[/]" if bmark else " ", classes="blocked")
+        wmark = waiting_mark(issue.waiting)
+        yield Static(f"[{WAITING_VAR}]{wmark}[/]" if wmark else " ", classes="waiting")
         title_classes = "title done" if issue.status == "done" else "title"
         yield Static(esc(issue.title), classes=title_classes)
         mark = priority_mark(issue.priority)
@@ -64,10 +64,10 @@ class Card(Static):
         mark = priority_mark(issue.priority)
         pri = f"[{mark.var}]{mark.glyph}[/] " if mark else ""
         ref = f"[$text-disabled]{esc(issue.ref)}[/]"
-        bmark = blocked_mark(issue.blocked)
-        blocked = f"  [{BLOCKED_VAR}]{bmark}[/]" if bmark else ""
+        wmark = waiting_mark(issue.waiting)
+        waiting = f"  [{WAITING_VAR}]{wmark}[/]" if wmark else ""
         super().__init__(
-            f"{pri}{ref}{blocked}\n{esc(issue.title)}", classes="sel" if selected else ""
+            f"{pri}{ref}{waiting}\n{esc(issue.title)}", classes="sel" if selected else ""
         )
         self._selected = selected
 

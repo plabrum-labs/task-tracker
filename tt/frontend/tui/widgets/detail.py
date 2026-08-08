@@ -22,8 +22,8 @@ from textual.widgets import Static
 from tt.domains.comment.schemas import CommentView
 from tt.domains.issue.schemas import IssueDetail
 from tt.frontend.tui.domainview import (
-    BLOCKED_GLYPH,
-    BLOCKED_VAR,
+    WAITING_GLYPH,
+    WAITING_VAR,
     glyph,
     index_of,
     move_comment,
@@ -91,7 +91,7 @@ class DetailPane(VerticalScroll):
         var = status_var(detail.status)
         mark = priority_mark(detail.priority)
         pri = f"   [{mark.var}]{mark.glyph} {esc(detail.priority)}[/]" if mark else ""
-        badge = f"   [{BLOCKED_VAR}]{BLOCKED_GLYPH} blocked[/]" if detail.blocked else ""
+        badge = f"   [{WAITING_VAR}]{WAITING_GLYPH} waiting[/]" if detail.waiting else ""
         status = f"[{var}]{glyph(detail.status)} {esc(detail.status)}[/]{pri}{badge}"
         yield Static(status, classes="d-meta")
         yield Static(
@@ -107,12 +107,12 @@ class DetailPane(VerticalScroll):
             yield Static("[$text-disabled]no comments[/]", classes="d-empty")
         for comment in comments:
             yield CommentRow(comment, comment.id == self.selected_comment_id)
-        # Read-only display of the blocking graph, shown only when the issue takes
+        # Read-only display of the dependency graph, shown only when the issue takes
         # part in it — deps are the exception, not something every issue carries.
-        if detail.blocked_by or detail.blocks:
+        if detail.depends_on or detail.dependents:
             yield Static("[$text-muted]DEPENDENCIES[/]", classes="d-dep-head")
-            yield from self._dep_list("BLOCKED BY", detail.blocked_by)
-            yield from self._dep_list("BLOCKS", detail.blocks)
+            yield from self._dep_list("DEPENDS ON", detail.depends_on)
+            yield from self._dep_list("DEPENDENTS", detail.dependents)
 
     def _dep_list(self, title: str, refs: list[str]) -> ComposeResult:
         """One labelled list of dependency refs, drawn muted and read-only — no

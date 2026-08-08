@@ -16,7 +16,7 @@ from tt.platform.actions import Offer, Refused, Runnable
 
 
 def _item(
-    issue_id: int, status: str = "todo", priority: str = "medium", blocked: bool = False
+    issue_id: int, status: str = "todo", priority: str = "medium", waiting: bool = False
 ) -> IssueListItem:
     return IssueListItem(
         id=issue_id,
@@ -28,7 +28,7 @@ def _item(
         due_date=None,
         epic=None,
         milestone=None,
-        blocked=blocked,
+        waiting=waiting,
     )
 
 
@@ -166,9 +166,9 @@ def test_glyph_and_marker() -> None:
     assert dv.priority_mark("none") is None
 
 
-def test_blocked_mark_flags_only_a_blocked_issue() -> None:
-    assert dv.blocked_mark(True) == dv.BLOCKED_GLYPH
-    assert dv.blocked_mark(False) is None
+def test_waiting_mark_flags_only_a_waiting_issue() -> None:
+    assert dv.waiting_mark(True) == dv.WAITING_GLYPH
+    assert dv.waiting_mark(False) is None
 
 
 def test_status_var_names_the_theme_variable_and_falls_back_to_muted() -> None:

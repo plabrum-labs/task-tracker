@@ -18,8 +18,8 @@ from tt.domains.issue import api as issue_api
 from tt.domains.project import api as project_api
 from tt.frontend.tui.app import TrackerApp
 from tt.frontend.tui.domainview import (
-    BLOCKED_GLYPH,
     DETAIL_BESIDE_MIN_WIDTH,
+    WAITING_GLYPH,
     CommentTarget,
     RunAction,
 )
@@ -299,31 +299,31 @@ async def test_the_detail_pane_shows_the_comment_thread_and_its_empty_state(seed
         assert "COMMENTS · 0" in rendered and "no comments" in rendered
 
 
-async def test_the_detail_pane_and_row_flag_a_blocked_issue(seeded: Engine) -> None:
-    # tt-1 (high) sorts first and is blocked by tt-2 (medium); the selection opens on
-    # it, so the pane shows its blockers and the margin flags the row.
+async def test_the_detail_pane_and_row_flag_a_waiting_issue(seeded: Engine) -> None:
+    # tt-1 (high) sorts first and depends on tt-2 (medium); the selection opens on it,
+    # so the pane shows what it depends on and the margin flags the row.
     issues = issue_api.issue_list(seeded, "tt")
-    blocker, blocked = issues[1].ref, issues[0].ref
-    issue_api.issue_action(seeded, "addDependency", {"blocker": blocker}, blocked)
+    dependency, dependent = issues[1].ref, issues[0].ref
+    issue_api.issue_action(seeded, "addDependency", {"dependency": dependency}, dependent)
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         pane = _main(app).query_one(DetailPane)
         rendered = _rendered(pane)
         assert "DEPENDENCIES" in rendered
-        assert "BLOCKED BY · 1" in rendered
-        assert blocker in rendered
-        assert "blocked" in rendered  # the status-line badge
-        # The blocked row carries the glyph in its margin cell.
-        cells = [str(row.query_one(".blocked").render()) for row in _main(app).query(IssueRow)]
-        assert any(BLOCKED_GLYPH in cell for cell in cells)
+        assert "DEPENDS ON · 1" in rendered
+        assert dependency in rendered
+        assert "waiting" in rendered  # the status-line badge
+        # The waiting row carries the glyph in its margin cell.
+        cells = [str(row.query_one(".waiting").render()) for row in _main(app).query(IssueRow)]
+        assert any(WAITING_GLYPH in cell for cell in cells)
 
-        # Moving to the blocker shows the other end of the edge: it blocks tt-1.
+        # Moving to the dependency shows the other end of the edge: tt-1 depends on it.
         await pilot.press("j")
         await pilot.pause()
-        assert pane.detail is not None and pane.detail.ref == blocker
+        assert pane.detail is not None and pane.detail.ref == dependency
         moved = _rendered(pane)
-        assert "BLOCKS · 1" in moved and blocked in moved
+        assert "DEPENDENTS · 1" in moved and dependent in moved
 
 
 async def test_c_adds_a_comment_and_the_thread_reflects_it(seeded: Engine) -> None:

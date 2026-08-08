@@ -30,17 +30,18 @@ def _link_ref(issue: Issue, number: int | None) -> str | None:
 
 
 def _dep_refs(issue: Issue, linked: list[Issue]) -> list[str]:
-    """The refs of the live issues on one end of the blocking graph, sorted by their
+    """The refs of the live issues on one end of the dependency graph, sorted by their
     project-scoped number. A dependency is same-project, so the ref is the issue's own
     slug and the linked row's number — the linked row's project is never touched."""
     live = sorted((row for row in linked if row.deleted_at is None), key=lambda r: r.number)
     return [f"{issue.project.slug}-{row.number}" for row in live]
 
 
-def _blocked(issue: Issue) -> bool:
-    """Whether the issue is blocked: a live blocker of it has not reached ``done``. A
-    deleted blocker is out of the graph, and a done one no longer holds it back."""
-    return any(b.status is not Status.DONE for b in issue.blocked_by if b.deleted_at is None)
+def _waiting(issue: Issue) -> bool:
+    """Whether the issue is waiting on a dependency: one it depends on has not reached
+    ``done``. A deleted dependency is out of the graph, and a done one no longer holds
+    it back."""
+    return any(d.status is not Status.DONE for d in issue.depends_on if d.deleted_at is None)
 
 
 def _list_item(issue: Issue) -> schemas.IssueListItem:
@@ -54,7 +55,7 @@ def _list_item(issue: Issue) -> schemas.IssueListItem:
         due_date=issue.due_date,
         epic=_link_ref(issue, issue.epic.number if issue.epic is not None else None),
         milestone=_link_ref(issue, issue.milestone.number if issue.milestone is not None else None),
-        blocked=_blocked(issue),
+        waiting=_waiting(issue),
     )
 
 
@@ -81,9 +82,9 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
             for comment in sorted(issue.comments, key=lambda c: c.created_at)
             if comment.deleted_at is None
         ],
-        blocked_by=_dep_refs(issue, issue.blocked_by),
-        blocks=_dep_refs(issue, issue.blocks),
-        blocked=_blocked(issue),
+        depends_on=_dep_refs(issue, issue.depends_on),
+        dependents=_dep_refs(issue, issue.dependents),
+        waiting=_waiting(issue),
         created_at=issue.created_at,
         updated_at=issue.updated_at,
     )

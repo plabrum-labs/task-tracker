@@ -48,8 +48,8 @@ _loaded = (
         selectinload(Issue.milestone),
         selectinload(Issue.tags),
         selectinload(Issue.comments),
-        selectinload(Issue.blocked_by),
-        selectinload(Issue.blocks),
+        selectinload(Issue.depends_on),
+        selectinload(Issue.dependents),
     )
 )
 
@@ -178,27 +178,28 @@ def resolve_ref(db: Session, ref: str) -> Issue | None:
 
 
 def _live_edges(db: Session) -> list[tuple[int, int]]:
-    """Every blocking edge whose two endpoints are both live, as ``(blocker_id,
-    blocked_id)`` pairs. A soft-deleted issue drops out of the graph — it neither
-    blocks nor is blocked — so a dead intermediary cannot carry a cycle."""
-    blocker = aliased(Issue)
-    blocked = aliased(Issue)
+    """Every dependency edge whose two endpoints are both live, as ``(depends_on_id,
+    dependent_id)`` pairs. A soft-deleted issue drops out of the graph — nothing
+    depends on it and it depends on nothing — so a dead intermediary cannot carry a
+    cycle."""
+    depends_on = aliased(Issue)
+    dependent = aliased(Issue)
     stmt = (
-        select(issue_dependencies.c.blocker_id, issue_dependencies.c.blocked_id)
-        .join(blocker, blocker.id == issue_dependencies.c.blocker_id)
-        .join(blocked, blocked.id == issue_dependencies.c.blocked_id)
-        .where(blocker.deleted_at.is_(None), blocked.deleted_at.is_(None))
+        select(issue_dependencies.c.depends_on_id, issue_dependencies.c.dependent_id)
+        .join(depends_on, depends_on.id == issue_dependencies.c.depends_on_id)
+        .join(dependent, dependent.id == issue_dependencies.c.dependent_id)
+        .where(depends_on.deleted_at.is_(None), dependent.deleted_at.is_(None))
     )
     return [(int(a), int(b)) for a, b in db.execute(stmt).all()]
 
 
-def blocks_downstream(edges: Iterable[tuple[int, int]], start: int) -> set[int]:
-    """Every node reachable from ``start`` by following blocker→blocked edges,
+def dependents_downstream(edges: Iterable[tuple[int, int]], start: int) -> set[int]:
+    """Every node reachable from ``start`` by following depends_on→dependent edges,
     ``start`` itself excluded. Pure over the edge list so the cycle guard's
     reachability is driven directly in tests, no database in sight."""
     forward: dict[int, set[int]] = {}
-    for blocker, blocked in edges:
-        forward.setdefault(blocker, set()).add(blocked)
+    for depends_on, dependent in edges:
+        forward.setdefault(depends_on, set()).add(dependent)
     reached: set[int] = set()
     _reach(forward, start, reached)
     return reached
@@ -215,8 +216,8 @@ def _reach(forward: dict[int, set[int]], node: int, reached: set[int]) -> None:
             _reach(forward, nxt, reached)
 
 
-def blocks_closure(db: Session, issue_id: int) -> set[int]:
-    """Every live issue the given one transitively blocks. The engine behind the
-    cycle guard: adding ``blocker`` → ``obj`` would close a loop exactly when ``obj``
-    already sits in the set of issues ``blocker`` reaches."""
-    return blocks_downstream(_live_edges(db), issue_id)
+def dependents_closure(db: Session, issue_id: int) -> set[int]:
+    """Every live issue that transitively depends on the given one. The engine behind
+    the cycle guard: making ``obj`` depend on ``dependency`` would close a loop exactly
+    when ``dependency`` already sits in the set of issues that depend on ``obj``."""
+    return dependents_downstream(_live_edges(db), issue_id)

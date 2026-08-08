@@ -181,11 +181,11 @@ class UntagIssue(ObjectAction[Issue, schemas.TagNamePayload]):
 
 @issue_actions
 class AddDependency(ObjectAction[Issue, schemas.DependencyRefPayload]):
-    # Record that this issue is blocked by another, the blocker named by ref. The
+    # Record that this issue depends on another, the dependency named by ref. The
     # rules a plain link like a tag does not carry: same-project only, no self-edge,
-    # and no cycle — adding ``blocker`` → ``obj`` is refused when ``blocker`` already
-    # depends on ``obj`` transitively. Idempotent otherwise: an edge the issue already
-    # carries is a no-op that still succeeds, like ``tagIssue``.
+    # and no cycle — making ``obj`` depend on ``dependency`` is refused when
+    # ``dependency`` already depends on ``obj`` transitively. Idempotent otherwise: an
+    # edge the issue already carries is a no-op that still succeeds, like ``tagIssue``.
     KEY = "addDependency"
     LABEL = "Add dependency"
     Payload = schemas.DependencyRefPayload
@@ -194,29 +194,30 @@ class AddDependency(ObjectAction[Issue, schemas.DependencyRefPayload]):
     def execute(
         cls, obj: Issue, payload: schemas.DependencyRefPayload, deps: ActionDeps
     ) -> ActionResponse:
-        blocker = queries.resolve_ref(deps.tx, payload.blocker)
-        if blocker is None:
-            raise Conflict(f"no issue {payload.blocker}")
-        if blocker.project_id != obj.project_id:
-            raise Conflict(f"issue {blocker.ref} is not in this project")
-        if blocker.id == obj.id:
-            raise Conflict("an issue cannot block itself")
-        if blocker in obj.blocked_by:
-            return ActionResponse(message=f"{obj.subject()}: blocked by {blocker.ref}")
-        # The new edge is ``blocker`` → ``obj``. It closes a loop exactly when ``obj``
-        # already reaches ``blocker`` — ``blocker`` sits in what ``obj`` transitively
-        # blocks — so a walk from ``blocker`` back to ``obj`` would return.
-        if blocker.id in queries.blocks_closure(deps.tx, obj.id):
+        dependency = queries.resolve_ref(deps.tx, payload.dependency)
+        if dependency is None:
+            raise Conflict(f"no issue {payload.dependency}")
+        if dependency.project_id != obj.project_id:
+            raise Conflict(f"issue {dependency.ref} is not in this project")
+        if dependency.id == obj.id:
+            raise Conflict("an issue cannot depend on itself")
+        if dependency in obj.depends_on:
+            return ActionResponse(message=f"{obj.subject()}: depends on {dependency.ref}")
+        # The new edge makes ``obj`` depend on ``dependency``. It closes a loop exactly
+        # when ``dependency`` already depends on ``obj`` — ``dependency`` sits among the
+        # issues that transitively depend on ``obj`` — so a walk forward from ``obj``
+        # would reach ``dependency`` and back again.
+        if dependency.id in queries.dependents_closure(deps.tx, obj.id):
             raise Conflict("would create a dependency cycle")
-        obj.blocked_by.append(blocker)
-        return ActionResponse(message=f"{obj.subject()}: blocked by {blocker.ref}")
+        obj.depends_on.append(dependency)
+        return ActionResponse(message=f"{obj.subject()}: depends on {dependency.ref}")
 
 
 @issue_actions
 class RemoveDependency(ObjectAction[Issue, schemas.DependencyRefPayload]):
-    # Drop a blocking edge, the blocker named by ref. An unknown ref is refused, and
-    # so is removing an edge the issue does not carry — the request names a link that
-    # is not there, mirroring ``untagIssue``.
+    # Drop a dependency edge, the dependency named by ref. An unknown ref is refused,
+    # and so is removing an edge the issue does not carry — the request names a link
+    # that is not there, mirroring ``untagIssue``.
     KEY = "removeDependency"
     LABEL = "Remove dependency"
     Payload = schemas.DependencyRefPayload
@@ -225,13 +226,13 @@ class RemoveDependency(ObjectAction[Issue, schemas.DependencyRefPayload]):
     def execute(
         cls, obj: Issue, payload: schemas.DependencyRefPayload, deps: ActionDeps
     ) -> ActionResponse:
-        blocker = queries.resolve_ref(deps.tx, payload.blocker)
-        if blocker is None:
-            raise Conflict(f"no issue {payload.blocker}")
-        if blocker not in obj.blocked_by:
-            raise Conflict(f"{obj.subject()} is not blocked by {blocker.ref}")
-        obj.blocked_by.remove(blocker)
-        return ActionResponse(message=f"{obj.subject()}: no longer blocked by {blocker.ref}")
+        dependency = queries.resolve_ref(deps.tx, payload.dependency)
+        if dependency is None:
+            raise Conflict(f"no issue {payload.dependency}")
+        if dependency not in obj.depends_on:
+            raise Conflict(f"{obj.subject()} does not depend on {dependency.ref}")
+        obj.depends_on.remove(dependency)
+        return ActionResponse(message=f"{obj.subject()}: no longer depends on {dependency.ref}")
 
 
 @issue_actions

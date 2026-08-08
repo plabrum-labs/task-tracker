@@ -79,10 +79,10 @@ def _project_line(p: ProjectListItem) -> str:
 
 
 def _issue_line(i: IssueListItem) -> str:
-    # A fixed-width marker column so a blocked issue flags in the text list without
-    # shifting the titles of the ones that are not.
-    blocked = "⊘" if i.blocked else " "
-    return f"{i.ref:<10} {i.status:<8} {i.priority:<6} {blocked} {i.title}"
+    # A fixed-width marker column so an issue waiting on a dependency flags in the text
+    # list without shifting the titles of the ones that are not.
+    waiting = "⊘" if i.waiting else " "
+    return f"{i.ref:<10} {i.status:<8} {i.priority:<6} {waiting} {i.title}"
 
 
 def _epic_line(e: EpicListItem) -> str:

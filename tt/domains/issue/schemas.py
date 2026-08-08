@@ -93,14 +93,14 @@ class TagNamePayload(BaseModel):
 
 
 class DependencyRefPayload(BaseModel):
-    # Shared by ``addDependency`` and ``removeDependency``: the blocker is addressed
+    # Shared by ``addDependency`` and ``removeDependency``: the dependency is addressed
     # by ref, so the TUI renders a reference field rather than free text. From the
-    # issue's own view "add a dependency" means "this issue is blocked by X", so the
-    # ref names X, the blocker.
+    # issue's own view "add a dependency" means "this issue depends on X", so the ref
+    # names X, the issue this one depends on.
     model_config = ConfigDict(extra="forbid")
 
-    blocker: Annotated[str, REFERENCE] = Field(
-        description="The ref of the issue that blocks this one, e.g. ENG-3."
+    dependency: Annotated[str, REFERENCE] = Field(
+        description="The ref of the issue this one depends on, e.g. ENG-3."
     )
 
 
@@ -125,9 +125,9 @@ class IssueListItem(BaseModel):
     due_date: date | None
     epic: str | None
     milestone: str | None
-    # Derived, not stored: the issue has a blocker that is not yet done. The margin
-    # flags it so a blocked issue reads as blocked without opening it.
-    blocked: bool
+    # Derived, not stored: the issue depends on something that is not yet done. The
+    # margin flags it so a waiting issue reads as waiting without opening it.
+    waiting: bool
 
 
 class IssueDetail(BaseModel):
@@ -143,11 +143,11 @@ class IssueDetail(BaseModel):
     milestone: str | None
     tags: list[str]
     comments: list[CommentView]
-    # The blocking graph, as refs: ``blocked_by`` is what must finish before this
-    # issue can start, ``blocks`` what waits on it. ``blocked`` is the derived state,
-    # true when a live blocker is not yet done.
-    blocked_by: list[str]
-    blocks: list[str]
-    blocked: bool
+    # The dependency graph, as refs: ``depends_on`` is what must finish before this
+    # issue can start, ``dependents`` what waits on it. ``waiting`` is the derived
+    # state, true when a live dependency is not yet done.
+    depends_on: list[str]
+    dependents: list[str]
+    waiting: bool
     created_at: datetime
     updated_at: datetime
