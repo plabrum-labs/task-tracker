@@ -7,6 +7,7 @@ refused edit that keeps its form, delete-and-reconcile, the width-gated board, a
 greyed refusal, and the theme switch that persists.
 """
 
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from textual.pilot import Pilot
 from textual.widgets import Input, OptionList, Static, TextArea
 
 from tt.domains.issue import api as issue_api
+from tt.domains.issue.schemas import IssueDetail, IssueListItem
 from tt.domains.project import api as project_api
 from tt.frontend.tui.app import TrackerApp
 from tt.frontend.tui.domainview import (
@@ -28,6 +30,7 @@ from tt.frontend.tui.screens.menu import MenuScreen
 from tt.frontend.tui.widgets.body import BoardColumn, Card, IssueRow
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import EditPane
+from tt.frontend.tui.widgets.rollup import RollupRow
 from tt.platform.config import ThemeName
 
 
@@ -66,6 +69,53 @@ def _comment_on(engine: Engine, ref: str, body: str) -> int:
 
 def _rendered(pane: DetailPane) -> str:
     return " ".join(str(widget.render()) for widget in pane.query(Static))
+
+
+def _fabricated(
+    *,
+    due_date: date | None = None,
+    epic: str | None = None,
+    milestone: str | None = None,
+    tags: list[str] | None = None,
+) -> IssueDetail:
+    """A detail built by hand, so the pane can be driven through relations without
+    seeding the epic, milestone and tag rows behind them."""
+    written = datetime(2026, 8, 1, tzinfo=UTC)
+    return IssueDetail(
+        id=1,
+        ref="tt-1",
+        project="tt",
+        title="ship the mvp",
+        body="the parser drops trailing commas",
+        status="todo",
+        priority="high",
+        due_date=due_date,
+        epic=epic,
+        milestone=milestone,
+        tags=tags if tags is not None else [],
+        comments=[],
+        depends_on=[],
+        dependents=[],
+        waiting=False,
+        created_at=written,
+        updated_at=written,
+    )
+
+
+def _peer(issue_id: int, status: str, epic: str | None) -> IssueListItem:
+    """A row of the pane's ``peers`` — the loaded scope the rollup line stands over."""
+    return IssueListItem(
+        id=issue_id,
+        ref=f"tt-{issue_id}",
+        project="tt",
+        title=f"issue {issue_id}",
+        status=status,
+        priority="medium",
+        due_date=None,
+        epic=epic,
+        milestone=None,
+        waiting=False,
+    )
 
 
 @pytest.fixture
@@ -273,6 +323,60 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
         await pilot.pause()
         second = issue_api.issue_list(seeded, "tt")[1]
         assert pane.detail is not None and pane.detail.id == second.id
+
+
+async def test_the_detail_pane_shows_the_relations_the_issue_carries(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        pane.detail = _fabricated(
+            due_date=date(2026, 8, 9), epic="tt-3", milestone="tt-4", tags=["parser", "ux"]
+        )
+        await pilot.pause()
+        rendered = _rendered(pane)
+        assert "due" in rendered and "2026-08-09" in rendered
+        assert "epic" in rendered and "tt-3" in rendered
+        assert "milestone" in rendered and "tt-4" in rendered
+        assert "tags" in rendered and "#parser" in rendered and "#ux" in rendered
+
+
+async def test_the_detail_pane_omits_the_relations_the_issue_lacks(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        pane.detail = _fabricated()
+        await pilot.pause()
+        rendered = _rendered(pane)
+        # No label without a value beside it: an absent relation drops its whole row.
+        for label in ("due", "epic", "milestone", "tags"):
+            assert label not in rendered
+        # And with neither an epic nor a milestone there is nothing to roll up.
+        assert not pane.query(RollupRow)
+
+
+async def test_the_rollup_line_summarises_the_epic_the_issue_belongs_to(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        pane = _main(app).query_one(DetailPane)
+        # Three issues in the epic and one outside it, so the line counts its own.
+        pane.peers = [
+            _peer(1, "todo", "tt-3"),
+            _peer(2, "doing", "tt-3"),
+            _peer(3, "done", "tt-3"),
+            _peer(4, "done", None),
+        ]
+        pane.detail = _fabricated(epic="tt-3", milestone="tt-4")
+        await pilot.pause()
+        line = pane.query_one(RollupRow)
+        rendered = " ".join(str(widget.render()) for widget in line.query(Static))
+        assert "tt-3" in rendered  # the identity
+        assert "tt-4" in rendered  # the related column
+        assert "1/3" in rendered  # one of the epic's three is done
+        # The breakdown carries a glyph and a count per status the epic is spread over.
+        assert "○ 1" in rendered and "◐ 1" in rendered and "● 1" in rendered
 
 
 async def test_the_detail_pane_shows_the_comment_thread_and_its_empty_state(seeded: Engine) -> None:

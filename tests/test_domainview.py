@@ -113,6 +113,42 @@ def test_the_comment_cursor_lands_on_the_survivor_after_a_delete() -> None:
     assert dv.index_of([_comment(1), _comment(2)], 2) == 1
 
 
+# --- the rollup -----------------------------------------------------------
+
+
+def test_rollup_counts_each_status_and_the_done_share() -> None:
+    cases: list[tuple[str, list[IssueListItem], dict[str, int], int, int]] = [
+        ("empty", [], {}, 0, 0),
+        ("single status", [_item(1, "todo"), _item(2, "todo")], {"todo": 2}, 0, 2),
+        ("all done", [_item(1, "done"), _item(2, "done")], {"done": 2}, 2, 2),
+        (
+            "mixed",
+            [_item(1, "todo"), _item(2, "doing"), _item(3, "done"), _item(4, "todo")],
+            {"todo": 2, "doing": 1, "done": 1},
+            1,
+            4,
+        ),
+        (
+            "the statuses off the board count too",
+            [_item(1, "backlog"), _item(2, "requires_planning"), _item(3, "done")],
+            {"backlog": 1, "requires_planning": 1, "done": 1},
+            1,
+            3,
+        ),
+    ]
+    for name, issues, counts, done, total in cases:
+        standing = dv.rollup(issues)
+        assert standing.counts == counts, name
+        assert (standing.done, standing.total) == (done, total), name
+
+
+def test_a_rollup_breakdown_reads_in_workflow_order() -> None:
+    # However the issues arrive, the counts run backlog to done — the order the group
+    # header and the detail pane's summary line both draw them in.
+    issues = [_item(1, "done"), _item(2, "todo"), _item(3, "backlog"), _item(4, "doing")]
+    assert list(dv.rollup(issues).counts) == ["backlog", "todo", "doing", "done"]
+
+
 # --- layout fitting -------------------------------------------------------
 
 

@@ -224,7 +224,11 @@ class MainScreen(Screen[None]):
     def _paint_detail(self) -> None:
         issue = self._selected_issue()
         detail = issue_api.issue_get(self.engine, issue.ref) if issue is not None else None
-        self.query_one(DetailPane).detail = detail
+        pane = self.query_one(DetailPane)
+        # The whole loaded scope, not the visible slice: an epic's standing is what it
+        # is, whatever the filter line is currently narrowing the list to.
+        pane.peers = self.issues
+        pane.detail = detail
 
     def _paint_footer(self) -> None:
         self.query_one(StatusBar).show(self.status)

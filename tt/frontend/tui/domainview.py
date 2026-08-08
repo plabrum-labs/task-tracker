@@ -11,10 +11,12 @@ widget or the database.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+from tt.domains.issue.enums import Status
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.project.schemas import ProjectListItem
 from tt.platform.actions import (
@@ -251,6 +253,37 @@ def move_comment(comments: Sequence[Identified], selected_id: int | None, delta:
     if here is None:
         return comments[0].id
     return comments[_clamp(here + delta, 0, len(comments) - 1)].id
+
+
+# --- the rollup -----------------------------------------------------------
+
+# The order a breakdown reads in: the workflow order ``Status`` declares, so the
+# counts run backlog to done however the issues arrived.
+ROLLUP_STATUSES: tuple[str, ...] = tuple(status.value for status in Status)
+
+
+@dataclass(frozen=True)
+class Rollup:
+    """How a set of issues stands: how many sit at each status it uses, and how many
+    of the total are done. It carries no identity — who the issues belong to is the
+    caller's to say — so the detail pane's epic summary and a group header are the
+    same value drawn twice."""
+
+    counts: Mapping[str, int]
+    done: int
+    total: int
+
+
+def rollup(issues: Sequence[IssueListItem]) -> Rollup:
+    """The standing of a set of issues: a count per status that appears in it, in
+    workflow order, and the done-of-total a progress bar draws from. Statuses nobody
+    is at are left out rather than counted as zero."""
+    tally = Counter(issue.status for issue in issues)
+    done = tally[Status.DONE]
+    ordered = {status: tally.pop(status) for status in ROLLUP_STATUSES if status in tally}
+    # Anything left in the tally is a status outside the workflow order; it trails the
+    # known ones rather than vanishing from the breakdown.
+    return Rollup(counts=ordered | tally, done=done, total=len(issues))
 
 
 # --- cwd resolution -------------------------------------------------------

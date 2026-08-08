@@ -66,6 +66,64 @@ EditPane {
     color: $text-disabled;
 }
 
+/* What the issue is filed under, above the body: a label column against the value
+   cells, one tight row per relation the issue carries. The chips and pills are
+   widgets, so the tint is a background rather than markup; each is ``width: auto`` so
+   it hugs its text instead of taking the default ``1fr`` share of the row. */
+.d-attrs {
+    height: auto;
+    padding-top: 1;
+}
+.d-attr {
+    height: auto;
+}
+.d-attr-label {
+    width: 11;
+    color: $text-muted;
+}
+.d-attr-value {
+    width: 1fr;
+    padding: 0 1;
+    color: $foreground;
+}
+.lchip {
+    width: auto;
+    padding: 0 1;
+    background: $primary 14%;
+    color: $foreground;
+}
+.tagpill {
+    width: auto;
+    margin-right: 1;
+    padding: 0 1;
+    background: $border;
+    color: $text-muted;
+}
+
+/* How a set of issues stands, in a line: what it is, what it is filed under, the
+   bar, and the per-status counts. The counts cell takes the slack so the cells
+   before it hug their text. */
+RollupRow {
+    height: auto;
+    padding-top: 1;
+}
+.r-id {
+    width: auto;
+    padding-right: 2;
+    color: $foreground;
+}
+.r-related {
+    width: auto;
+    padding-right: 2;
+}
+.r-bar {
+    width: auto;
+    padding-right: 2;
+}
+.r-counts {
+    width: 1fr;
+}
+
 /* The comment thread under the body. A row is the flat list's shape — the same
    gutter bar over a fixed-width column and a filling one — but grown to the height
    its wrapped body needs rather than pinned to a single line. */

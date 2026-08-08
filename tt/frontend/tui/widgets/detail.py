@@ -3,24 +3,28 @@
 The pane tracks the cursor: the browse screen assigns ``detail`` and the subtree
 rebuilds from it (``recompose``). It is a focusable ``VerticalScroll`` so a body
 taller than the pane can be read — Enter moves focus here and Escape returns to the
-list. Under the body sits the comment thread, and it is what ``j``/``k`` walk while
-the pane holds focus, so the screen can address a single comment; with no thread to
-walk they scroll instead. The status glyph mixes its colour into one markup string,
-so it names its theme variable through ``status_var``; everything else is plain text
-drawn in a CSS component class.
+list. Above the body sits what the issue is filed under — its due date, epic,
+milestone and tags, each row drawn only when it has one — and the rollup line that
+summarises how the epic it belongs to stands. Under the body sits the comment thread,
+and it is what ``j``/``k`` walk while the pane holds focus, so the screen can address
+a single comment; with no thread to walk they scroll instead. The status glyph mixes
+its colour into one markup string, so it names its theme variable through
+``status_var``; everything else is plain text drawn in a CSS component class.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from rich.markup import escape as esc
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import Static
 
 from tt.domains.comment.schemas import CommentView
-from tt.domains.issue.schemas import IssueDetail
+from tt.domains.issue.schemas import IssueDetail, IssueListItem
 from tt.frontend.tui.domainview import (
     WAITING_GLYPH,
     WAITING_VAR,
@@ -28,9 +32,11 @@ from tt.frontend.tui.domainview import (
     index_of,
     move_comment,
     priority_mark,
+    rollup,
     status_var,
     surviving_id,
 )
+from tt.frontend.tui.widgets.rollup import RollupRow
 
 
 class CommentRow(Horizontal):
@@ -59,6 +65,13 @@ class CommentRow(Horizontal):
             self.scroll_visible()
 
 
+def _attr(label: str, *values: Static) -> Horizontal:
+    """One row of the relationship block: a muted label against one or more value
+    cells. Chips and pills are widgets rather than markup because a tinted
+    background is a style, and only a widget can carry one."""
+    return Horizontal(Static(label, classes="d-attr-label"), *values, classes="d-attr")
+
+
 class DetailPane(VerticalScroll):
     """The selected issue's detail. ``detail`` is a recomposing reactive the screen
     assigns, ``None`` when nothing is selected. Focusable so a long body scrolls;
@@ -70,6 +83,11 @@ class DetailPane(VerticalScroll):
     # it to address a comment, and clears it on leaving the pane — the bar would
     # otherwise claim a selection that browse keys no longer act on.
     selected_comment_id: reactive[int | None] = reactive[int | None](None, recompose=True)
+
+    # The issues the rollup line stands over — the screen's loaded scope. The pane
+    # picks the selected issue's epic siblings out of it, so it summarises the epic
+    # without reading the database itself.
+    peers: reactive[list[IssueListItem]] = reactive(list, recompose=True)
 
     # Only in effect while the pane holds focus (Enter), so these shadow the
     # screen's own ``j``/``k``/``g``/``G`` without stealing them from browse mode.
@@ -99,6 +117,12 @@ class DetailPane(VerticalScroll):
             f"   updated {detail.updated_at:%Y-%m-%d}[/]",
             classes="d-meta",
         )
+        relations = list(self._relations(detail))
+        if relations:
+            yield Vertical(*relations, classes="d-attrs")
+        line = self._rollup_row(detail)
+        if line is not None:
+            yield line
         body = detail.body.strip()
         yield Static(esc(body) if body else "[$text-disabled]no description[/]", classes="d-body")
         comments = detail.comments
@@ -120,6 +144,29 @@ class DetailPane(VerticalScroll):
         yield Static(f"[$text-disabled]{title} · {len(refs)}[/]", classes="d-dep-sub")
         for ref in refs:
             yield Static(f"[$text-muted]{esc(ref)}[/]", classes="d-dep")
+
+    def _relations(self, detail: IssueDetail) -> Iterator[Horizontal]:
+        """The rows of the relationship block above the body. A relation the issue does
+        not carry is not drawn at all, so the block never shows a label with nothing
+        beside it. An epic and a milestone are refs here — the read carries no title
+        for either."""
+        if detail.due_date is not None:
+            yield _attr("due", Static(f"{detail.due_date:%Y-%m-%d}", classes="d-attr-value"))
+        if detail.epic is not None:
+            yield _attr("epic", Static(esc(detail.epic), classes="lchip"))
+        if detail.milestone is not None:
+            yield _attr("milestone", Static(esc(detail.milestone), classes="lchip"))
+        if detail.tags:
+            yield _attr("tags", *(Static(f"#{esc(tag)}", classes="tagpill") for tag in detail.tags))
+
+    def _rollup_row(self, detail: IssueDetail) -> RollupRow | None:
+        """How the epic the issue belongs to stands, its milestone in the related
+        column. An issue under no epic has nothing to roll up — a milestone belongs to
+        an epic, so it cannot have the one without the other."""
+        if detail.epic is None:
+            return None
+        peers = [issue for issue in self.peers if issue.epic == detail.epic]
+        return RollupRow(detail.epic, detail.milestone, rollup(peers))
 
     def watch_detail(self, old: IssueDetail | None, new: IssueDetail | None) -> None:
         # A write reloads the whole detail, so the comment cursor is reconciled onto a
