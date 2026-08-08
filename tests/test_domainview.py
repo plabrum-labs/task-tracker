@@ -224,6 +224,160 @@ def test_grouping_by_status_reproduces_the_board_columns() -> None:
     assert [[i.id for i in one.issues] for one in nodes] == [[1, 4], [2], [3]]
 
 
+# --- filtering ------------------------------------------------------------
+
+
+def _fleet() -> list[IssueListItem]:
+    """One issue per shape the facets narrow on, so a facet case can name the ids it
+    keeps and the ids it drops."""
+    return [
+        _item(1, "todo", "high", epic="tt-9", milestone="tt-5", tags=["api"], due_date=TODAY),
+        _item(2, "doing", "low", epic="tt-9", tags=["api", "ui"], due_date=date(2026, 9, 1)),
+        _item(3, "done", "high", epic="tt-4", milestone="tt-7", tags=["ui"]),
+        _item(4),
+    ]
+
+
+def test_apply_narrows_on_each_facet() -> None:
+    cases: list[tuple[str, dv.Filter, list[int]]] = [
+        ("the empty filter is the identity", dv.NO_FILTER, [1, 2, 3, 4]),
+        ("status", dv.Filter(status="doing"), [2]),
+        ("priority", dv.Filter(priority="high"), [1, 3]),
+        ("epic", dv.Filter(epic="tt-9"), [1, 2]),
+        ("milestone", dv.Filter(milestone="tt-7"), [3]),
+        ("tag, which an issue wears any number of", dv.Filter(tag="api"), [1, 2]),
+        ("text, folded over the title", dv.Filter(text="ISSUE 3"), [3]),
+        (
+            "due before a cutoff, an undated issue never being due before one",
+            dv.Filter(due_before=date(2026, 8, 20)),
+            [1],
+        ),
+        ("a facet nothing carries admits nothing", dv.Filter(tag="parser"), []),
+    ]
+    for name, current, kept in cases:
+        assert [issue.id for issue in dv.apply(_fleet(), current)] == kept, name
+
+
+def test_apply_ands_its_facets_together() -> None:
+    issues = _fleet()
+    # Each facet alone keeps more than the two together do, and the order is the order
+    # the issues arrived in.
+    assert [i.id for i in dv.apply(issues, dv.Filter(epic="tt-9"))] == [1, 2]
+    assert [i.id for i in dv.apply(issues, dv.Filter(priority="high"))] == [1, 3]
+    assert [i.id for i in dv.apply(issues, dv.Filter(epic="tt-9", priority="high"))] == [1]
+    # A third facet that agrees with neither takes the intersection to nothing.
+    both = dv.Filter(epic="tt-9", priority="high", status="done")
+    assert dv.apply(issues, both) == []
+
+
+def test_a_facet_is_set_replaced_and_dropped() -> None:
+    one = dv.with_facet(dv.NO_FILTER, "status", "doing")
+    assert one.status == "doing"
+    # A facet holds one value, so picking it again replaces rather than widens.
+    assert dv.with_facet(one, "status", "done").status == "done"
+    # Another facet joins it rather than displacing it.
+    two = dv.with_facet(one, "tag", "api")
+    assert (two.status, two.tag) == ("doing", "api")
+    assert dv.without_facet(two, "status") == dv.Filter(tag="api")
+    assert dv.without_facet(dv.without_facet(two, "status"), "tag") == dv.NO_FILTER
+    # The due facet holds a date, so it is set and dropped on its own.
+    cutoff = dv.with_due(dv.NO_FILTER, TODAY)
+    assert cutoff.due_before == TODAY
+    assert dv.with_due(cutoff, None) == dv.NO_FILTER
+    # A blank text facet is no facet at all, which is what escaping the quick line does.
+    assert dv.without_facet(dv.with_facet(dv.NO_FILTER, "text", "mvp"), "text") == dv.NO_FILTER
+
+
+def test_chips_draw_the_facets_in_force_and_name_what_removes_each() -> None:
+    assert dv.chips(dv.NO_FILTER) == []
+    current = dv.Filter(status="doing", tag="api", due_before=TODAY, text="mvp")
+    assert dv.chips(current) == [
+        dv.Chip("status", "status doing"),
+        dv.Chip("tag", "tag api"),
+        dv.Chip("due", "due before 2026-08-08"),
+        dv.Chip("text", "text mvp"),
+    ]
+    # Removing one chip leaves the rest standing.
+    left = dv.without_facet(current, "tag")
+    assert [chip.facet for chip in dv.chips(left)] == ["status", "due", "text"]
+
+
+def test_facet_values_are_the_closed_lists_and_what_the_issues_carry() -> None:
+    issues = _fleet()
+    # Status and priority are vocabularies, so every level is offered whatever the
+    # loaded issues use.
+    assert dv.facet_values(issues, "status") == list(dv.ROLLUP_STATUSES)
+    assert dv.facet_values(issues, "priority") == list(dv.PRIORITY_ORDER)
+    # An epic, a milestone and a tag are objects, so only what is actually filed under
+    # one is offered, sorted and without repeats.
+    assert dv.facet_values(issues, "epic") == ["tt-4", "tt-9"]
+    assert dv.facet_values(issues, "milestone") == ["tt-5", "tt-7"]
+    assert dv.facet_values(issues, "tag") == ["api", "ui"]
+    # Text is typed, not picked.
+    assert dv.facet_values(issues, "text") == []
+
+
+def test_entering_a_group_is_the_facet_it_stands_for() -> None:
+    # The dimensions whose headers stand for a real object are the facets they filter to.
+    assert [dv.drill_facet(by) for by in ("epic", "milestone", "tag")] == [
+        "epic",
+        "milestone",
+        "tag",
+    ]
+    # A dimension standing for no object enters nothing.
+    assert [dv.drill_facet(by) for by in ("none", "status", "priority", "due")] == [None] * 4
+
+
+def test_the_filter_menu_marks_what_is_in_force_and_offers_to_remove_it() -> None:
+    # Nothing filtered: the facets, and no removals to make.
+    rows = dv.filter_commands(dv.NO_FILTER)
+    assert [row.label for row in rows] == [dv.FACET_LABELS[facet] for facet in dv.FACETS]
+
+    current = dv.Filter(status="doing", tag="api")
+    rows = dv.filter_commands(current)
+    marked = [row.label for row in rows if row.label.endswith("✓")]
+    assert marked == ["Status  ✓", "Tag  ✓"]
+    assert [row.label for row in rows[len(dv.FACETS) :]] == [
+        "Remove status doing",
+        "Remove tag api",
+        dv.CLEAR_FILTERS,
+    ]
+    # Each removal row carries the facet it drops, so picking one is unambiguous.
+    assert [row.run for row in rows[len(dv.FACETS) : -1]] == [
+        dv.Navigate("unfacet", "status"),
+        dv.Navigate("unfacet", "tag"),
+    ]
+
+
+def test_a_facets_value_rows_mark_the_one_in_force() -> None:
+    rows = dv.facet_commands("status", ["todo", "doing"], dv.Filter(status="doing"))
+    assert [row.label for row in rows] == ["todo", "doing  ✓"]
+    assert [row.run for row in rows] == [
+        dv.Navigate("facetValue", "todo"),
+        dv.Navigate("facetValue", "doing"),
+    ]
+
+
+def test_drill_rows_name_the_facet_and_the_value_together() -> None:
+    issue = _item(1, epic="tt-9", milestone="tt-5", tags=["api", "ui"])
+    assert dv.drill_commands(issue) == [
+        dv.Command("Enter epic tt-9", None, None, dv.Navigate("enter", "epic", "tt-9")),
+        dv.Command("Enter milestone tt-5", None, None, dv.Navigate("enter", "milestone", "tt-5")),
+        dv.Command("Enter tag api", None, None, dv.Navigate("enter", "tag", "api")),
+        dv.Command("Enter tag ui", None, None, dv.Navigate("enter", "tag", "ui")),
+    ]
+    # An issue filed under nothing has nothing to enter.
+    assert dv.drill_commands(_item(2)) == []
+
+
+def test_filtering_composes_with_grouping() -> None:
+    # Filter first, then group: the tree is built over what survives, so a group that
+    # the filter emptied is not drawn at all.
+    issues = _fleet()
+    narrowed = dv.apply(issues, dv.Filter(epic="tt-9"))
+    assert _shape(dv.group_tree(narrowed, ("tag",))) == [("#api", [1, 2]), ("#ui", [2])]
+
+
 # --- folding --------------------------------------------------------------
 
 

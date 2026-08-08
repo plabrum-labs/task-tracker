@@ -1,17 +1,31 @@
-"""The one-line header: the scope's name, its issue count, and how the body is
-grouped.
+"""The header rows: the scope's name, its issue count and how the body is grouped, and
+under them the chips of the facets in force.
 
-A single ``Static`` whose content is theme-variable markup (``[$primary]`` and the
-rest), so it repaints in the active theme with no resolved hex threaded through it.
+The header is a single ``Static`` whose content is theme-variable markup (``[$primary]``
+and the rest), so it repaints in the active theme with no resolved hex threaded through
+it. A chip is its own widget instead, the way the detail pane's are: the tint it carries
+is a background, and only a widget can have one.
 """
 
 from __future__ import annotations
 
 from rich.markup import escape as esc
+from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.reactive import reactive
 from textual.widgets import Static
 
 from tt.domains.project.schemas import ProjectListItem
-from tt.frontend.tui.domainview import Grouping, GroupRender, ProjectScope, Scope, grouping_label
+from tt.frontend.tui.domainview import (
+    NO_FILTER,
+    Filter,
+    Grouping,
+    GroupRender,
+    ProjectScope,
+    Scope,
+    chips,
+    grouping_label,
+)
 
 
 class TopBar(Static):
@@ -39,3 +53,20 @@ class TopBar(Static):
             f"  {name}   [$text-muted]{count} issues[/]"
             f"    [b $primary]{esc(grouping_label(by))}[/]{fan}"
         )
+
+
+class ChipsBar(Horizontal):
+    """The facets in force, one chip each, under the header. ``current`` is a recomposing
+    reactive the screen assigns through ``show``, which also takes the row off the page
+    while nothing is filtered — an unfiltered list gives it back to the body."""
+
+    current: reactive[Filter] = reactive[Filter](NO_FILTER, recompose=True)
+
+    def show(self, current: Filter) -> None:
+        self.display = bool(chips(current))
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        for chip in chips(self.current):
+            yield Static(esc(chip.label), classes="chip")
+        yield Static("[$text-disabled]f facet · F clear[/]", classes="chip-hint")

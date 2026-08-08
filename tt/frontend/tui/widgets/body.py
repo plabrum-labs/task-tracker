@@ -147,14 +147,16 @@ class Body(VerticalScroll):
     view_render: reactive[GroupRender] = reactive[GroupRender]("stacked", recompose=True)
     cursor: reactive[Cursor | None] = reactive[Cursor | None](None, recompose=True)
     scoped: reactive[bool] = reactive(False, recompose=True)
+    # Whether a facet is in force. An empty body under a filter is the filter's doing,
+    # not an empty scope, so it says so rather than offering to add an issue.
+    filtered: reactive[bool] = reactive(False, recompose=True)
 
     def compose(self) -> ComposeResult:
         nodes = self.nodes
         # What the tree holds, not what is on screen: a body folded shut still draws
         # its headers, and only an empty scope has nothing to say.
         if not all_issues(nodes):
-            hint = "no issues — n to add one" if self.scoped else "no issues"
-            yield Static(f"  [$text-disabled]{hint}[/]", classes="empty")
+            yield Static(f"  [$text-disabled]{self._empty_hint()}[/]", classes="empty")
             return
         if self.view_render == "columns":
             # The columns are ``width: 1fr``, which only lays them across a row inside a
@@ -166,6 +168,11 @@ class Body(VerticalScroll):
             )
             return
         yield from self._stack(nodes, (), 0)
+
+    def _empty_hint(self) -> str:
+        if self.filtered:
+            return "no issues match the filter — F clears it"
+        return "no issues — n to add one" if self.scoped else "no issues"
 
     def _stack(self, nodes: list[GroupNode], prefix: NodePath, depth: int) -> ComposeResult:
         """One level of the tree down the page: each node's header, then what it holds —

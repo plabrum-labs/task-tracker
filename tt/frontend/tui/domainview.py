@@ -3,9 +3,10 @@
 Everything here is a pure function or a plain dataclass; nothing imports textual,
 so it is driven directly in tests with no terminal. The screens in the package
 above turn these values into widgets — the glyphs and colours a status reads as,
-the tree one or two dimensions file issues under and which of its nodes are folded
-shut, where the cursor lands after a move, and the commands a menu draws from an
-object's offers. This module never touches a widget or the database.
+the facets a filter narrows on and the chips they draw as, the tree one or two
+dimensions file issues under and which of its nodes are folded shut, where the
+cursor lands after a move, and the commands a menu draws from an object's offers.
+This module never touches a widget or the database.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import os
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any, Literal, Protocol
 
@@ -487,6 +488,202 @@ def saved_layout(by: Grouping, render: GroupRender) -> Layout:
     return "board" if by == ("status",) and render == "columns" else "list"
 
 
+# --- filtering ------------------------------------------------------------
+
+# A facet whose value is a plain string, so one menu pick sets it. ``text`` is here
+# because the quick title search types a string like any other value.
+type ValueFacet = Literal["status", "priority", "epic", "milestone", "tag", "text"]
+
+# Every facet a filter narrows on. ``due`` stands apart because it holds a date, not a
+# string, and so is typed rather than picked off a list.
+type Facet = ValueFacet | Literal["due"]
+
+VALUE_FACETS: tuple[ValueFacet, ...] = (
+    "status",
+    "priority",
+    "epic",
+    "milestone",
+    "tag",
+    "text",
+)
+
+# The facets in the order the menu lists them and the chips bar draws them.
+FACETS: tuple[Facet, ...] = ("status", "priority", "epic", "milestone", "tag", "due", "text")
+
+FACET_LABELS: Mapping[Facet, str] = {
+    "status": "Status",
+    "priority": "Priority",
+    "epic": "Epic",
+    "milestone": "Milestone",
+    "tag": "Tag",
+    "due": "Due before",
+    "text": "Text",
+}
+
+
+@dataclass(frozen=True)
+class Filter:
+    """What narrows the list: the facets in force. Each holds at most one value, so
+    picking a facet twice replaces rather than widens, and they AND together — the empty
+    filter admits everything. ``text`` is the quick title search ``/`` types, folded in
+    as a facet of its own so it composes with the rest instead of sitting beside them."""
+
+    status: str | None = None
+    priority: str | None = None
+    epic: str | None = None
+    milestone: str | None = None
+    tag: str | None = None
+    due_before: date | None = None
+    text: str = ""
+
+
+NO_FILTER = Filter()
+
+
+def facet_of(name: object) -> Facet | None:
+    """The facet a name picks out, or ``None`` when it names none. A picked row steers
+    with its argument as a plain string, so this is what turns one back into a facet."""
+    return next((facet for facet in FACETS if facet == name), None)
+
+
+def facet_value(current: Filter, facet: ValueFacet) -> str | None:
+    """The value a facet holds, or ``None`` when it is not in force. A blank ``text`` is
+    no text facet at all, so it reads as not in force rather than as an empty needle."""
+    match facet:
+        case "status":
+            return current.status
+        case "priority":
+            return current.priority
+        case "epic":
+            return current.epic
+        case "milestone":
+            return current.milestone
+        case "tag":
+            return current.tag
+        case "text":
+            return current.text or None
+
+
+def with_facet(current: Filter, facet: ValueFacet, value: str) -> Filter:
+    """The filter with one facet set, replacing whatever that facet held."""
+    match facet:
+        case "status":
+            return replace(current, status=value)
+        case "priority":
+            return replace(current, priority=value)
+        case "epic":
+            return replace(current, epic=value)
+        case "milestone":
+            return replace(current, milestone=value)
+        case "tag":
+            return replace(current, tag=value)
+        case "text":
+            return replace(current, text=value)
+
+
+def with_due(current: Filter, due: date | None) -> Filter:
+    """The filter with the due cutoff set, or dropped by ``None``. The due facet holds a
+    date rather than a string, so it is set on its own."""
+    return replace(current, due_before=due)
+
+
+def without_facet(current: Filter, facet: Facet) -> Filter:
+    """The filter with one facet dropped — what removing its chip leaves."""
+    match facet:
+        case "due":
+            return replace(current, due_before=None)
+        case "status":
+            return replace(current, status=None)
+        case "priority":
+            return replace(current, priority=None)
+        case "epic":
+            return replace(current, epic=None)
+        case "milestone":
+            return replace(current, milestone=None)
+        case "tag":
+            return replace(current, tag=None)
+        case "text":
+            return replace(current, text="")
+
+
+def _admits(issue: IssueListItem, current: Filter) -> bool:
+    return (
+        (current.status is None or issue.status == current.status)
+        and (current.priority is None or issue.priority == current.priority)
+        and (current.epic is None or issue.epic == current.epic)
+        and (current.milestone is None or issue.milestone == current.milestone)
+        and (current.tag is None or current.tag in issue.tags)
+        and (
+            current.due_before is None
+            or (issue.due_date is not None and issue.due_date < current.due_before)
+        )
+        and (not current.text or current.text.lower() in issue.title.lower())
+    )
+
+
+def apply(issues: Sequence[IssueListItem], current: Filter) -> list[IssueListItem]:
+    """The issues every facet in force admits, in the order they arrived. The empty
+    filter is the identity. An issue carrying no value for a facet that is in force is
+    out — filtering to an epic is filtering to that epic, not to everything that could
+    one day sit under it — and an undated issue is never due before a cutoff."""
+    return [issue for issue in issues if _admits(issue, current)]
+
+
+@dataclass(frozen=True)
+class Chip:
+    """One facet in force as the bar draws it: which facet it is, so removing the chip
+    knows what to drop, and the line it reads."""
+
+    facet: Facet
+    label: str
+
+
+def chips(current: Filter) -> list[Chip]:
+    """The facets in force, in the order ``FACETS`` lists them. An empty filter has no
+    chips, and the bar is then not drawn at all."""
+    drawn: list[Chip] = []
+    for facet in FACETS:
+        if facet == "due":
+            if current.due_before is not None:
+                drawn.append(Chip(facet, f"due before {current.due_before:%Y-%m-%d}"))
+            continue
+        value = facet_value(current, facet)
+        if value is not None:
+            drawn.append(Chip(facet, f"{FACET_LABELS[facet].lower()} {value}"))
+    return drawn
+
+
+def facet_values(issues: Sequence[IssueListItem], facet: ValueFacet) -> list[str]:
+    """The values a facet's menu offers. Status and priority are closed vocabularies, so
+    every level is listed whether or not the loaded issues use it; an epic, a milestone
+    and a tag are objects, so what is offered is what the loaded issues are actually
+    filed under, sorted. ``text`` is typed rather than picked, so it offers none."""
+    match facet:
+        case "status":
+            return list(ROLLUP_STATUSES)
+        case "priority":
+            return list(PRIORITY_ORDER)
+        case "epic":
+            return sorted({issue.epic for issue in issues if issue.epic is not None})
+        case "milestone":
+            return sorted({issue.milestone for issue in issues if issue.milestone is not None})
+        case "tag":
+            return sorted({tag for issue in issues for tag in issue.tags})
+        case "text":
+            return []
+
+
+def drill_facet(by: GroupBy) -> ValueFacet | None:
+    """The facet entering a group applies: drilling into an epic, a milestone or a tag is
+    filtering to it, so a header is not a separate mechanism. A dimension standing for no
+    object — a status, a priority, a due bucket — enters nothing."""
+    match by:
+        case "epic" | "milestone" | "tag":
+            return by
+        case "none" | "status" | "priority" | "due":
+            return None
+
+
 # --- folding --------------------------------------------------------------
 
 # What a node is addressed by while it is folded: the dimension values from the
@@ -849,10 +1046,13 @@ class RunAction:
 @dataclass(frozen=True)
 class Navigate:
     """Picking this command steers the app rather than writing: ``what`` names the
-    move and ``arg`` carries its argument (a slug for ``switch``)."""
+    move and ``arg`` carries its argument (a slug for ``switch``, a dimension for
+    ``group``, a facet for ``facet``). ``value`` is the second argument the moves that
+    address a facet *and* what to set it to need — entering an epic is both."""
 
     what: str
     arg: str | None = None
+    value: str | None = None
 
 
 type CommandRun = RunAction | Navigate
@@ -918,14 +1118,14 @@ def tag_commands(
     return [_offer_command(offer, TagTarget(tag_id), detail) for offer in offers]
 
 
-def _pick(label: str, marked: bool, what: str, by: GroupBy) -> Command:
+def _pick(label: str, marked: bool, what: str, arg: str) -> Command:
     # Steering the body is not a write, so a picker row carries no refusal and no
     # accelerator — only where it sends the view.
     return Command(
         label=f"{label}  ✓" if marked else label,
         reason=None,
         hint=None,
-        run=Navigate(what, by),
+        run=Navigate(what, arg),
     )
 
 
@@ -960,6 +1160,57 @@ def nest_commands(first: GroupBy, current: Grouping) -> list[Command]:
         for by in GROUP_BYS
         if by != first
     ]
+
+
+# The row that drops every facet at once, at the foot of the filter menu.
+CLEAR_FILTERS = "Clear all filters"
+
+
+def filter_commands(current: Filter) -> list[Command]:
+    """The rows of the filter menu's first step: one per facet, the ones in force
+    marked, then a row per chip that removes just that facet and — while anything is in
+    force — the row that drops the lot."""
+    held = chips(current)
+    rows = [
+        _pick(FACET_LABELS[facet], any(chip.facet == facet for chip in held), "facet", facet)
+        for facet in FACETS
+    ]
+    rows.extend(
+        Command(f"Remove {chip.label}", None, None, Navigate("unfacet", chip.facet))
+        for chip in held
+    )
+    if held:
+        rows.append(Command(CLEAR_FILTERS, None, None, Navigate("clearFilters")))
+    return rows
+
+
+def facet_commands(facet: ValueFacet, values: Sequence[str], current: Filter) -> list[Command]:
+    """The rows of the filter menu's second step: the values the facet can take, the one
+    in force marked."""
+    held = facet_value(current, facet)
+    return [_pick(value, value == held, "facetValue", value) for value in values]
+
+
+def drill_commands(issue: IssueListItem) -> list[Command]:
+    """The rows that enter what an issue is filed under — its epic, its milestone, each
+    of its tags. Picking one applies that facet, the same move entering a group header
+    makes, so the detail's relations and the headers are one mechanism."""
+    rows: list[Command] = []
+    if issue.epic is not None:
+        rows.append(_drill("epic", issue.epic))
+    if issue.milestone is not None:
+        rows.append(_drill("milestone", issue.milestone))
+    rows.extend(_drill("tag", tag) for tag in issue.tags)
+    return rows
+
+
+def _drill(facet: ValueFacet, value: str) -> Command:
+    return Command(
+        label=f"Enter {FACET_LABELS[facet].lower()} {value}",
+        reason=None,
+        hint=None,
+        run=Navigate("enter", facet, value),
+    )
 
 
 def switcher_commands(projects: list[ProjectListItem], create: Offer | None) -> list[Command]:

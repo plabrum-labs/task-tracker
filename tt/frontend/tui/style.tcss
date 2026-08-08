@@ -14,6 +14,26 @@ TopBar {
     margin: 1 0 0 0;
 }
 
+/* The facets in force, one row under the header. The widget hides itself when
+   nothing is filtered, giving the row back to the body. Each chip is ``width: auto``
+   so it hugs its text rather than taking the default ``1fr`` share of the row; the
+   hint after them takes the slack. */
+ChipsBar {
+    height: 1;
+    padding: 0 1;
+}
+.chip {
+    width: auto;
+    margin-right: 1;
+    padding: 0 1;
+    background: $primary 14%;
+    color: $foreground;
+}
+.chip-hint {
+    width: 1fr;
+    padding-left: 1;
+}
+
 #content {
     height: 1fr;
 }

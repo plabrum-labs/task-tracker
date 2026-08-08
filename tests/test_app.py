@@ -22,10 +22,13 @@ from tt.domains.project import api as project_api
 from tt.frontend.tui.app import TrackerApp
 from tt.frontend.tui.domainview import (
     DETAIL_BESIDE_MIN_WIDTH,
+    FACETS,
     WAITING_GLYPH,
     CommentTarget,
     EpicTarget,
+    Filter,
     HeaderAt,
+    Navigate,
     RunAction,
     TagTarget,
 )
@@ -42,6 +45,7 @@ from tt.frontend.tui.widgets.body import (
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import EditPane
 from tt.frontend.tui.widgets.rollup import RollupRow
+from tt.frontend.tui.widgets.topbar import ChipsBar
 from tt.platform.config import ThemeName
 
 
@@ -947,6 +951,184 @@ async def test_project_menu_greys_a_refused_delete(seeded: Engine) -> None:
         assert "archive it first" in str(option.prompt)
         # Picking a disabled option is a no-op, so the project is still here.
         assert project_api.project_get(seeded, "tt") is not None
+
+
+# --- filtering ------------------------------------------------------------
+
+
+def _titles(app: TrackerApp) -> list[str]:
+    """The titles of the issue rows on screen, in reading order."""
+    return [str(row.query_one(".title").render()) for row in _main(app).query(IssueRow)]
+
+
+def _chips(app: TrackerApp) -> str:
+    """What the chips bar reads, or ``""`` while nothing is filtered and it is hidden."""
+    bar = _main(app).query_one(ChipsBar)
+    return " ".join(str(chip.render()) for chip in bar.query(".chip")) if bar.display else ""
+
+
+async def _filter_by(pilot: Pilot[None], facet_down: int, value_down: int) -> None:
+    """Filter the way a user does: ``f`` opens the facet menu, the first step is how far
+    down that list the facet sits and the second how far down its values the value is."""
+    await pilot.press("f")
+    await pilot.pause()
+    for _ in range(facet_down):
+        await pilot.press("down")
+    await pilot.press("enter")
+    await pilot.pause()
+    for _ in range(value_down):
+        await pilot.press("down")
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+async def test_a_picked_facet_narrows_the_list_and_draws_its_chip(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        # Nothing filtered: both rows, and the bar gives its row back to the body.
+        assert _titles(app) == ["ship the mvp", "write readme"]
+        assert _chips(app) == ""
+
+        await _filter_by(pilot, 1, 1)  # Priority › high, the level under urgent
+        assert _main(app).view_filter == Filter(priority="high")
+        assert _titles(app) == ["ship the mvp"]
+        assert "priority high" in _chips(app)
+
+
+async def test_chips_and_together_and_come_off_one_at_a_time(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _filter_by(pilot, 1, 1)  # Priority › high — one row survives
+        assert _titles(app) == ["ship the mvp"]
+        await _filter_by(pilot, 0, 3)  # Status › doing — both seeded issues are todo
+        assert _main(app).view_filter == Filter(status="doing", priority="high")
+        # The two AND, so nothing is left and the body says the filter is why.
+        assert _titles(app) == []
+        assert "no issues match the filter" in str(_main(app).query_one(".empty").render())
+
+        # The removal rows sit under the facets, one per chip, in the chips' own order.
+        await pilot.press("f")
+        await pilot.pause()
+        for _ in range(len(FACETS)):
+            await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _main(app).view_filter == Filter(priority="high")
+        assert _titles(app) == ["ship the mvp"]
+
+        # And ``F`` drops what is left in one go.
+        await pilot.press("F")
+        await pilot.pause()
+        assert _main(app).view_filter == Filter()
+        assert _titles(app) == ["ship the mvp", "write readme"]
+        assert _chips(app) == ""
+
+
+async def test_the_quick_line_is_the_text_facet_and_ands_with_the_rest(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _filter_by(pilot, 1, 1)  # Priority › high
+
+        await pilot.press("slash")
+        await pilot.pause()
+        for char in "readme":
+            await pilot.press(char)
+        await pilot.pause()
+        # What is typed is the text facet, not a filter beside the others.
+        assert _main(app).view_filter == Filter(priority="high", text="readme")
+        assert "text readme" in _chips(app)
+        # It ANDs: the only readme issue is not the high one.
+        assert _titles(app) == []
+
+        # Escaping the quick line drops only its facet; the chip picked from the menu
+        # is still in force.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert _main(app).view_filter == Filter(priority="high")
+        assert _titles(app) == ["ship the mvp"]
+
+
+async def test_the_due_facet_is_typed_as_a_date_and_refuses_one_that_does_not_parse(
+    seeded: Engine,
+) -> None:
+    first = issue_api.issue_list(seeded, "tt")[0]
+    issue_api.issue_action(seeded, "setDueDate", {"due_date": "2026-08-01"}, first.ref)
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("f")
+        await pilot.pause()
+        for _ in range(5):  # Due before, under the four facets picked off a list
+            await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        # The one facet that is typed rather than picked opens the form pane.
+        pane = _main(app).query_one(EditPane)
+        assert pane.display
+        box = pane.query_one("#field-due_before", Input)
+
+        # A date that does not parse is refused the way an action refuses a payload: the
+        # form stays open with the reason inline, and nothing is filtered.
+        box.value = "next tuesday"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert pane.display
+        assert "not a date" in str(pane.query_one("#edit-error", Static).render())
+        assert _main(app).view_filter == Filter()
+
+        box.value = "2026-08-15"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert not pane.display
+        assert _main(app).view_filter == Filter(due_before=date(2026, 8, 15))
+        # An undated issue is never due before a cutoff, so only the dated one survives.
+        assert _titles(app) == [first.title]
+        assert "due before 2026-08-15" in _chips(app)
+
+
+async def test_entering_an_epic_header_filters_to_that_epic(seeded: Engine) -> None:
+    ref = await _an_epic(seeded)
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _group_by(pilot, 2)  # Epic, two rows under No grouping
+        await pilot.press("k")  # up off the first issue onto the header of its epic
+        await pilot.pause()
+        assert _main(app).cursor == HeaderAt((ref,), "epic", ref)
+
+        await pilot.press("enter")  # entering the epic is applying its facet
+        await pilot.pause()
+        assert _main(app).view_filter == Filter(epic=ref)
+        assert _titles(app) == ["ship the mvp"]
+        assert f"epic {ref}" in _chips(app)
+
+
+async def test_the_palette_enters_what_the_selected_issue_is_filed_under(seeded: Engine) -> None:
+    ref = await _an_epic(seeded)
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        # The cursor opens on the high-priority issue, the one the epic was put on.
+        await pilot.press("colon")
+        await pilot.pause()
+        menu = app.screen
+        assert isinstance(menu, MenuScreen)
+        row = next(c for c in menu._commands if c.label == f"Enter epic {ref}")
+        assert row.run == Navigate("enter", "epic", ref)
+
+        # Picking it applies the same facet the header does.
+        await pilot.press("slash")
+        await pilot.pause()
+        for char in "epic":
+            await pilot.press(char)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _main(app).view_filter == Filter(epic=ref)
+        assert _titles(app) == ["ship the mvp"]
 
 
 async def test_comma_switches_theme_and_persists(

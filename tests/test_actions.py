@@ -1061,6 +1061,25 @@ def test_detail_surfaces_an_issues_tags_sorted(db: Engine) -> None:
     assert detail.tags == ["bug", "perf", "ui"]
 
 
+def test_the_list_row_carries_an_issues_tags_sorted(db: Engine) -> None:
+    # The list read carries tags too, not just the detail: a frontend filtering by tag
+    # works over the rows it already loaded rather than going back to the database.
+    tt = a_project(db, "tt")
+    tagged = an_issue(db, tt, "wire it")
+    an_issue(db, tt, "untouched")
+    for name in ["ui", "bug", "perf"]:
+        a_tag(db, name)
+        issue_api.issue_action(db, "tagIssue", {"name": name}, tagged.ref)
+
+    rows = {row.ref: row.tags for row in issue_api.issue_list(db, "tt")}
+    assert rows == {tagged.ref: ["bug", "perf", "ui"], "tt-2": []}
+
+    # And an untagged issue reads back empty once its tags are detached again.
+    issue_api.issue_action(db, "untagIssue", {"name": "bug"}, tagged.ref)
+    row = next(r for r in issue_api.issue_list(db, "tt") if r.ref == tagged.ref)
+    assert row.tags == ["perf", "ui"]
+
+
 def test_deleting_a_tag_clears_it_from_every_issue(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "wire it")
