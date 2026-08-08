@@ -73,7 +73,7 @@ class ProjectListItem(BaseModel):
     status: str
     path: str | None
     backlog: int
-    planning: int
+    blocked: int
     todo: int
     doing: int
     done: int
@@ -86,7 +86,7 @@ class ProjectDetail(BaseModel):
     status: str
     path: str | None
     backlog: int
-    planning: int
+    blocked: int
     todo: int
     doing: int
     done: int

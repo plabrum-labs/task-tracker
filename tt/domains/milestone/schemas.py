@@ -36,7 +36,7 @@ class MilestoneListItem(BaseModel):
     title: str
     due_date: date | None
     backlog: int
-    planning: int
+    blocked: int
     todo: int
     doing: int
     done: int
@@ -49,7 +49,7 @@ class MilestoneDetail(BaseModel):
     title: str
     due_date: date | None
     backlog: int
-    planning: int
+    blocked: int
     todo: int
     doing: int
     done: int

@@ -13,7 +13,7 @@ from enum import StrEnum, auto
 
 class Status(StrEnum):
     BACKLOG = auto()
-    REQUIRES_PLANNING = auto()
+    BLOCKED = auto()
     TODO = auto()
     DOING = auto()
     DONE = auto()

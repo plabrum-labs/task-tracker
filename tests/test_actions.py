@@ -251,7 +251,7 @@ def test_set_status_moves_to_each_status(db: Engine) -> None:
     seeded = an_issue(db, tt, "one")
     for status in [
         Status.BACKLOG,
-        Status.REQUIRES_PLANNING,
+        Status.BLOCKED,
         Status.DOING,
         Status.DONE,
         Status.TODO,

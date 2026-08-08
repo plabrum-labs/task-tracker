@@ -60,7 +60,7 @@ class EpicListItem(BaseModel):
     status: str
     due_date: date | None
     backlog: int
-    planning: int
+    blocked: int
     todo: int
     doing: int
     done: int
@@ -75,7 +75,7 @@ class EpicDetail(BaseModel):
     status: str
     due_date: date | None
     backlog: int
-    planning: int
+    blocked: int
     todo: int
     doing: int
     done: int

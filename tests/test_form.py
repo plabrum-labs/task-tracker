@@ -53,7 +53,7 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
         Field(
             name="status",
             required=True,
-            kind=Enum(["backlog", "requires_planning", "todo", "doing", "done"]),
+            kind=Enum(["backlog", "blocked", "todo", "doing", "done"]),
             description="Where the issue is up to.",
         ),
         Field(
@@ -121,7 +121,7 @@ def test_the_set_status_payload_derives_a_single_status_enum_field() -> None:
         Field(
             name="status",
             required=True,
-            kind=Enum(["backlog", "requires_planning", "todo", "doing", "done"]),
+            kind=Enum(["backlog", "blocked", "todo", "doing", "done"]),
             description="Where the issue is up to.",
         ),
     ]

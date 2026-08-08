@@ -214,7 +214,7 @@ def test_the_help_text_carries_the_field_doc_and_the_enum_values(
     assert "Where the issue is up to." in result.output
     # Typer renders the closed choice inline rather than clap's "[possible values:
     # …]", but the alternatives are all there.
-    for value in ("backlog", "requires_planning", "todo", "doing", "done"):
+    for value in ("backlog", "blocked", "todo", "doing", "done"):
         assert value in result.output
 
 

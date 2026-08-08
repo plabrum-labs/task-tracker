@@ -56,7 +56,7 @@ state, so the reliable pattern is to read the current state and then act on it:
 1. **List** to find the object (pass `--json` whenever you parse the output;
    without it you get a human-readable text table):
    - `tt project ls --json` — live projects, each with its issue rollup
-     (`backlog`, `planning`, `todo`, `doing`, `done`).
+     (`backlog`, `blocked`, `todo`, `doing`, `done`).
    - `tt issue ls --json` — live issues; add `--project SLUG` to scope to one.
      Filter with `--tag NAME`, `--epic REF`, `--milestone REF` (the last two need
      `--project`), and order with `--sort <field>[:asc|desc]`, field one of
@@ -110,7 +110,7 @@ describes, verbatim.
 ## Issue statuses
 
 An issue's status is one of, in order:
-`backlog` → `requires_planning` → `todo` → `doing` → `done`. There is no status
+`backlog` → `blocked` → `todo` → `doing` → `done`. There is no status
 machine — any status may follow any other. Use `setStatus` for a quick move
 (`tt issue action ENG-1 setStatus '{"status":"doing"}'`), or set `status` as part of
 the whole-object `edit`.

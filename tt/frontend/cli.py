@@ -73,7 +73,7 @@ type Writer = Callable[[Engine, Any, str, dict[str, Any]], str]
 
 def _project_line(p: ProjectListItem) -> str:
     counts = (
-        f"{p.backlog} backlog, {p.planning} planning, {p.todo} todo, {p.doing} doing, {p.done} done"
+        f"{p.backlog} backlog, {p.blocked} blocked, {p.todo} todo, {p.doing} doing, {p.done} done"
     )
     return f"{p.slug:<12} {p.title:<24} {p.status:<8} {counts}"
 
@@ -86,14 +86,14 @@ def _issue_line(i: IssueListItem) -> str:
 
 
 def _epic_line(e: EpicListItem) -> str:
-    total = e.backlog + e.planning + e.todo + e.doing + e.done
+    total = e.backlog + e.blocked + e.todo + e.doing + e.done
     progress = f"{e.done}/{total}"
     due = e.due_date.isoformat() if e.due_date is not None else "—"
     return f"{e.ref:<10} {e.status:<8} {due:<12} {progress:<8} {e.title}"
 
 
 def _milestone_line(m: MilestoneListItem) -> str:
-    total = m.backlog + m.planning + m.todo + m.doing + m.done
+    total = m.backlog + m.blocked + m.todo + m.doing + m.done
     progress = f"{m.done}/{total}"
     due = m.due_date.isoformat() if m.due_date is not None else "—"
     return f"{m.ref:<10} epic {m.epic:<10} {due:<12} {progress:<8} {m.title}"

@@ -65,8 +65,8 @@ class Epic(BaseDBModel):
         return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BACKLOG)
 
     @property
-    def planning(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.REQUIRES_PLANNING)
+    def blocked(self) -> int:
+        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BLOCKED)
 
     @property
     def todo(self) -> int:

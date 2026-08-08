@@ -68,19 +68,19 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
         rest = issue_queries.list_issues(s, "tt")
     with platform_db.transaction(db) as tx:
         doing = issue_queries.get_issue(tx, first.id)
-        planning = issue_queries.get_issue(tx, rest[1].id)
+        blocked = issue_queries.get_issue(tx, rest[1].id)
         backlog = issue_queries.get_issue(tx, rest[-1].id)
         assert doing is not None
-        assert planning is not None
+        assert blocked is not None
         assert backlog is not None
         doing.status = Status.DOING
-        planning.status = Status.REQUIRES_PLANNING
+        blocked.status = Status.BLOCKED
         backlog.status = Status.BACKLOG
 
     with platform_db.reading(db) as s:
         loaded = project_queries.get_project(s, "tt")
     assert loaded is not None
-    counts = (loaded.backlog, loaded.planning, loaded.todo, loaded.doing, loaded.done)
+    counts = (loaded.backlog, loaded.blocked, loaded.todo, loaded.doing, loaded.done)
     assert counts == (1, 1, 0, 1, 0)
     assert loaded.issue_count() == 3
 
@@ -91,7 +91,7 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
     assert reloaded is not None
     empty_counts = (
         reloaded.backlog,
-        reloaded.planning,
+        reloaded.blocked,
         reloaded.todo,
         reloaded.doing,
         reloaded.done,
