@@ -27,7 +27,7 @@ from tt.frontend.tui.domainview import (
 )
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
-from tt.frontend.tui.widgets.body import BoardColumn, Card, IssueRow
+from tt.frontend.tui.widgets.body import Body, Card, GroupColumn, IssueRow
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import EditPane
 from tt.frontend.tui.widgets.rollup import RollupRow
@@ -114,6 +114,7 @@ def _peer(issue_id: int, status: str, epic: str | None) -> IssueListItem:
         due_date=None,
         epic=epic,
         milestone=None,
+        tags=[],
         waiting=False,
     )
 
@@ -586,60 +587,90 @@ async def test_detail_pane_stacks_below_the_list_when_narrow(seeded: Engine) -> 
         assert _main(narrow).query_one("#content").has_class("below")  # stacked under the list
 
 
-async def test_board_only_appears_at_width_90(seeded: Engine) -> None:
+async def _group_by_status(pilot: Pilot[None]) -> None:
+    """Group the body by status, the way a user does: ``g`` opens the picker and
+    ``Status`` is the row under ``No grouping``."""
+    await pilot.press("g")
+    await pilot.pause()
+    await pilot.press("down")
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+async def test_the_group_picker_sets_the_grouping_and_heads_each_group(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        body = _main(app).query_one(Body)
+        assert _main(app).view_group == "none"  # opens flat, no headers
+        assert not body.query(RollupRow)
+
+        await _group_by_status(pilot)
+        assert _main(app).view_group == "status"
+        # One header per group, and the rows are still the flat list's rows.
+        assert len(body.query(RollupRow)) == 3
+        assert len(body.query(IssueRow)) == 2
+
+
+async def test_columns_only_appear_at_width_90(seeded: Engine) -> None:
     wide = _app(seeded)
     async with wide.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")  # cycle to the board layout
+        await _group_by_status(pilot)
+        await pilot.press("]")  # fan the groups across the width
         await pilot.pause()
-        assert _main(wide).view_layout == "board"
+        assert _main(wide).view_render == "columns"
         assert len(_main(wide).query(Card)) > 0
 
     narrow = _app(seeded)
     async with narrow.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("]")  # cycle to the board layout
+        await _group_by_status(pilot)
+        await pilot.press("]")  # no room for three columns: stays stacked
         await pilot.pause()
-        assert _main(narrow).view_layout == "list"
+        assert _main(narrow).view_render == "stacked"
 
 
-async def test_the_layout_choice_persists_across_restarts(seeded: Engine) -> None:
+async def test_the_board_persists_across_restarts(seeded: Engine) -> None:
     first = _app(seeded)
     async with first.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await _group_by_status(pilot)
         await pilot.press("]")  # switch to the board
         await pilot.pause()
-        assert _main(first).view_layout == "board"
+        assert (_main(first).view_group, _main(first).view_render) == ("status", "columns")
 
     # A fresh app over the same config reopens on the board, not the default list.
     second = _app(seeded)
     async with second.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        assert _main(second).view_layout == "board"
+        assert (_main(second).view_group, _main(second).view_render) == ("status", "columns")
 
 
 async def test_a_saved_board_falls_back_to_the_list_when_it_no_longer_fits(seeded: Engine) -> None:
     wide = _app(seeded)
     async with wide.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await _group_by_status(pilot)
         await pilot.press("]")  # save the board as the preference
         await pilot.pause()
-        assert _main(wide).view_layout == "board"
+        assert _main(wide).view_render == "columns"
 
-    # Reopening in a terminal too narrow for the board opens the list instead.
+    # Reopening in a terminal too narrow for the board opens the flat list instead.
     narrow = _app(seeded)
     async with narrow.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
-        assert _main(narrow).view_layout == "list"
+        assert (_main(narrow).view_group, _main(narrow).view_render) == ("none", "stacked")
 
 
-async def test_board_columns_sit_side_by_side(seeded: Engine) -> None:
+async def test_group_columns_sit_side_by_side(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
-        await pilot.press("]")  # cycle to the board layout
+        await _group_by_status(pilot)
+        await pilot.press("]")  # fan the groups across the width
         await pilot.pause()
-        cols = list(app.screen.query(BoardColumn))
+        cols = list(app.screen.query(GroupColumn))
         assert len(cols) == 3
         # A kanban lays the status columns across a row: one shared top edge, each
         # starting to the right of the last — not stacked down the same left edge.

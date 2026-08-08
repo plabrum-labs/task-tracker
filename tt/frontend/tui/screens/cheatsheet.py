@@ -11,9 +11,10 @@ from textual.widgets import Static
 _CHEATS: list[tuple[str, str]] = [
     ("j/k · C-n/C-p", "move"),
     ("J / K", "half page"),
-    ("g / G", "top / bottom"),
-    ("h/l · C-f/C-b", "columns (board)"),
-    ("[ / ]", "cycle layout"),
+    ("< / G", "top / bottom"),
+    ("h/l · C-f/C-b", "columns"),
+    ("g", "group by"),
+    ("[ / ]", "stacked / columns"),
     ("enter", "read detail (esc to leave)"),
     ("j/k in detail", "walk the comment thread"),
     ("x / space", "issue actions"),

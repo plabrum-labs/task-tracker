@@ -296,7 +296,17 @@ IssueRow.sel {
     padding: 0 2;
 }
 
-/* --- the board ----------------------------------------------------------- */
+/* --- the groups ---------------------------------------------------------- */
+
+/* A group's header is the rollup row. Stacked, it sits over its issues indented past
+   the gutter the rows draw their cursor bar in; in a column it heads the cards with
+   no gutter to clear. */
+/* The whole padding, not just the left: a rule that sets one edge replaces the
+   inherited spacing outright, so naming the left alone would drop the blank line the
+   base row keeps above itself. */
+Body RollupRow {
+    padding: 1 0 0 2;
+}
 
 /* The columns lay across a row; the wrapper is what makes their ``1fr`` widths
    divide the width rather than each take all of it. */
@@ -304,13 +314,13 @@ IssueRow.sel {
     width: 1fr;
     height: auto;
 }
-BoardColumn {
+GroupColumn {
     width: 1fr;
     height: auto;
     padding: 0 1;
 }
-.col-h {
-    padding-bottom: 1;
+GroupColumn RollupRow {
+    padding: 0 0 1 0;
 }
 Card {
     padding: 0 1;

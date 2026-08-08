@@ -1,9 +1,11 @@
 """The one browse screen: the dense issue list you never leave.
 
 Bindings map every browse key to an ``action_*`` method; nothing here parses a key
-event. The screen holds the scope, layout, rows, selection and filter as reactives,
-and mutation methods assign them so watchers repaint the affected widget. Everything
-you can do to the selected object is reached through what that object offers — a
+event. The screen holds the scope, the grouping and its render, rows, selection and
+filter as reactives, and mutation methods assign them so watchers repaint the
+affected widget. The body is grouped by the dimension ``g`` picks and drawn stacked
+or as columns by the ``[``/``]`` toggle — the board is the status groups as columns.
+Everything you can do to the selected object is reached through what that offers — a
 ``MenuScreen`` overlay for the list, and for an action with fields the ``EditPane``
 that takes over the right pane where the read detail was — so this screen names only
 the accelerators (``d`` delete, ``e`` edit, ``s`` status cycle, ``c`` add comment)
@@ -38,8 +40,10 @@ from tt.frontend.tui.domainview import (
     AllScope,
     Command,
     CommentTarget,
+    Group,
+    GroupBy,
+    GroupRender,
     IssueTarget,
-    Layout,
     Navigate,
     ProjectScope,
     ProjectTarget,
@@ -48,14 +52,19 @@ from tt.frontend.tui.domainview import (
     Split,
     Target,
     comment_commands,
-    fits,
+    fits_columns,
+    group,
+    group_by,
+    group_commands,
     index_of,
     issue_commands,
     move_selection,
-    next_layout,
+    next_render,
     next_status,
+    opening_view,
     pane_split,
     project_commands,
+    saved_layout,
     surviving_id,
     switcher_commands,
 )
@@ -72,7 +81,7 @@ from tt.platform import config
 from tt.platform.actions import REFUSALS, Offer, Refused
 from tt.platform.config import ThemeName
 
-BROWSING = "j/k move · enter open · x actions · s status · c comment · / filter · ? keys · q quit"
+BROWSING = "j/k move · enter open · x actions · s status · g group · / filter · ? keys · q quit"
 READING = "j/k comments · x/e/d act on the one selected · esc back"
 EDITING = "^s save · esc cancel"
 
@@ -91,11 +100,12 @@ class MainScreen(Screen[None]):
         Binding("k,up,ctrl+p", "move_up", "up", show=False),
         Binding("J,ctrl+d", "half_down", "half page down", show=False),
         Binding("K,ctrl+u", "half_up", "half page up", show=False),
-        Binding("g,less_than_sign", "top", "top", show=False),
+        Binding("less_than_sign", "top", "top", show=False),
         Binding("G,greater_than_sign", "bottom", "bottom", show=False),
         Binding("h,left,ctrl+b", "col_left", "left", show=False),
         Binding("l,right,ctrl+f", "col_right", "right", show=False),
-        Binding("left_square_bracket,right_square_bracket", "cycle_layout", "layout", show=False),
+        Binding("g", "group_menu", "group by", show=False),
+        Binding("left_square_bracket,right_square_bracket", "cycle_render", "render", show=False),
         Binding("enter", "focus_detail", "detail", show=False),
         Binding("x,space", "issue_menu", "actions", show=False),
         Binding("X", "project_menu", "project actions", show=False),
@@ -114,10 +124,11 @@ class MainScreen(Screen[None]):
         Binding("q", "quit", "quit", show=False),
     ]
 
-    # ``view_layout`` rather than ``layout``: a ``Screen`` is a ``Widget`` whose
-    # ``layout`` is a property, and a reactive of that name would shadow it.
+    # ``view_render`` rather than ``render``: a ``Screen`` is a ``Widget`` whose
+    # ``render`` draws it, and a reactive of that name would shadow it.
     scope: reactive[Scope] = reactive[Scope](AllScope())
-    view_layout: reactive[Layout] = reactive[Layout]("list")
+    view_group: reactive[GroupBy] = reactive[GroupBy]("none")
+    view_render: reactive[GroupRender] = reactive[GroupRender]("stacked")
     split: reactive[Split] = reactive[Split]("beside")
     projects: reactive[list[ProjectListItem]] = reactive(list)
     issues: reactive[list[IssueListItem]] = reactive(list)
@@ -143,11 +154,14 @@ class MainScreen(Screen[None]):
         self.scope = data.initial_scope(self.engine)
         self.reload()
         self.split = pane_split(self.size.width)
-        # Reopen on the layout you left; a saved board that no longer fits this
-        # terminal falls back to the list rather than opening cramped.
-        saved = config.load().layout
-        if fits(saved, self.size.width, self.size.height):
-            self.view_layout = saved
+        # Reopen on the view you left; a saved board that no longer fits this terminal
+        # falls back to the flat list rather than opening cramped.
+        by, render = opening_view(config.load().layout)
+        if render == "stacked" or fits_columns(
+            len(group(self._visible(), by)), self.size.width, self.size.height
+        ):
+            self.view_group = by
+            self.view_render = render
         self._ready = True
         self._paint_all()
         # Browse mode holds no focus, so every keystroke reaches the bindings rather
@@ -177,8 +191,13 @@ class MainScreen(Screen[None]):
     def _slug(self) -> str | None:
         return self.scope.slug if isinstance(self.scope, ProjectScope) else None
 
+    def _groups(self) -> list[Group]:
+        """The visible issues as the groups the current dimension files them under —
+        what the body draws and what the cursor walks, computed once for both."""
+        return group(self._visible(), self.view_group)
+
     def _first_visible(self) -> int | None:
-        return move_selection(self._visible(), self.view_layout, None, 0, 0)
+        return move_selection(self._groups(), self.view_render, None, 0, 0)
 
     # --- loading ----------------------------------------------------------
 
@@ -211,14 +230,14 @@ class MainScreen(Screen[None]):
 
     def _paint_topbar(self) -> None:
         self.query_one(TopBar).show(
-            self.scope, self.projects, self.view_layout, len(self._visible())
+            self.scope, self.projects, self.view_group, self.view_render, len(self._visible())
         )
 
     def _paint_body(self) -> None:
         body = self.query_one(Body)
         body.scoped = isinstance(self.scope, ProjectScope)
-        body.view_layout = self.view_layout
-        body.issues = self._visible()
+        body.view_render = self.view_render
+        body.groups = self._groups()
         body.selected_id = self.selected_id
 
     def _paint_detail(self) -> None:
@@ -238,7 +257,12 @@ class MainScreen(Screen[None]):
             self._paint_topbar()
             self._paint_body()
 
-    def watch_view_layout(self) -> None:
+    def watch_view_group(self) -> None:
+        if self._ready:
+            self._paint_topbar()
+            self._paint_body()
+
+    def watch_view_render(self) -> None:
         if self._ready:
             self._paint_topbar()
             self._paint_body()
@@ -274,7 +298,7 @@ class MainScreen(Screen[None]):
 
     def _move(self, dr: int, dc: int) -> None:
         self.selected_id = move_selection(
-            self._visible(), self.view_layout, self.selected_id, dr, dc
+            self._groups(), self.view_render, self.selected_id, dr, dc
         )
 
     def action_move_down(self) -> None:
@@ -301,9 +325,30 @@ class MainScreen(Screen[None]):
     def action_col_right(self) -> None:
         self._move(0, 1)
 
-    def action_cycle_layout(self) -> None:
-        self.view_layout = next_layout(self.view_layout, self.size.width, self.size.height)
-        config.save_layout(self.view_layout)
+    def action_cycle_render(self) -> None:
+        self.view_render = next_render(
+            self.view_render, len(self._groups()), self.size.width, self.size.height
+        )
+        self._save_view()
+
+    # --- grouping ---------------------------------------------------------
+
+    def action_group_menu(self) -> None:
+        commands = group_commands(self.view_group)
+        self.app.push_screen(MenuScreen("Group by", commands), self._on_command)
+
+    def _set_group(self, name: str) -> None:
+        by = group_by(name)
+        if by is not None:
+            self.view_group = by
+            # The groups the previous dimension fanned across the width are not these
+            # ones, so a render that no longer fits falls back to the stack.
+            if not fits_columns(len(self._groups()), self.size.width, self.size.height):
+                self.view_render = "stacked"
+            self._save_view()
+
+    def _save_view(self) -> None:
+        config.save_layout(saved_layout(self.view_group, self.view_render))
 
     # --- scope ------------------------------------------------------------
 
@@ -363,7 +408,8 @@ class MainScreen(Screen[None]):
         commands.extend(
             [
                 Command("Switch project", None, "P", Navigate("switcher")),
-                Command("Toggle layout", None, "[", Navigate("layout")),
+                Command("Group by…", None, "g", Navigate("group")),
+                Command("Toggle columns", None, "[", Navigate("render")),
                 Command("Refresh", None, "R", Navigate("refresh")),
             ]
         )
@@ -388,8 +434,12 @@ class MainScreen(Screen[None]):
         match nav.what:
             case "switch" if nav.arg is not None:
                 self._switch_scope(ProjectScope(nav.arg))
-            case "layout":
-                self.action_cycle_layout()
+            case "group" if nav.arg is not None:
+                self._set_group(nav.arg)
+            case "group":
+                self.action_group_menu()
+            case "render":
+                self.action_cycle_render()
             case "switcher":
                 self.action_switcher()
             case "refresh":
