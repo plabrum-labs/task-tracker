@@ -15,6 +15,7 @@ from sqlalchemy import Engine
 from textual.pilot import Pilot
 from textual.widgets import Input, OptionList, Static, TextArea
 
+from tt.domains.epic import api as epic_api
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueDetail, IssueListItem
 from tt.domains.project import api as project_api
@@ -23,7 +24,10 @@ from tt.frontend.tui.domainview import (
     DETAIL_BESIDE_MIN_WIDTH,
     WAITING_GLYPH,
     CommentTarget,
+    EpicTarget,
+    HeaderAt,
     RunAction,
+    TagTarget,
 )
 from tt.frontend.tui.screens.main import MainScreen
 from tt.frontend.tui.screens.menu import MenuScreen
@@ -46,6 +50,14 @@ def _main(app: TrackerApp) -> MainScreen:
     screen = app.screen
     assert isinstance(screen, MainScreen)
     return screen
+
+
+def _selected(app: TrackerApp) -> int:
+    """The id of the issue the cursor is on, asserted to be on one — these cases browse
+    the flat list, which has no object header for it to land on."""
+    cursor = _main(app).cursor
+    assert isinstance(cursor, int)
+    return cursor
 
 
 def _ref(app: TrackerApp, issue_id: int) -> str:
@@ -213,8 +225,7 @@ async def test_editing_the_title_in_the_pane_persists_and_returns_to_read(seeded
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await _scope_tt(pilot)
-        selected = _main(app).selected_id
-        assert selected is not None
+        selected = _selected(app)
         await pilot.press("x")  # issue menu
         await pilot.pause()
         await pilot.press("enter")  # pick Edit
@@ -235,8 +246,7 @@ async def test_escape_abandons_the_pane_editor_without_writing(seeded: Engine) -
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await _scope_tt(pilot)
-        selected = _main(app).selected_id
-        assert selected is not None
+        selected = _selected(app)
         before = issue_api.issue_get(seeded, _ref(app, selected))
         assert before is not None
         await pilot.press("x")  # issue menu
@@ -256,21 +266,19 @@ async def test_d_deletes_and_selection_lands_on_neighbour(seeded: Engine) -> Non
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        first = _main(app).selected_id
-        assert first is not None
+        first = _selected(app)
         await pilot.press("d")  # delete has no fields, so it runs at once
         await pilot.pause()
         remaining = [i.id for i in _main(app).issues]
         assert first not in remaining
-        assert _main(app).selected_id in remaining
+        assert _main(app).cursor in remaining
 
 
 async def test_s_cycles_the_selected_issue_status_and_keeps_the_selection(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        selected = _main(app).selected_id
-        assert selected is not None
+        selected = _selected(app)
         before = issue_api.issue_get(seeded, _ref(app, selected))
         assert before is not None
         assert before.status == "todo"
@@ -280,7 +288,7 @@ async def test_s_cycles_the_selected_issue_status_and_keeps_the_selection(seeded
         for expected in ["doing", "done", "todo"]:
             await pilot.press("s")
             await pilot.pause()
-            assert _main(app).selected_id == selected  # selection is retained
+            assert _main(app).cursor == selected  # selection is retained
             moved = issue_api.issue_get(seeded, _ref(app, selected))
             assert moved is not None
             assert moved.status == expected  # advanced one step and persisted
@@ -312,7 +320,7 @@ async def test_the_detail_pane_reads_the_selected_issue_body_and_tracks_the_curs
         # Browse mode holds no focus even though the pane is focusable, so the first
         # j/k moves the list rather than scrolling the pane.
         assert app.focused is None
-        assert _main(app).selected_id == first.id
+        assert _main(app).cursor == first.id
         assert pane.detail is not None and pane.detail.id == first.id
         rendered = " ".join(str(widget.render()) for widget in pane.query(Static))
         assert "the parser drops trailing commas" in rendered  # the body is on screen
@@ -442,8 +450,7 @@ async def test_c_adds_a_comment_and_the_thread_reflects_it(seeded: Engine) -> No
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        selected = _main(app).selected_id
-        assert selected is not None
+        selected = _selected(app)
         ref = _ref(app, selected)
         await pilot.press("c")
         await pilot.pause()
@@ -786,6 +793,78 @@ async def test_folds_are_remembered_per_grouping_for_the_session(seeded: Engine)
         assert len(body.query(IssueRow)) == 0
 
 
+async def _an_epic(engine: Engine) -> str:
+    """One epic over the first seeded issue, so grouping by epic heads a group with it."""
+    project_api.project_action(engine, "addEpic", {"title": "the parser"}, "tt")
+    epic = epic_api.epic_list(engine, "tt")[0]
+    first = issue_api.issue_list(engine, "tt")[0]
+    issue_api.issue_action(
+        engine,
+        "edit",
+        {
+            "title": first.title,
+            "body": "",
+            "status": first.status,
+            "priority": first.priority,
+            "due_date": None,
+            "epic": epic.ref,
+            "milestone": None,
+        },
+        first.ref,
+    )
+    return epic.ref
+
+
+async def test_x_on_an_epic_header_opens_the_epics_menu(seeded: Engine) -> None:
+    ref = await _an_epic(seeded)
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _group_by(pilot, 2)  # Epic, two rows under No grouping
+        assert _main(app).view_group == ("epic",)
+        await pilot.press("k")  # up off the first issue onto the header of its epic
+        await pilot.pause()
+        assert _main(app).cursor == HeaderAt((ref,), "epic", ref)
+
+        await pilot.press("x")
+        await pilot.pause()
+        menu = app.screen
+        assert isinstance(menu, MenuScreen)
+        # What the epic offers, addressed by its ref — not the issue under it.
+        targets = {c.run.target for c in menu._commands if isinstance(c.run, RunAction)}
+        assert targets == {EpicTarget(ref)}
+        assert "Add milestone" in [c.label for c in menu._commands]
+        # A live issue is still filed under it, so the delete reads its refusal.
+        delete = next(c for c in menu._commands if c.label == "Delete")
+        assert delete.reason is not None and "reassign or close" in delete.reason
+
+
+async def test_the_palette_creates_a_tag_and_a_milestone_under_the_epic_in_focus(
+    seeded: Engine,
+) -> None:
+    ref = await _an_epic(seeded)
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _scope_tt(pilot)
+        await _group_by(pilot, 2)
+        await pilot.press("k")  # onto the epic's header
+        await pilot.pause()
+        await pilot.press("colon")
+        await pilot.pause()
+        menu = app.screen
+        assert isinstance(menu, MenuScreen)
+        labels = [c.label for c in menu._commands]
+        # The project's own create, the milestone against the epic in focus — labelled
+        # with which one — and the global tag create.
+        assert "Add epic" in labels
+        assert f"Add milestone · {ref}" in labels
+        assert "Create tag" in labels
+        creates = {c.label: c.run.target for c in menu._commands if isinstance(c.run, RunAction)}
+        assert creates[f"Add milestone · {ref}"] == EpicTarget(ref)
+        assert creates["Create tag"] == TagTarget(None)
+
+
 async def test_the_menu_opens_on_the_list_with_the_filter_hidden(seeded: Engine) -> None:
     app = _app(seeded)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -841,8 +920,7 @@ async def test_e_opens_the_edit_form_for_the_selected_issue(seeded: Engine) -> N
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await _scope_tt(pilot)  # scope onto tt
-        selected = _main(app).selected_id
-        assert selected is not None
+        selected = _selected(app)
         current = issue_api.issue_get(seeded, _ref(app, selected))
         assert current is not None
         await pilot.press("e")  # browse shortcut straight into the edit form

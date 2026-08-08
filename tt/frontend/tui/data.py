@@ -15,18 +15,24 @@ from typing import Any, assert_never
 from sqlalchemy import Engine
 
 from tt.domains.comment import api as comment_api
+from tt.domains.epic import api as epic_api
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
+from tt.domains.milestone import api as milestone_api
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
+from tt.domains.tag import api as tag_api
 from tt.frontend.tui.domainview import (
     AllScope,
     CommentTarget,
+    EpicTarget,
     IssueTarget,
+    MilestoneTarget,
     ProjectScope,
     ProjectTarget,
     RootTarget,
     Scope,
+    TagTarget,
     Target,
     match_path,
 )
@@ -66,6 +72,12 @@ def dispatch(engine: Engine, target: Target, key: str, payload: dict[str, Any]) 
             return project_api.project_action(engine, key, payload, slug).message
         case CommentTarget(comment_id=comment_id):
             return comment_api.comment_action(engine, key, payload, comment_id).message
+        case EpicTarget(ref=ref):
+            return epic_api.epic_action(engine, key, payload, ref).message
+        case MilestoneTarget(ref=ref):
+            return milestone_api.milestone_action(engine, key, payload, ref).message
+        case TagTarget(tag_id=tag_id):
+            return tag_api.tag_action(engine, key, payload, tag_id).message
         case RootTarget():
             return project_api.project_action(engine, key, payload, None).message
     assert_never(target)

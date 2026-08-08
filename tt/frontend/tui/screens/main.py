@@ -18,6 +18,7 @@ address the selected comment instead.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import Engine
@@ -31,10 +32,13 @@ from textual.widgets import Input
 
 from tt.domains.comment import api as comment_api
 from tt.domains.comment.schemas import CommentView
+from tt.domains.epic import api as epic_api
 from tt.domains.issue import api as issue_api
 from tt.domains.issue.schemas import IssueListItem
+from tt.domains.milestone import api as milestone_api
 from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
+from tt.domains.tag import api as tag_api
 from tt.frontend.tui import data
 from tt.frontend.tui.domainview import (
     EXPANDED,
@@ -46,10 +50,12 @@ from tt.frontend.tui.domainview import (
     Collapsed,
     Command,
     CommentTarget,
+    Cursor,
     GroupBy,
     Grouping,
     GroupNode,
     GroupRender,
+    HeaderAt,
     IssueTarget,
     Navigate,
     ProjectScope,
@@ -59,6 +65,7 @@ from tt.frontend.tui.domainview import (
     Split,
     Target,
     comment_commands,
+    epic_commands,
     fits_columns,
     fold_all,
     fold_target,
@@ -68,6 +75,7 @@ from tt.frontend.tui.domainview import (
     grouping,
     index_of,
     issue_commands,
+    milestone_commands,
     move_selection,
     nest_commands,
     next_render,
@@ -78,7 +86,9 @@ from tt.frontend.tui.domainview import (
     saved_layout,
     surviving_id,
     switcher_commands,
+    tag_commands,
     toggle_fold,
+    visible_stops,
 )
 from tt.frontend.tui.screens.capture import CaptureScreen
 from tt.frontend.tui.screens.cheatsheet import CheatsheetScreen
@@ -144,7 +154,9 @@ class MainScreen(Screen[None]):
     split: reactive[Split] = reactive[Split]("beside")
     projects: reactive[list[ProjectListItem]] = reactive(list)
     issues: reactive[list[IssueListItem]] = reactive(list)
-    selected_id: reactive[int | None] = reactive[int | None](None)
+    # What the cursor is on: an issue by id, or the header of a group standing for an
+    # epic, a milestone or a tag.
+    cursor: reactive[Cursor | None] = reactive[Cursor | None](None)
     filter: reactive[str] = reactive("")
     status: reactive[str] = reactive(BROWSING)
 
@@ -195,7 +207,15 @@ class MainScreen(Screen[None]):
         return [i for i in self.issues if needle in i.title.lower()]
 
     def _selected_issue(self) -> IssueListItem | None:
-        return next((i for i in self._visible() if i.id == self.selected_id), None)
+        cursor = self.cursor
+        if not isinstance(cursor, int):
+            return None
+        return next((i for i in self._visible() if i.id == cursor), None)
+
+    def _selected_header(self) -> HeaderAt | None:
+        """The group header the cursor is on, or ``None`` while it is on an issue."""
+        cursor = self.cursor
+        return cursor if isinstance(cursor, HeaderAt) else None
 
     def _selected_comment(self) -> CommentView | None:
         """The comment the thread's cursor is on, and only while the detail pane holds
@@ -219,23 +239,34 @@ class MainScreen(Screen[None]):
         this session opens all expanded."""
         return self._folds.get(self.view_group, EXPANDED)
 
-    def _first_visible(self) -> int | None:
+    def _first_visible(self) -> Cursor | None:
         return move_selection(self._tree(), self.view_render, self._collapsed(), None, 0, 0)
 
     # --- loading ----------------------------------------------------------
 
     def reload(self) -> None:
         """Read the scope back and reconcile the selection onto a survivor."""
-        fallback = index_of(self._visible(), self.selected_id)
+        issue = self._selected_issue()
+        fallback = index_of(self._visible(), issue.id if issue is not None else None)
         scope, projects, issues = data.resolve(self.engine, self.scope)
         self.scope = scope
         self.projects = projects
         self.issues = issues
-        self.selected_id = surviving_id(self._visible(), self.selected_id, fallback)
-        # An edit that leaves the selection where it was does not fire the id watcher,
-        # so repaint the detail here to reflect the write behind the reload.
+        self.cursor = self._surviving_cursor(fallback)
+        # An edit that leaves the selection where it was does not fire the cursor
+        # watcher, so repaint the detail here to reflect the write behind the reload.
         if self._ready:
             self._paint_detail()
+
+    def _surviving_cursor(self, fallback: int) -> Cursor | None:
+        """The cursor after a reload. A header holds while its group is still on the
+        tree — deleting the epic it stood for takes it off, and the cursor falls back to
+        the first row — and an issue reconciles onto its neighbour."""
+        cursor = self.cursor
+        if isinstance(cursor, HeaderAt):
+            gone = cursor not in visible_stops(self._tree(), self._collapsed())
+            return self._first_visible() if gone else cursor
+        return surviving_id(self._visible(), cursor, fallback)
 
     # --- painting ---------------------------------------------------------
 
@@ -262,7 +293,7 @@ class MainScreen(Screen[None]):
         body.view_render = self.view_render
         body.nodes = self._tree()
         body.collapsed = self._collapsed()
-        body.selected_id = self.selected_id
+        body.cursor = self.cursor
 
     def _paint_detail(self) -> None:
         issue = self._selected_issue()
@@ -304,9 +335,9 @@ class MainScreen(Screen[None]):
             self._paint_topbar()
             self._paint_body()
 
-    def watch_selected_id(self) -> None:
+    def watch_cursor(self) -> None:
         if self._ready:
-            self.query_one(Body).selected_id = self.selected_id
+            self.query_one(Body).cursor = self.cursor
             self._paint_detail()
 
     def watch_filter(self) -> None:
@@ -321,8 +352,8 @@ class MainScreen(Screen[None]):
     # --- movement ---------------------------------------------------------
 
     def _move(self, dr: int, dc: int) -> None:
-        self.selected_id = move_selection(
-            self._tree(), self.view_render, self._collapsed(), self.selected_id, dr, dc
+        self.cursor = move_selection(
+            self._tree(), self.view_render, self._collapsed(), self.cursor, dr, dc
         )
 
     def action_move_down(self) -> None:
@@ -410,7 +441,7 @@ class MainScreen(Screen[None]):
         self._paint_body()
 
     def action_toggle_fold(self) -> None:
-        path = fold_target(self._tree(), self.selected_id)
+        path = fold_target(self._tree(), self.cursor)
         if path is None:
             self.status = "nothing to fold here"
             return
@@ -449,7 +480,7 @@ class MainScreen(Screen[None]):
 
     def _switch_scope(self, scope: Scope) -> None:
         self.scope = scope
-        self.selected_id = None
+        self.cursor = None
         self.status = BROWSING
         self.reload()
 
@@ -465,12 +496,51 @@ class MainScreen(Screen[None]):
         self.set_focus(self.query_one(DetailPane))
         self.status = READING
 
+    def _tag_id(self, name: str) -> int | None:
+        """The id of the tag a header names. Issues wear a tag by name and the tag api
+        addresses one by id, so this is the one lookup between the two."""
+        return next((t.id for t in tag_api.tag_list(self.engine) if t.name == name), None)
+
+    def _header_commands(self, header: HeaderAt) -> list[Command] | None:
+        """What the object a group header stands for offers, as menu rows — the epic,
+        milestone or tag the group is filed under, each addressed the way its own api
+        takes it. ``None`` when that object is no longer there to ask."""
+        match header.by:
+            case "epic":
+                epic, offers = epic_api.epic_detail(self.engine, header.value)
+                return epic_commands(offers, header.value, epic.model_dump(mode="json"))
+            case "milestone":
+                milestone, offers = milestone_api.milestone_detail(self.engine, header.value)
+                return milestone_commands(offers, header.value, milestone.model_dump(mode="json"))
+            case "tag":
+                tag_id = self._tag_id(header.value)
+                if tag_id is None:
+                    return None
+                tag, offers = tag_api.tag_detail(self.engine, tag_id)
+                return tag_commands(offers, tag_id, tag.model_dump(mode="json"))
+            case "none" | "status" | "priority" | "due":
+                # A header of one of these stands for no row, so the cursor never lands
+                # on it and there is nothing to offer.
+                return None
+
+    def _open_header_menu(self, header: HeaderAt) -> None:
+        commands = self._header_commands(header)
+        if commands is None:
+            self.status = f"{header.value}: gone"
+            return
+        title = f"{GROUP_LABELS[header.by]} · {header.value}"
+        self.app.push_screen(MenuScreen(title, commands), self._on_command)
+
     def action_issue_menu(self) -> None:
         comment = self._selected_comment()
         if comment is not None:
             detail, offers = comment_api.comment_detail(self.engine, comment.id)
             commands = comment_commands(offers, comment.id, detail.model_dump(mode="json"))
             self.app.push_screen(MenuScreen(f"Comment {comment.id}", commands), self._on_command)
+            return
+        header = self._selected_header()
+        if header is not None:
+            self._open_header_menu(header)
             return
         issue = self._selected_issue()
         if issue is None:
@@ -481,6 +551,32 @@ class MainScreen(Screen[None]):
         header = f"{issue.ref} · {issue.title}"
         self.app.push_screen(MenuScreen(header, commands), self._on_command)
 
+    def _focused_epic(self) -> str | None:
+        """The epic a milestone is created against: the one whose header the cursor is
+        on, or the one the selected issue is filed under."""
+        header = self._selected_header()
+        if header is not None and header.by == "epic":
+            return header.value
+        issue = self._selected_issue()
+        return issue.epic if issue is not None else None
+
+    def _create_commands(self) -> list[Command]:
+        """The creates that hang off no selected row: a milestone against the epic in
+        focus — the create lives on the epic, so the label names which one — and a tag,
+        which is global and belongs to no project. A project's own creates come from
+        what the project offers."""
+        commands: list[Command] = []
+        epic_ref = self._focused_epic()
+        if epic_ref is not None:
+            _, offers = epic_api.epic_detail(self.engine, epic_ref)
+            add = [o for o in offers if o.key == "addMilestone"]
+            commands.extend(
+                replace(command, label=f"{command.label} · {epic_ref}")
+                for command in epic_commands(add, epic_ref)
+            )
+        commands.extend(tag_commands(tag_api.top_level_offers(), None))
+        return commands
+
     def action_project_menu(self) -> None:
         slug = self._slug()
         if slug is None:
@@ -488,10 +584,14 @@ class MainScreen(Screen[None]):
             return
         detail, offers = project_api.project_detail(self.engine, slug)
         commands = project_commands(offers, slug, detail.model_dump(mode="json"))
+        commands.extend(self._create_commands())
         self.app.push_screen(MenuScreen(f"Project · {slug}", commands), self._on_command)
 
     def action_palette(self) -> None:
         commands: list[Command] = []
+        header = self._selected_header()
+        if header is not None:
+            commands.extend(self._header_commands(header) or [])
         issue = self._selected_issue()
         if issue is not None:
             detail, offers = issue_api.issue_detail(self.engine, issue.ref)
@@ -500,6 +600,7 @@ class MainScreen(Screen[None]):
         if slug is not None:
             project_detail, offers = project_api.project_detail(self.engine, slug)
             commands.extend(project_commands(offers, slug, project_detail.model_dump(mode="json")))
+        commands.extend(self._create_commands())
         commands.extend(
             [
                 Command("Switch project", None, "P", Navigate("switcher")),
@@ -611,11 +712,33 @@ class MainScreen(Screen[None]):
             return
         self._run_action(RunAction(target, key, offer.fields, seed), offer.label)
 
+    def _run_header_action(self, header: HeaderAt, key: str) -> None:
+        """The accelerator path over a group header: run the named action against the
+        object the header stands for. The commands are already built and seeded, so a
+        refusal is read off the row the menu would have greyed."""
+        commands = self._header_commands(header) or []
+        found = next(
+            ((c, c.run) for c in commands if isinstance(c.run, RunAction) and c.run.key == key),
+            None,
+        )
+        if found is None:
+            self.status = f"{key}: not available"
+            return
+        command, run = found
+        if command.reason is not None:
+            self.status = f"{key}: {command.reason}"
+            return
+        self._run_action(run, command.label)
+
     def action_delete(self) -> None:
         comment = self._selected_comment()
         if comment is not None:
             _, offers = comment_api.comment_detail(self.engine, comment.id)
             self._run_offer(CommentTarget(comment.id), offers, "delete")
+            return
+        header = self._selected_header()
+        if header is not None:
+            self._run_header_action(header, "delete")
             return
         issue = self._selected_issue()
         if issue is None:
@@ -633,6 +756,10 @@ class MainScreen(Screen[None]):
             self._run_offer(
                 CommentTarget(comment.id), offers, "edit", detail.model_dump(mode="json")
             )
+            return
+        header = self._selected_header()
+        if header is not None:
+            self._run_header_action(header, "edit")
             return
         issue = self._selected_issue()
         if issue is None:
@@ -715,7 +842,7 @@ class MainScreen(Screen[None]):
     def on_input_changed(self, event: Input.Changed) -> None:
         if isinstance(event.input, FilterInput):
             self.filter = event.value
-            self.selected_id = self._first_visible()
+            self.cursor = self._first_visible()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if isinstance(event.input, FilterInput):
@@ -743,7 +870,7 @@ class MainScreen(Screen[None]):
         if not keep:
             self.filter = ""
             filter_input.value = ""
-            self.selected_id = self._first_visible()
+            self.cursor = self._first_visible()
         self.status = BROWSING
 
     # --- lifecycle --------------------------------------------------------

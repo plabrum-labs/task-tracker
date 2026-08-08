@@ -224,6 +224,12 @@ GROUP_BYS: tuple[GroupBy, ...] = (
     "due",
 )
 
+# The dimensions whose values are objects of their own: an epic, a milestone, a tag are
+# rows something can be done to, so their headers are what the cursor lands on and what
+# a menu opens against. A status, a priority or a due bucket names no row, so a header
+# of one stays display only.
+OBJECT_DIMENSIONS: frozenset[GroupBy] = frozenset({"epic", "milestone", "tag"})
+
 # What each dimension reads as in the picker.
 GROUP_LABELS: Mapping[GroupBy, str] = {
     "none": "No grouping",
@@ -280,10 +286,14 @@ DUE_BUCKETS: tuple[str, ...] = ("overdue", "today", "this week", "later")
 
 @dataclass(frozen=True)
 class GroupKey:
-    """What a group is: the dimension's ``value`` (``None`` for the trailing group of
-    issues carrying none), the ``label`` its header reads, and the second field it is
-    filed under when the dimension has one — a milestone's epic."""
+    """What a group is: the dimension ``by`` it splits on, that dimension's ``value``
+    (``None`` for the trailing group of issues carrying none), the ``label`` its header
+    reads, and the second field it is filed under when the dimension has one — a
+    milestone's epic. The dimension rides here because a header is only selectable when
+    it stands for a real object, and the value alone cannot say which dimension it came
+    from."""
 
+    by: GroupBy
     value: str | None
     label: str
     related: str | None = None
@@ -324,6 +334,7 @@ def _by_value(
 
 def _single(
     issues: Sequence[IssueListItem],
+    by: GroupBy,
     value_of: Callable[[IssueListItem], str | None],
     missing_label: str,
     related_of: Callable[[IssueListItem], str | None] | None = None,
@@ -333,13 +344,13 @@ def _single(
     named, missing = _by_value(issues, value_of)
     buckets = [
         (
-            GroupKey(value, value, related_of(rows[0]) if related_of is not None else None),
+            GroupKey(by, value, value, related_of(rows[0]) if related_of is not None else None),
             rows,
         )
         for value, rows in named.items()
     ]
     if missing:
-        buckets.append((GroupKey(None, missing_label), missing))
+        buckets.append((GroupKey(by, None, missing_label), missing))
     return buckets
 
 
@@ -350,14 +361,16 @@ def _by_status(issues: Sequence[IssueListItem]) -> list[_Bucket]:
     # one outside the workflow order trails the known ones.
     known = [s for s in ROLLUP_STATUSES if s in BOARD_STATUSES or s in named]
     unknown = [s for s in named if s not in ROLLUP_STATUSES]
-    return [(GroupKey(status, status), named.get(status, [])) for status in known + unknown]
+    return [
+        (GroupKey("status", status, status), named.get(status, [])) for status in known + unknown
+    ]
 
 
 def _by_priority(issues: Sequence[IssueListItem]) -> list[_Bucket]:
     named, _ = _by_value(issues, lambda issue: issue.priority)
     known = [p for p in PRIORITY_ORDER if p in named]
     unknown = [p for p in named if p not in PRIORITY_ORDER]
-    return [(GroupKey(level, level), named[level]) for level in known + unknown]
+    return [(GroupKey("priority", level, level), named[level]) for level in known + unknown]
 
 
 def _by_tag(issues: Sequence[IssueListItem]) -> list[_Bucket]:
@@ -370,9 +383,9 @@ def _by_tag(issues: Sequence[IssueListItem]) -> list[_Bucket]:
             untagged.append(issue)
         for tag in issue.tags:
             named.setdefault(tag, []).append(issue)
-    buckets = [(GroupKey(tag, f"#{tag}"), rows) for tag, rows in named.items()]
+    buckets = [(GroupKey("tag", tag, f"#{tag}"), rows) for tag, rows in named.items()]
     if untagged:
-        buckets.append((GroupKey(None, "(untagged)"), untagged))
+        buckets.append((GroupKey("tag", None, "(untagged)"), untagged))
     return buckets
 
 
@@ -393,9 +406,9 @@ def _by_due(issues: Sequence[IssueListItem], today: date) -> list[_Bucket]:
         issues,
         lambda issue: due_bucket(issue.due_date, today) if issue.due_date is not None else None,
     )
-    buckets = [(GroupKey(name, name), named[name]) for name in DUE_BUCKETS if name in named]
+    buckets = [(GroupKey("due", name, name), named[name]) for name in DUE_BUCKETS if name in named]
     if missing:
-        buckets.append((GroupKey(None, "(no due date)"), missing))
+        buckets.append((GroupKey("due", None, "(no due date)"), missing))
     return buckets
 
 
@@ -403,14 +416,15 @@ def _buckets(issues: Sequence[IssueListItem], by: GroupBy, today: date | None) -
     """One level of grouping: the issues split by what the dimension reads off each."""
     match by:
         case "none":
-            return [(GroupKey(None, ""), list(issues))]
+            return [(GroupKey("none", None, ""), list(issues))]
         case "status":
             return _by_status(issues)
         case "epic":
-            return _single(issues, lambda issue: issue.epic, "(no epic)")
+            return _single(issues, "epic", lambda issue: issue.epic, "(no epic)")
         case "milestone":
             return _single(
                 issues,
+                "milestone",
                 lambda issue: issue.milestone,
                 "(no milestone)",
                 related_of=lambda issue: issue.epic,
@@ -421,6 +435,13 @@ def _buckets(issues: Sequence[IssueListItem], by: GroupBy, today: date | None) -
             return _by_priority(issues)
         case "due":
             return _by_due(issues, today if today is not None else date.today())
+
+
+def levels(bys: Sequence[GroupBy]) -> list[GroupBy]:
+    """The dimensions a grouping actually files issues under, outermost first: the
+    levels naming no dimension drop out, and at most ``MAX_LEVELS`` nest."""
+    named: list[GroupBy] = [by for by in bys if by != "none"]
+    return named[:MAX_LEVELS]
 
 
 def _leaf(key: GroupKey, issues: list[IssueListItem]) -> GroupNode:
@@ -438,21 +459,17 @@ def group_tree(
     header. At most ``MAX_LEVELS`` nest; anything past them is ignored. ``today`` is
     what the due buckets are read against; it defaults to the system date, and every
     other dimension ignores it."""
-    named: list[GroupBy] = []
-    for by in bys:
-        if by != "none":
-            named.append(by)
-    levels = named[:MAX_LEVELS]
-    if not levels:
-        return [_leaf(GroupKey(None, ""), list(issues))]
-    outer = _buckets(issues, levels[0], today)
-    if len(levels) == 1:
+    named = levels(bys)
+    if not named:
+        return [_leaf(GroupKey("none", None, ""), list(issues))]
+    outer = _buckets(issues, named[0], today)
+    if len(named) == 1:
         return [_leaf(key, rows) for key, rows in outer]
     return [
         GroupNode(
             key=key,
             rollup=rollup(rows),
-            children=[_leaf(inner, under) for inner, under in _buckets(rows, levels[1], today)],
+            children=[_leaf(inner, under) for inner, under in _buckets(rows, named[1], today)],
         )
         for key, rows in outer
     ]
@@ -525,12 +542,15 @@ def toggle_fold(collapsed: Collapsed, path: NodePath) -> Collapsed:
     return collapsed - {path} if path in collapsed else collapsed | {path}
 
 
-def fold_target(nodes: Sequence[GroupNode], selected_id: int | None) -> NodePath | None:
-    """The node ``za`` toggles: the innermost one holding the selected issue. ``None``
-    when nothing is selected, or when the selection sits in the flat list's one
-    headerless group — there is no caret there to toggle."""
+def fold_target(nodes: Sequence[GroupNode], cursor: Cursor | None) -> NodePath | None:
+    """The node ``za`` toggles: the one the cursor is the header of, or the innermost
+    one holding the selected issue. ``None`` when nothing is selected, or when the
+    selection sits in the flat list's one headerless group — there is no caret there to
+    toggle."""
+    if isinstance(cursor, HeaderAt):
+        return cursor.path
     for path, node in _walk(nodes):
-        if _foldable(node) and any(issue.id == selected_id for issue in node.issues):
+        if _foldable(node) and any(issue.id == cursor for issue in node.issues):
             return path
     return None
 
@@ -562,6 +582,59 @@ def visible_issues(nodes: Sequence[GroupNode], collapsed: Collapsed) -> list[Iss
 # --- selection ------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class HeaderAt:
+    """Where the cursor sits when it is on a group header: the ``path`` addressing the
+    node in the tree, the dimension ``by`` its group splits on, and the ``value`` naming
+    the object it heads — an epic or milestone ref, a tag's name."""
+
+    path: NodePath
+    by: GroupBy
+    value: str
+
+
+# What the cursor is on: an issue, by the id the list tracks it by, or the header of a
+# group that stands for a real object.
+type Cursor = int | HeaderAt
+
+
+def header_at(node: GroupNode, path: NodePath) -> HeaderAt | None:
+    """The stop a node's header offers the cursor, or ``None`` when the header stands
+    for no object — a status, priority or due bucket, or the trailing group of issues
+    carrying no value at all."""
+    key = node.key
+    if key.by not in OBJECT_DIMENSIONS or key.value is None:
+        return None
+    return HeaderAt(path, key.by, key.value)
+
+
+def _stops(nodes: Sequence[GroupNode], collapsed: Collapsed, prefix: NodePath) -> list[Cursor]:
+    stops: list[Cursor] = []
+    for node in nodes:
+        path = path_of(prefix, node)
+        header = header_at(node, path)
+        # A folded node still draws its header, so the stop it offers stands whether or
+        # not what hangs off it is on the page.
+        if header is not None:
+            stops.append(header)
+        if folded(node, path, collapsed):
+            continue
+        stops.extend(issue.id for issue in node.issues)
+        stops.extend(_stops(node.children, collapsed, path))
+    return stops
+
+
+def all_stops(nodes: Sequence[GroupNode]) -> list[Cursor]:
+    """Every stop of the tree, in reading order, whatever is folded."""
+    return _stops(nodes, EXPANDED, ())
+
+
+def visible_stops(nodes: Sequence[GroupNode], collapsed: Collapsed) -> list[Cursor]:
+    """Where the cursor can land, in reading order: the issues on screen and the
+    headers of the groups standing for an object, a folded subtree stepped over."""
+    return _stops(nodes, collapsed, ())
+
+
 class Identified(Protocol):
     """A row a cursor addresses by id — an issue of the list, a comment of the
     thread. The reconciliation below is the same for both, so it names this rather
@@ -570,23 +643,21 @@ class Identified(Protocol):
     id: int
 
 
-def _locate(
-    columns: Sequence[list[IssueListItem]], selected_id: int | None
-) -> tuple[int, int] | None:
-    for gi, rows in enumerate(columns):
-        for ri, issue in enumerate(rows):
-            if issue.id == selected_id:
+def _locate(columns: Sequence[list[Cursor]], cursor: Cursor | None) -> tuple[int, int] | None:
+    for gi, stops in enumerate(columns):
+        for ri, stop in enumerate(stops):
+            if stop == cursor:
                 return gi, ri
     return None
 
 
 def _walk_columns(
-    nodes: Sequence[GroupNode], collapsed: Collapsed, selected_id: int | None, dr: int, dc: int
-) -> int | None:
-    columns = [visible_issues([node], collapsed) for node in nodes]
-    at = _locate(columns, selected_id)
+    nodes: Sequence[GroupNode], collapsed: Collapsed, cursor: Cursor | None, dr: int, dc: int
+) -> Cursor | None:
+    columns = [visible_stops([node], collapsed) for node in nodes]
+    at = _locate(columns, cursor)
     if at is None:
-        return next((rows[0].id for rows in columns if rows), None)
+        return next((stops[0] for stops in columns if stops), None)
     gi, ri = at
     if dc != 0:
         step = 1 if dc > 0 else -1
@@ -595,47 +666,48 @@ def _walk_columns(
             if columns[probe]:
                 gi = probe
                 break
-    rows = columns[gi]
-    return rows[_clamp(ri + dr, 0, len(rows) - 1)].id
+    stops = columns[gi]
+    return stops[_clamp(ri + dr, 0, len(stops) - 1)]
 
 
 def _walk_stack(
-    nodes: Sequence[GroupNode], collapsed: Collapsed, selected_id: int | None, dr: int
-) -> int | None:
-    shown = visible_issues(nodes, collapsed)
+    nodes: Sequence[GroupNode], collapsed: Collapsed, cursor: Cursor | None, dr: int
+) -> Cursor | None:
+    shown = visible_stops(nodes, collapsed)
     if not shown:
-        # Everything is folded shut, so there is no row to land on; holding the
-        # selection is what brings the cursor back when a node is opened again.
-        return selected_id
-    here = next((i for i, issue in enumerate(shown) if issue.id == selected_id), None)
+        # Everything is folded shut and no header stands for an object, so there is no
+        # stop to land on; holding the selection is what brings the cursor back when a
+        # node is opened again.
+        return cursor
+    here = next((i for i, stop in enumerate(shown) if stop == cursor), None)
     if here is None:
         # The selection is folded away, or gone altogether. The cursor counts as
-        # sitting at the edge of the hidden run: a step down lands on the first row
-        # after it, a step up on the last row before it.
-        order = {issue.id: i for i, issue in enumerate(all_issues(nodes))}
-        at = order.get(selected_id if selected_id is not None else -1, -1)
-        after = next((i for i, issue in enumerate(shown) if order[issue.id] > at), len(shown))
+        # sitting at the edge of the hidden run: a step down lands on the first stop
+        # after it, a step up on the last stop before it.
+        order = {stop: i for i, stop in enumerate(all_stops(nodes))}
+        at = order.get(cursor, -1) if cursor is not None else -1
+        after = next((i for i, stop in enumerate(shown) if order[stop] > at), len(shown))
         here = after if dr < 0 else after - 1
-    return shown[_clamp(here + dr, 0, len(shown) - 1)].id
+    return shown[_clamp(here + dr, 0, len(shown) - 1)]
 
 
 def move_selection(
     nodes: Sequence[GroupNode],
     render: GroupRender,
     collapsed: Collapsed,
-    selected_id: int | None,
+    cursor: Cursor | None,
     dr: int,
     dc: int,
-) -> int | None:
-    """The id the cursor lands on after moving ``dr`` rows and ``dc`` groups. Pure: the
+) -> Cursor | None:
+    """Where the cursor lands after moving ``dr`` rows and ``dc`` groups. Pure: the
     whole of the body's navigation, and it walks only what is on screen — a folded
-    subtree is stepped over rather than through. Stacked, the visible rows are one run
-    of issues and a row move crosses their headers; as columns each group is walked on
-    its own and ``dc`` is what crosses between them. Headers are display only, so the
-    cursor only ever lands on an issue."""
+    subtree is stepped over rather than through. Stacked, the visible stops are one run
+    down the page; as columns each group is walked on its own and ``dc`` is what crosses
+    between them. A header whose group stands for a real object is a stop like an issue;
+    a status, priority or due header is display only and stepped over."""
     if render == "columns":
-        return _walk_columns(nodes, collapsed, selected_id, dr, dc)
-    return _walk_stack(nodes, collapsed, selected_id, dr)
+        return _walk_columns(nodes, collapsed, cursor, dr, dc)
+    return _walk_stack(nodes, collapsed, cursor, dr)
 
 
 def surviving_id(
@@ -723,11 +795,42 @@ class CommentTarget:
 
 
 @dataclass(frozen=True)
+class EpicTarget:
+    """The epic a rollup header stands for, by the ref the header reads."""
+
+    ref: str
+
+
+@dataclass(frozen=True)
+class MilestoneTarget:
+    """The milestone a rollup header stands for, by the ref the header reads."""
+
+    ref: str
+
+
+@dataclass(frozen=True)
+class TagTarget:
+    """A tag, by its global id: a tag is a global label, so it has no project-scoped
+    ref. ``None`` addresses no tag at all, which is what the top-level ``createTag``
+    runs against."""
+
+    tag_id: int | None
+
+
+@dataclass(frozen=True)
 class RootTarget:
     """A creator with no object to address — ``createProject``."""
 
 
-type Target = IssueTarget | ProjectTarget | CommentTarget | RootTarget
+type Target = (
+    IssueTarget
+    | ProjectTarget
+    | CommentTarget
+    | EpicTarget
+    | MilestoneTarget
+    | TagTarget
+    | RootTarget
+)
 
 
 @dataclass(frozen=True)
@@ -795,6 +898,24 @@ def comment_commands(
     offers: list[Offer], comment_id: int, detail: dict[str, Any] | None = None
 ) -> list[Command]:
     return [_offer_command(offer, CommentTarget(comment_id), detail) for offer in offers]
+
+
+def epic_commands(
+    offers: list[Offer], ref: str, detail: dict[str, Any] | None = None
+) -> list[Command]:
+    return [_offer_command(offer, EpicTarget(ref), detail) for offer in offers]
+
+
+def milestone_commands(
+    offers: list[Offer], ref: str, detail: dict[str, Any] | None = None
+) -> list[Command]:
+    return [_offer_command(offer, MilestoneTarget(ref), detail) for offer in offers]
+
+
+def tag_commands(
+    offers: list[Offer], tag_id: int | None, detail: dict[str, Any] | None = None
+) -> list[Command]:
+    return [_offer_command(offer, TagTarget(tag_id), detail) for offer in offers]
 
 
 def _pick(label: str, marked: bool, what: str, by: GroupBy) -> Command:

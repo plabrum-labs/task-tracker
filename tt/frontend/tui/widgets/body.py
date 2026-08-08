@@ -24,12 +24,14 @@ from tt.frontend.tui.domainview import (
     EXPANDED,
     WAITING_VAR,
     Collapsed,
+    Cursor,
     GroupNode,
     GroupRender,
     NodePath,
     all_issues,
     folded,
     glyph,
+    header_at,
     path_of,
     priority_mark,
     waiting_mark,
@@ -94,13 +96,18 @@ class Card(Static):
             self.scroll_visible()
 
 
-def _header(node: GroupNode, depth: int, shut: bool) -> RollupRow:
+def _header(
+    node: GroupNode, path: NodePath, depth: int, shut: bool, cursor: Cursor | None
+) -> RollupRow:
     """A node's header: its caret and label, and how it stands, drawn in the rollup
-    row. Display only — the cursor walks issues, never headers."""
+    row. A header standing for an epic, a milestone or a tag is a place the cursor
+    lands, so it carries the selection the same way a row does."""
     caret = CARET_SHUT if shut else CARET_OPEN
     row = RollupRow(f"{caret} {node.key.label}", node.key.related, node.rollup)
     if depth:
         row.add_class(_level(depth))
+    if cursor is not None and header_at(node, path) == cursor:
+        row.add_class("sel")
     return row
 
 
@@ -108,22 +115,23 @@ class GroupColumn(Vertical):
     """One group as a column of the fan: its header over its cards, and nothing under
     the header while it is folded shut."""
 
-    def __init__(self, node: GroupNode, collapsed: Collapsed, selected_id: int | None) -> None:
+    def __init__(self, node: GroupNode, collapsed: Collapsed, cursor: Cursor | None) -> None:
         super().__init__()
         self._node = node
-        self._shut = folded(node, path_of((), node), collapsed)
-        self._selected_id = selected_id
+        self._path = path_of((), node)
+        self._shut = folded(node, self._path, collapsed)
+        self._cursor = cursor
 
     def compose(self) -> ComposeResult:
-        yield _header(self._node, 0, self._shut)
+        yield _header(self._node, self._path, 0, self._shut, self._cursor)
         if not self._shut:
             for issue in self._node.issues:
-                yield Card(issue, issue.id == self._selected_id)
+                yield Card(issue, issue.id == self._cursor)
 
 
 class Body(VerticalScroll):
     """The scrolling issue area. The screen assigns ``nodes``/``collapsed``/
-    ``view_render``/``selected_id``/``scoped``; each is a recomposing reactive, so the
+    ``view_render``/``cursor``/``scoped``; each is a recomposing reactive, so the
     subtree rebuilds from the new values. The render reactive is ``view_render``, not
     ``render``: ``Widget.render`` is the method that draws the widget, and a reactive of
     that name would shadow it.
@@ -137,7 +145,7 @@ class Body(VerticalScroll):
     nodes: reactive[list[GroupNode]] = reactive(list, recompose=True)
     collapsed: reactive[Collapsed] = reactive[Collapsed](EXPANDED, recompose=True)
     view_render: reactive[GroupRender] = reactive[GroupRender]("stacked", recompose=True)
-    selected_id: reactive[int | None] = reactive[int | None](None, recompose=True)
+    cursor: reactive[Cursor | None] = reactive[Cursor | None](None, recompose=True)
     scoped: reactive[bool] = reactive(False, recompose=True)
 
     def compose(self) -> ComposeResult:
@@ -153,7 +161,7 @@ class Body(VerticalScroll):
             # horizontal container — yielded straight into this ``VerticalScroll`` they
             # would stack down the left edge instead of forming a fan.
             yield Horizontal(
-                *(GroupColumn(node, self.collapsed, self.selected_id) for node in nodes),
+                *(GroupColumn(node, self.collapsed, self.cursor) for node in nodes),
                 classes="board",
             )
             return
@@ -168,8 +176,8 @@ class Body(VerticalScroll):
             # The flat list is one group holding everything, and it has nothing to say
             # that the list below it does not — so it is the one group with no header.
             if node.key.label:
-                yield _header(node, depth, shut)
+                yield _header(node, path, depth, shut, self.cursor)
             if not shut:
                 for issue in node.issues:
-                    yield IssueRow(issue, issue.id == self.selected_id, depth)
+                    yield IssueRow(issue, issue.id == self.cursor, depth)
                 yield from self._stack(node.children, path, depth + 1)
