@@ -135,6 +135,17 @@ def pane_split(width: int) -> Split:
     return "beside" if width >= DETAIL_BESIDE_MIN_WIDTH else "below"
 
 
+# The width above which a third column costs the list and the detail pane nothing.
+RAIL_MIN_WIDTH = 160
+
+
+def shows_rail(width: int) -> bool:
+    """Whether the rail stands beside the list as a third column. It only does in the
+    ultra-wide band; below it the grouping, the filters and the saved views stay modal
+    behind ``g``/``f``/``v``, which is why collapsing the rail loses no capability."""
+    return width >= RAIL_MIN_WIDTH
+
+
 # How the body draws its groups: one under the next down the page, or fanned across
 # the width as columns — the board is the status groups drawn that second way.
 type GroupRender = Literal["stacked", "columns"]

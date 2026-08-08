@@ -23,6 +23,7 @@ from tt.frontend.tui.app import TrackerApp
 from tt.frontend.tui.domainview import (
     DETAIL_BESIDE_MIN_WIDTH,
     FACETS,
+    RAIL_MIN_WIDTH,
     SAVE_VIEW,
     WAITING_GLYPH,
     AllScope,
@@ -47,6 +48,7 @@ from tt.frontend.tui.widgets.body import (
 )
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import EditPane
+from tt.frontend.tui.widgets.rail import Rail, RailRow
 from tt.frontend.tui.widgets.rollup import RollupRow
 from tt.frontend.tui.widgets.topbar import ChipsBar
 from tt.platform import config
@@ -1247,6 +1249,78 @@ async def test_saving_over_a_name_replaces_that_view(seeded: Engine) -> None:
         # One row under the name, holding what was live the second time.
         assert [view.name for view in stored] == ["hot"]
         assert stored[0].filter == SavedFilter(priority="high")
+
+
+# --- the ultra-wide rail ----------------------------------------------------
+
+
+def _rail(app: TrackerApp) -> Rail:
+    return _main(app).query_one(Rail)
+
+
+def _rail_text(app: TrackerApp) -> str:
+    """What the rail reads, its lines run together — the steerable rows and the empty
+    states alike."""
+    return " ".join(str(line.render()) for line in _rail(app).query(Static))
+
+
+async def test_the_rail_stands_beside_the_list_only_when_the_terminal_is_ultra_wide(
+    seeded: Engine,
+) -> None:
+    wide = _app(seeded)
+    async with wide.run_test(size=(RAIL_MIN_WIDTH, 30)) as pilot:
+        await pilot.pause()
+        assert _rail(wide).display  # room for a third column
+
+    narrow = _app(seeded)
+    async with narrow.run_test(size=(RAIL_MIN_WIDTH - 20, 30)) as pilot:
+        await pilot.pause()
+        # Collapsed, and nothing is lost: the grouping, the filters and the views are
+        # still reached through g/f/v.
+        assert not _rail(narrow).display
+
+
+async def test_the_rail_mirrors_the_grouping_the_filter_and_the_saved_views(
+    seeded: Engine,
+) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(RAIL_MIN_WIDTH, 30)) as pilot:
+        await pilot.pause()
+        assert "flat" in _rail_text(app)  # opens ungrouped, unfiltered, with no views
+        assert "none saved" in _rail_text(app)
+
+        await _group_by_status(pilot)
+        await _filter_by(pilot, 1, 1)  # Priority › high
+        await _save_current_view(pilot, "hot")
+
+        drawn = _rail_text(app)
+        assert "by status" in drawn
+        assert "priority high" in drawn
+        assert "hot" in drawn
+        # Each row steers with the move its overlay would make: the chip comes off, the
+        # view is recalled.
+        navs = [row.nav for row in _rail(app).query(RailRow)]
+        assert Navigate("unfacet", "priority") in navs
+        assert Navigate("view", "hot") in navs
+
+
+async def test_a_rail_chip_takes_its_facet_off_the_filter(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(RAIL_MIN_WIDTH, 30)) as pilot:
+        await pilot.pause()
+        await _filter_by(pilot, 1, 1)  # Priority › high
+        assert _titles(app) == ["ship the mvp"]
+
+        chip = next(
+            row for row in _rail(app).query(RailRow) if row.nav == Navigate("unfacet", "priority")
+        )
+        await pilot.click(chip)
+        await pilot.pause()
+        assert _main(app).view_filter == Filter()
+        assert _titles(app) == ["ship the mvp", "write readme"]
+        # The rail mirrors the state rather than holding one of its own, so the chip
+        # goes with the facet.
+        assert Navigate("unfacet", "priority") not in [row.nav for row in _rail(app).query(RailRow)]
 
 
 async def test_comma_switches_theme_and_persists(

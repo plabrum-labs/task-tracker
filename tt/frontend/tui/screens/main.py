@@ -13,7 +13,10 @@ toggle; the board is the status groups as columns. ``z`` opens the fold chord ov
 tree, and which of its nodes are shut is remembered per grouping for the session. ``v``
 opens the saved views: a name recalls the filter, grouping and scope it was saved with,
 and the overlay is also where the live state is saved under a name or one is deleted.
-Everything you can do to the selected object is reached through what that offers — a
+An ultra-wide terminal stands those three — the grouping, the chips and the views — in a
+rail left of the list rather than behind their overlays; a narrower one collapses it,
+and since the rail only mirrors what ``g``/``f``/``v`` already reach, nothing goes with
+it. Everything you can do to the selected object is reached through what that offers — a
 ``MenuScreen`` overlay for the list, and for an action with fields the ``EditPane``
 that takes over the right pane where the read detail was — so this screen names only
 the accelerators (``d`` delete, ``e`` edit, ``s`` status cycle, ``c`` add comment)
@@ -105,6 +108,7 @@ from tt.frontend.tui.domainview import (
     project_commands,
     saved_layout,
     saved_view,
+    shows_rail,
     surviving_id,
     switcher_commands,
     tag_commands,
@@ -124,6 +128,7 @@ from tt.frontend.tui.widgets.body import Body
 from tt.frontend.tui.widgets.detail import DetailPane
 from tt.frontend.tui.widgets.edit import Edit, EditPane
 from tt.frontend.tui.widgets.footer import FilterInput, StatusBar
+from tt.frontend.tui.widgets.rail import Rail
 from tt.frontend.tui.widgets.topbar import ChipsBar, TopBar
 from tt.platform import config
 from tt.platform.actions import REFUSALS, Date, Field, Invalid, Offer, Refused
@@ -190,6 +195,8 @@ class MainScreen(Screen[None]):
     view_group: reactive[Grouping] = reactive[Grouping](("none",))
     view_render: reactive[GroupRender] = reactive[GroupRender]("stacked")
     split: reactive[Split] = reactive[Split]("beside")
+    # Whether the ultra-wide band's third column is on the page.
+    rail: reactive[bool] = reactive(False)
     projects: reactive[list[ProjectListItem]] = reactive(list)
     issues: reactive[list[IssueListItem]] = reactive(list)
     # What the cursor is on: an issue by id, or the header of a group standing for an
@@ -213,6 +220,7 @@ class MainScreen(Screen[None]):
         yield TopBar(id="topbar")
         yield ChipsBar(id="chips")
         with Horizontal(id="content"):
+            yield Rail(id="rail")
             yield Body(id="body")
             yield DetailPane(id="detail")
             yield EditPane(id="edit")
@@ -223,6 +231,7 @@ class MainScreen(Screen[None]):
         self.scope = data.initial_scope(self.engine)
         self.reload()
         self.split = pane_split(self.size.width)
+        self.rail = shows_rail(self.size.width)
         # Reopen on the view you left; a saved board that no longer fits this terminal
         # falls back to the flat list rather than opening cramped.
         by, render = opening_view(config.load().layout)
@@ -310,6 +319,7 @@ class MainScreen(Screen[None]):
         self._paint_topbar()
         self._paint_body()
         self._paint_detail()
+        self._paint_rail()
         self._paint_footer()
         self._apply_split()
 
@@ -342,6 +352,14 @@ class MainScreen(Screen[None]):
         pane.peers = self.issues
         pane.detail = detail
 
+    def _paint_rail(self) -> None:
+        # Outside the ultra-wide band the rail is off the page entirely, so there is
+        # nothing to draw for it — and no saved views to read off the file either.
+        rail = self.query_one(Rail)
+        rail.display = self.rail
+        if self.rail:
+            rail.show(self.view_group, self.view_filter, self._views())
+
     def _paint_footer(self) -> None:
         self.query_one(StatusBar).show(self.status)
 
@@ -354,6 +372,7 @@ class MainScreen(Screen[None]):
         if self._ready:
             self._paint_topbar()
             self._paint_body()
+            self._paint_rail()
 
     def watch_view_render(self) -> None:
         if self._ready:
@@ -363,6 +382,10 @@ class MainScreen(Screen[None]):
     def watch_split(self) -> None:
         if self._ready:
             self._apply_split()
+
+    def watch_rail(self) -> None:
+        if self._ready:
+            self._paint_rail()
 
     def watch_projects(self) -> None:
         if self._ready:
@@ -382,6 +405,7 @@ class MainScreen(Screen[None]):
         if self._ready:
             self._paint_topbar()
             self._paint_body()
+            self._paint_rail()
 
     def watch_status(self) -> None:
         if self._ready:
@@ -614,6 +638,9 @@ class MainScreen(Screen[None]):
         kept = [view for view in config.load().views if view.name != name]
         config.save_views([*kept, current])
         self.status = f"saved view {name}"
+        # The views are read off the file rather than held here, so nothing else tells
+        # the rail its list just changed.
+        self._paint_rail()
 
     def _delete_view(self, name: str) -> None:
         views = config.load().views
@@ -622,6 +649,7 @@ class MainScreen(Screen[None]):
             return
         config.save_views([view for view in views if view.name != name])
         self.status = f"deleted view {name}"
+        self._paint_rail()
 
     # --- folding ----------------------------------------------------------
 
@@ -828,6 +856,11 @@ class MainScreen(Screen[None]):
                 self._run_action(command.run, command.label)
             case Navigate():
                 self._navigate(command.run)
+
+    def on_rail_steer(self, event: Rail.Steer) -> None:
+        """A rail row picked with the mouse. It carries the same ``Navigate`` a menu row
+        does, so the rail steers through the one dispatch rather than its own path."""
+        self._navigate(event.nav)
 
     def _navigate(self, nav: Navigate) -> None:
         match nav.what:
@@ -1106,7 +1139,9 @@ class MainScreen(Screen[None]):
     def on_resize(self, event: events.Resize) -> None:
         # The pane sits beside the list when the terminal is wide, and drops to a
         # stack below it when the column narrows past what the two need side by side.
+        # Wider still, the rail comes in as a third column beside the two.
         self.split = pane_split(event.size.width)
+        self.rail = shows_rail(event.size.width)
 
     def action_refresh(self) -> None:
         self.reload()
