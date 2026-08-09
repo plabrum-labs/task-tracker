@@ -40,7 +40,7 @@ from tt.domains.comment import api as comment_api
 from tt.domains.epic import api as epic_api
 from tt.domains.epic.schemas import EpicListItem
 from tt.domains.issue import api as issue_api
-from tt.domains.issue.enums import Direction, SortField
+from tt.domains.issue.enums import Direction, SortField, Status, StatusCounts
 from tt.domains.issue.queries import IssueFilter, IssueSort
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.milestone import api as milestone_api
@@ -71,15 +71,27 @@ type Writer = Callable[[Engine, Any, str, dict[str, Any]], str]
 # --- rendering ------------------------------------------------------------
 
 
-def _project_line(p: ProjectListItem) -> str:
-    counts = (
-        f"{p.backlog} backlog, {p.blocked} blocked, {p.todo} todo, {p.doing} doing, {p.done} done"
+def _progress(counts: StatusCounts) -> str:
+    """Done over the scope a progress bar measures. Canceled issues are off that
+    scope — they were never going to finish — so ``total`` sums every other status:
+    done of the work that was ever going to happen."""
+    total = sum(count for status, count in counts.items() if status is not Status.CANCELED)
+    return f"{counts[Status.DONE]}/{total}"
+
+
+def _breakdown(counts: StatusCounts) -> str:
+    """One "<n> <status>" per status, in workflow order. Canceled is off the
+    workflow, so it joins only when something sits at it rather than trailing a
+    "0 canceled" on every line."""
+    return ", ".join(
+        f"{counts[status]} {status.value}"
+        for status in Status
+        if status is not Status.CANCELED or counts[status]
     )
-    # Canceled is off the workflow, so it joins the breakdown only when a project
-    # holds any rather than trailing a "0 canceled" on every line.
-    if p.canceled:
-        counts += f", {p.canceled} canceled"
-    return f"{p.slug:<12} {p.title:<24} {p.status:<8} {counts}"
+
+
+def _project_line(p: ProjectListItem) -> str:
+    return f"{p.slug:<12} {p.title:<24} {p.status:<8} {_breakdown(p.counts)}"
 
 
 def _issue_line(i: IssueListItem) -> str:
@@ -90,20 +102,13 @@ def _issue_line(i: IssueListItem) -> str:
 
 
 def _epic_line(e: EpicListItem) -> str:
-    # Canceled issues are off the scope a progress bar measures, so ``total`` sums the
-    # open and done statuses only — done of the work that was ever going to happen.
-    total = e.backlog + e.blocked + e.todo + e.doing + e.done
-    progress = f"{e.done}/{total}"
     due = e.due_date.isoformat() if e.due_date is not None else "—"
-    return f"{e.ref:<10} {e.status:<8} {due:<12} {progress:<8} {e.title}"
+    return f"{e.ref:<10} {e.status:<8} {due:<12} {_progress(e.counts):<8} {e.title}"
 
 
 def _milestone_line(m: MilestoneListItem) -> str:
-    # Canceled issues sit outside the progress scope; see ``_epic_line``.
-    total = m.backlog + m.blocked + m.todo + m.doing + m.done
-    progress = f"{m.done}/{total}"
     due = m.due_date.isoformat() if m.due_date is not None else "—"
-    return f"{m.ref:<10} epic {m.epic:<10} {due:<12} {progress:<8} {m.title}"
+    return f"{m.ref:<10} epic {m.epic:<10} {due:<12} {_progress(m.counts):<8} {m.title}"
 
 
 def _tag_line(t: TagListItem) -> str:

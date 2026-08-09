@@ -341,6 +341,24 @@ def test_ls_json_emits_a_structured_array_and_text_stays_the_default(database: s
         json.loads(text.output)
 
 
+def test_counts_are_one_nested_object_keyed_by_status_name(database: str) -> None:
+    # The per-status tally is a single ``counts`` object keyed by each status' own
+    # name, not a spray of flat top-level count keys. The seeded issue defaults to
+    # todo, and the tally is dense, so every status is present with todo at one.
+    shown = json.loads(invoke(database, "project", "show", "tt").output)
+    project = shown["project"]
+    assert project["counts"] == {
+        "backlog": 0,
+        "blocked": 0,
+        "todo": 1,
+        "doing": 0,
+        "done": 0,
+        "canceled": 0,
+    }
+    # The old flat count keys are gone from the top level.
+    assert "todo" not in project
+
+
 def test_create_project_is_reached_through_the_top_level_action_path(database: str) -> None:
     made = invoke(database, "project", "action", "createProject", '{"slug":"new","title":"New"}')
     assert made.exit_code == 0

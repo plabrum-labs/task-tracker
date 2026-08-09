@@ -14,6 +14,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from tt.domains.epic.enums import Status
+from tt.domains.issue.enums import StatusCounts
 
 
 class EditEpicPayload(BaseModel):
@@ -59,12 +60,7 @@ class EpicListItem(BaseModel):
     title: str
     status: str
     due_date: date | None
-    backlog: int
-    blocked: int
-    todo: int
-    doing: int
-    done: int
-    canceled: int
+    counts: StatusCounts
 
 
 class EpicDetail(BaseModel):
@@ -75,11 +71,6 @@ class EpicDetail(BaseModel):
     body: str
     status: str
     due_date: date | None
-    backlog: int
-    blocked: int
-    todo: int
-    doing: int
-    done: int
-    canceled: int
+    counts: StatusCounts
     created_at: datetime
     updated_at: datetime

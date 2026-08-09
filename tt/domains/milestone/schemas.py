@@ -11,6 +11,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tt.domains.issue.enums import StatusCounts
+
 
 class EditMilestonePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -35,12 +37,7 @@ class MilestoneListItem(BaseModel):
     epic: str
     title: str
     due_date: date | None
-    backlog: int
-    blocked: int
-    todo: int
-    doing: int
-    done: int
-    canceled: int
+    counts: StatusCounts
 
 
 class MilestoneDetail(BaseModel):
@@ -49,11 +46,6 @@ class MilestoneDetail(BaseModel):
     epic: str
     title: str
     due_date: date | None
-    backlog: int
-    blocked: int
-    todo: int
-    doing: int
-    done: int
-    canceled: int
+    counts: StatusCounts
     created_at: datetime
     updated_at: datetime

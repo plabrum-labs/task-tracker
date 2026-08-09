@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from tt.domains.issue.enums import Status as IssueStatus
+from tt.domains.issue.enums import StatusCounts
 from tt.domains.issue.schemas import WirePriority
 from tt.domains.project.enums import Status
 
@@ -72,12 +73,7 @@ class ProjectListItem(BaseModel):
     title: str
     status: str
     path: str | None
-    backlog: int
-    blocked: int
-    todo: int
-    doing: int
-    done: int
-    canceled: int
+    counts: StatusCounts
 
 
 class ProjectDetail(BaseModel):
@@ -86,11 +82,6 @@ class ProjectDetail(BaseModel):
     body: str
     status: str
     path: str | None
-    backlog: int
-    blocked: int
-    todo: int
-    doing: int
-    done: int
-    canceled: int
+    counts: StatusCounts
     created_at: datetime
     updated_at: datetime

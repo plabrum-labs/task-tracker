@@ -28,12 +28,7 @@ def _list_item(epic: Epic) -> schemas.EpicListItem:
         title=epic.title,
         status=name_of(epic.status),
         due_date=epic.due_date,
-        backlog=epic.backlog,
-        blocked=epic.blocked,
-        todo=epic.todo,
-        doing=epic.doing,
-        done=epic.done,
-        canceled=epic.canceled,
+        counts=epic.counts,
     )
 
 
@@ -46,12 +41,7 @@ def _detail(epic: Epic) -> schemas.EpicDetail:
         body=epic.body,
         status=name_of(epic.status),
         due_date=epic.due_date,
-        backlog=epic.backlog,
-        blocked=epic.blocked,
-        todo=epic.todo,
-        doing=epic.doing,
-        done=epic.done,
-        canceled=epic.canceled,
+        counts=epic.counts,
         created_at=epic.created_at,
         updated_at=epic.updated_at,
     )

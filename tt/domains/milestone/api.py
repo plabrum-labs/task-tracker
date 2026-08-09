@@ -33,12 +33,7 @@ def _list_item(milestone: Milestone) -> schemas.MilestoneListItem:
         epic=_epic_ref(milestone),
         title=milestone.title,
         due_date=milestone.due_date,
-        backlog=milestone.backlog,
-        blocked=milestone.blocked,
-        todo=milestone.todo,
-        doing=milestone.doing,
-        done=milestone.done,
-        canceled=milestone.canceled,
+        counts=milestone.counts,
     )
 
 
@@ -49,12 +44,7 @@ def _detail(milestone: Milestone) -> schemas.MilestoneDetail:
         epic=_epic_ref(milestone),
         title=milestone.title,
         due_date=milestone.due_date,
-        backlog=milestone.backlog,
-        blocked=milestone.blocked,
-        todo=milestone.todo,
-        doing=milestone.doing,
-        done=milestone.done,
-        canceled=milestone.canceled,
+        counts=milestone.counts,
         created_at=milestone.created_at,
         updated_at=milestone.updated_at,
     )

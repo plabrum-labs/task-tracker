@@ -42,7 +42,7 @@ def test_create_returns_the_stored_row_with_its_assigned_id(db: Engine) -> None:
     tt = a_project(db, "tt")
     assert tt.id > 0
     assert tt.status == ProjectStatus.ACTIVE
-    assert (tt.todo, tt.doing, tt.done) == (0, 0, 0)
+    assert (tt.counts[Status.TODO], tt.counts[Status.DOING], tt.counts[Status.DONE]) == (0, 0, 0)
     # One instant in both stamps, because the row's two defaults resolve to one
     # ``CURRENT_TIMESTAMP`` in the insert.
     assert tt.created_at == tt.updated_at
@@ -80,23 +80,23 @@ def test_counts_are_part_of_the_projection(db: Engine) -> None:
     with platform_db.reading(db) as s:
         loaded = project_queries.get_project(s, "tt")
     assert loaded is not None
-    counts = (loaded.backlog, loaded.blocked, loaded.todo, loaded.doing, loaded.done)
+    counts = (
+        loaded.counts[Status.BACKLOG],
+        loaded.counts[Status.BLOCKED],
+        loaded.counts[Status.TODO],
+        loaded.counts[Status.DOING],
+        loaded.counts[Status.DONE],
+    )
     assert counts == (1, 1, 0, 1, 0)
     assert loaded.issue_count() == 3
 
-    # A project with nothing under it still gets zeroes rather than nothing.
+    # A project with nothing under it still names every status, at zero — the dense
+    # tally the callers index without a missing-key guard.
     empty = a_project(db, "empty")
     with platform_db.reading(db) as s:
         reloaded = project_queries.get_project(s, empty.slug)
     assert reloaded is not None
-    empty_counts = (
-        reloaded.backlog,
-        reloaded.blocked,
-        reloaded.todo,
-        reloaded.doing,
-        reloaded.done,
-    )
-    assert empty_counts == (0, 0, 0, 0, 0)
+    assert reloaded.counts == {status: 0 for status in Status}
 
 
 # --- ordering -------------------------------------------------------------

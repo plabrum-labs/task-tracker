@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Date, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.models import IssueContainer
 from tt.platform.db import BaseDBModel
 
@@ -55,30 +54,6 @@ class Milestone(IssueContainer, BaseDBModel):
     epic: Mapped[Epic] = relationship(lazy="raise")
     project: Mapped[Project] = relationship(lazy="raise")
     issues: Mapped[list[Issue]] = relationship(back_populates="milestone", lazy="raise")
-
-    @property
-    def backlog(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BACKLOG)
-
-    @property
-    def blocked(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BLOCKED)
-
-    @property
-    def todo(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.TODO)
-
-    @property
-    def doing(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.DOING)
-
-    @property
-    def done(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.DONE)
-
-    @property
-    def canceled(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.CANCELED)
 
     @property
     def ref(self) -> str:

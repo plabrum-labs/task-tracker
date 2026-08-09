@@ -19,7 +19,6 @@ from __future__ import annotations
 from sqlalchemy import Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.models import Issue, IssueContainer
 from tt.domains.project.enums import Status
 from tt.platform.db import BaseDBModel
@@ -45,30 +44,6 @@ class Project(IssueContainer, BaseDBModel):
         cascade="all, delete-orphan",
         order_by="Issue.priority.desc(), Issue.created_at",
     )
-
-    @property
-    def backlog(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BACKLOG)
-
-    @property
-    def blocked(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BLOCKED)
-
-    @property
-    def todo(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.TODO)
-
-    @property
-    def doing(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.DOING)
-
-    @property
-    def done(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.DONE)
-
-    @property
-    def canceled(self) -> int:
-        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.CANCELED)
 
     def subject(self) -> str:
         return f"project {self.slug}"

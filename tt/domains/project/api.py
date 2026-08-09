@@ -28,12 +28,7 @@ def _list_item(project: Project) -> schemas.ProjectListItem:
         title=project.title,
         status=name_of(project.status),
         path=project.path,
-        backlog=project.backlog,
-        blocked=project.blocked,
-        todo=project.todo,
-        doing=project.doing,
-        done=project.done,
-        canceled=project.canceled,
+        counts=project.counts,
     )
 
 
@@ -44,12 +39,7 @@ def _detail(project: Project) -> schemas.ProjectDetail:
         body=project.body,
         status=name_of(project.status),
         path=project.path,
-        backlog=project.backlog,
-        blocked=project.blocked,
-        todo=project.todo,
-        doing=project.doing,
-        done=project.done,
-        canceled=project.canceled,
+        counts=project.counts,
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
