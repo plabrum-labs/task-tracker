@@ -31,12 +31,17 @@ from tt.platform.config import Layout, SavedFilter, SavedView
 
 # --- the visual vocabulary ------------------------------------------------
 
-STATUS_GLYPH = {"todo": "○", "doing": "◐", "done": "●"}
+STATUS_GLYPH = {"todo": "○", "doing": "◐", "done": "●", "canceled": "⊗"}
 
 # The theme variable a status's glyph is drawn in, for the places that mix the
 # glyph colour into a single markup string (the board header, the detail pane)
 # rather than carrying it in a CSS component class. The flat row uses ``st-*``.
-STATUS_VAR = {"todo": "$text-muted", "doing": "$warning", "done": "$success"}
+STATUS_VAR = {
+    "todo": "$text-muted",
+    "doing": "$warning",
+    "done": "$success",
+    "canceled": "$text-muted",
+}
 
 # The status columns of the board, in the order they read left to right.
 BOARD_STATUSES = ("todo", "doing", "done")
@@ -200,13 +205,16 @@ class Rollup:
 def rollup(issues: Sequence[IssueListItem]) -> Rollup:
     """The standing of a set of issues: a count per status that appears in it, in
     workflow order, and the done-of-total a progress bar draws from. Statuses nobody
-    is at are left out rather than counted as zero."""
+    is at are left out rather than counted as zero. Canceled issues still show as their
+    own count but sit outside the progress total — done is measured against the work
+    that was ever going to happen, not what was abandoned."""
     tally = Counter(issue.status for issue in issues)
     done = tally[Status.DONE]
+    total = len(issues) - tally[Status.CANCELED]
     ordered = {status: tally.pop(status) for status in ROLLUP_STATUSES if status in tally}
     # Anything left in the tally is a status outside the workflow order; it trails the
     # known ones rather than vanishing from the breakdown.
-    return Rollup(counts=ordered | tally, done=done, total=len(issues))
+    return Rollup(counts=ordered | tally, done=done, total=total)
 
 
 # --- grouping -------------------------------------------------------------

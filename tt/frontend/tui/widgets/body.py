@@ -64,7 +64,7 @@ class IssueRow(Horizontal):
         yield Static(esc(issue.ref), classes="ref")
         wmark = waiting_mark(issue.waiting)
         yield Static(f"[{WAITING_VAR}]{wmark}[/]" if wmark else " ", classes="waiting")
-        title_classes = "title done" if issue.status == "done" else "title"
+        title_classes = f"title {issue.status}" if issue.status in ("done", "canceled") else "title"
         yield Static(esc(issue.title), classes=title_classes)
         mark = priority_mark(issue.priority)
         pri = f"[{mark.var}]{mark.glyph} {esc(issue.priority)}[/]" if mark else ""

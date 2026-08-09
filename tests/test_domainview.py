@@ -708,6 +708,13 @@ def test_rollup_counts_each_status_and_the_done_share() -> None:
             1,
             3,
         ),
+        (
+            "canceled shows in the breakdown but sits outside the progress total",
+            [_item(1, "done"), _item(2, "canceled"), _item(3, "todo")],
+            {"todo": 1, "done": 1, "canceled": 1},
+            1,
+            2,
+        ),
     ]
     for name, issues, counts, done, total in cases:
         standing = dv.rollup(issues)
@@ -718,8 +725,14 @@ def test_rollup_counts_each_status_and_the_done_share() -> None:
 def test_a_rollup_breakdown_reads_in_workflow_order() -> None:
     # However the issues arrive, the counts run backlog to done — the order the group
     # header and the detail pane's summary line both draw them in.
-    issues = [_item(1, "done"), _item(2, "todo"), _item(3, "backlog"), _item(4, "doing")]
-    assert list(dv.rollup(issues).counts) == ["backlog", "todo", "doing", "done"]
+    issues = [
+        _item(1, "done"),
+        _item(2, "todo"),
+        _item(3, "backlog"),
+        _item(4, "doing"),
+        _item(5, "canceled"),
+    ]
+    assert list(dv.rollup(issues).counts) == ["backlog", "todo", "doing", "done", "canceled"]
 
 
 # --- the render toggle ----------------------------------------------------

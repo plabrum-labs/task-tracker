@@ -334,6 +334,9 @@ IssueRow.sel {
 .st-done {
     color: $success;
 }
+.st-canceled {
+    color: $text-muted;
+}
 .ref {
     width: 10;
     padding-right: 1;
@@ -348,6 +351,10 @@ IssueRow.sel {
 }
 .title.done {
     color: $text-muted;
+}
+.title.canceled {
+    color: $text-muted;
+    text-style: strike;
 }
 .pri {
     width: 9;
