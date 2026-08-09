@@ -206,15 +206,15 @@ def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(datab
 def test_the_help_text_carries_the_field_doc_and_the_enum_values(
     database: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A wide terminal so the closed choice renders on one line: the four-value status
-    # metavar wraps mid-word at 80 columns, which would split ``doing`` across lines.
+    # A wide terminal so the closed choice renders on one line: the status metavar
+    # wraps mid-word at 80 columns, which would split a value across lines.
     monkeypatch.setenv("COLUMNS", "200")
     result = invoke(database, "issue", "edit", "--help")
     assert result.exit_code == 0
     assert "Where the issue is up to." in result.output
     # Typer renders the closed choice inline rather than clap's "[possible values:
     # …]", but the alternatives are all there.
-    for value in ("backlog", "blocked", "todo", "doing", "done"):
+    for value in ("backlog", "blocked", "todo", "doing", "done", "canceled"):
         assert value in result.output
 
 

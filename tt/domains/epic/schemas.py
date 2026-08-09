@@ -64,6 +64,7 @@ class EpicListItem(BaseModel):
     todo: int
     doing: int
     done: int
+    canceled: int
 
 
 class EpicDetail(BaseModel):
@@ -79,5 +80,6 @@ class EpicDetail(BaseModel):
     todo: int
     doing: int
     done: int
+    canceled: int
     created_at: datetime
     updated_at: datetime

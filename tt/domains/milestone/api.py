@@ -38,6 +38,7 @@ def _list_item(milestone: Milestone) -> schemas.MilestoneListItem:
         todo=milestone.todo,
         doing=milestone.doing,
         done=milestone.done,
+        canceled=milestone.canceled,
     )
 
 
@@ -53,6 +54,7 @@ def _detail(milestone: Milestone) -> schemas.MilestoneDetail:
         todo=milestone.todo,
         doing=milestone.doing,
         done=milestone.done,
+        canceled=milestone.canceled,
         created_at=milestone.created_at,
         updated_at=milestone.updated_at,
     )

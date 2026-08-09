@@ -255,6 +255,7 @@ def test_set_status_moves_to_each_status(db: Engine) -> None:
         Status.DOING,
         Status.DONE,
         Status.TODO,
+        Status.CANCELED,
     ]:
         response = run_issue(
             db,
@@ -1223,6 +1224,24 @@ def test_waiting_is_true_until_the_dependency_is_done_and_false_when_deleted(db:
     assert detail is not None
     assert detail.waiting is False
     assert detail.depends_on == []
+
+
+def test_a_canceled_dependency_no_longer_holds_its_dependent(db: Engine) -> None:
+    # Canceling a dependency closes it as surely as finishing it: the work will never
+    # arrive, so it must not leave the dependent waiting forever.
+    tt = a_project(db, "tt")
+    a = an_issue(db, tt, "abandoned groundwork")
+    b = an_issue(db, tt, "depends on a")
+    issue_api.issue_action(db, "addDependency", {"dependency": a.ref}, b.ref)
+
+    detail = issue_api.issue_get(db, b.ref)
+    assert detail is not None and detail.waiting is True
+
+    issue_api.issue_action(db, "setStatus", {"status": "canceled"}, a.ref)
+    cleared = issue_api.issue_get(db, b.ref)
+    assert cleared is not None and cleared.waiting is False
+    row = next(i for i in issue_api.issue_list(db, "tt") if i.ref == b.ref)
+    assert row.waiting is False
 
 
 def test_dependents_downstream_is_the_forward_reachable_set() -> None:

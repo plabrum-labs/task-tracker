@@ -17,6 +17,14 @@ class Status(StrEnum):
     TODO = auto()
     DOING = auto()
     DONE = auto()
+    CANCELED = auto()
+
+
+# The terminal statuses: work that needs no more doing, whether it finished
+# (``DONE``) or was abandoned (``CANCELED``). A dependency at one of these no
+# longer holds its dependents back. ``CANCELED`` trails ``DONE`` in the member
+# order above, so it sorts last wherever status is the ordering key.
+CLOSED: frozenset[Status] = frozenset({Status.DONE, Status.CANCELED})
 
 
 class Priority(enum.IntEnum):

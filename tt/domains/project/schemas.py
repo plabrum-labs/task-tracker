@@ -77,6 +77,7 @@ class ProjectListItem(BaseModel):
     todo: int
     doing: int
     done: int
+    canceled: int
 
 
 class ProjectDetail(BaseModel):
@@ -90,5 +91,6 @@ class ProjectDetail(BaseModel):
     todo: int
     doing: int
     done: int
+    canceled: int
     created_at: datetime
     updated_at: datetime

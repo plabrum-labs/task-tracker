@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from tt.domains.comment.schemas import CommentView
 from tt.domains.issue import queries, schemas
 from tt.domains.issue.actions import issue_actions
-from tt.domains.issue.enums import Status
+from tt.domains.issue.enums import CLOSED
 from tt.domains.issue.models import Issue
 from tt.platform.actions import ActionDeps, ActionResponse, Field, Invalid, Offer, name_of
 from tt.platform.db import with_transaction
@@ -39,9 +39,9 @@ def _dep_refs(issue: Issue, linked: list[Issue]) -> list[str]:
 
 def _waiting(issue: Issue) -> bool:
     """Whether the issue is waiting on a dependency: one it depends on has not reached
-    ``done``. A deleted dependency is out of the graph, and a done one no longer holds
-    it back."""
-    return any(d.status is not Status.DONE for d in issue.depends_on if d.deleted_at is None)
+    a terminal status. A deleted dependency is out of the graph, and a closed one —
+    done or canceled — no longer holds it back."""
+    return any(d.status not in CLOSED for d in issue.depends_on if d.deleted_at is None)
 
 
 def _list_item(issue: Issue) -> schemas.IssueListItem:

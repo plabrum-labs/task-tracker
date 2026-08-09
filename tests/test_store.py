@@ -303,12 +303,15 @@ def test_sort_by_status_follows_the_workflow_not_the_member_name(db: Engine) -> 
     doing = an_issue(db, tt, "doing_one")
     backlog = an_issue(db, tt, "backlog_one")
     todo = an_issue(db, tt, "todo_one")
+    canceled = an_issue(db, tt, "canceled_one")
     _set(db, doing.id, status=Status.DOING)
     _set(db, backlog.id, status=Status.BACKLOG)
     _set(db, todo.id, status=Status.TODO)
+    # Canceled trails the workflow, so it sorts last however early the row was made.
+    _set(db, canceled.id, status=Status.CANCELED)
     with platform_db.reading(db) as s:
         rows = issue_queries.list_issues(s, "tt", sort=IssueSort(SortField.STATUS))
-    assert _titles(rows) == ["backlog_one", "todo_one", "doing_one"]
+    assert _titles(rows) == ["backlog_one", "todo_one", "doing_one", "canceled_one"]
 
 
 def test_filter_by_tag_keeps_only_the_tagged_issues(db: Engine) -> None:

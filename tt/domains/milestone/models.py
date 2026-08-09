@@ -82,6 +82,10 @@ class Milestone(BaseDBModel):
     def done(self) -> int:
         return sum(1 for issue in self.live_issues if issue.status is IssueStatus.DONE)
 
+    @property
+    def canceled(self) -> int:
+        return sum(1 for issue in self.live_issues if issue.status is IssueStatus.CANCELED)
+
     def issue_count(self) -> int:
         return len(self.live_issues)
 

@@ -33,6 +33,7 @@ def _list_item(project: Project) -> schemas.ProjectListItem:
         todo=project.todo,
         doing=project.doing,
         done=project.done,
+        canceled=project.canceled,
     )
 
 
@@ -48,6 +49,7 @@ def _detail(project: Project) -> schemas.ProjectDetail:
         todo=project.todo,
         doing=project.doing,
         done=project.done,
+        canceled=project.canceled,
         created_at=project.created_at,
         updated_at=project.updated_at,
     )

@@ -33,6 +33,7 @@ def _list_item(epic: Epic) -> schemas.EpicListItem:
         todo=epic.todo,
         doing=epic.doing,
         done=epic.done,
+        canceled=epic.canceled,
     )
 
 
@@ -50,6 +51,7 @@ def _detail(epic: Epic) -> schemas.EpicDetail:
         todo=epic.todo,
         doing=epic.doing,
         done=epic.done,
+        canceled=epic.canceled,
         created_at=epic.created_at,
         updated_at=epic.updated_at,
     )

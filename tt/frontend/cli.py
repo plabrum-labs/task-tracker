@@ -75,6 +75,10 @@ def _project_line(p: ProjectListItem) -> str:
     counts = (
         f"{p.backlog} backlog, {p.blocked} blocked, {p.todo} todo, {p.doing} doing, {p.done} done"
     )
+    # Canceled is off the workflow, so it joins the breakdown only when a project
+    # holds any rather than trailing a "0 canceled" on every line.
+    if p.canceled:
+        counts += f", {p.canceled} canceled"
     return f"{p.slug:<12} {p.title:<24} {p.status:<8} {counts}"
 
 
@@ -86,6 +90,8 @@ def _issue_line(i: IssueListItem) -> str:
 
 
 def _epic_line(e: EpicListItem) -> str:
+    # Canceled issues are off the scope a progress bar measures, so ``total`` sums the
+    # open and done statuses only — done of the work that was ever going to happen.
     total = e.backlog + e.blocked + e.todo + e.doing + e.done
     progress = f"{e.done}/{total}"
     due = e.due_date.isoformat() if e.due_date is not None else "—"
@@ -93,6 +99,7 @@ def _epic_line(e: EpicListItem) -> str:
 
 
 def _milestone_line(m: MilestoneListItem) -> str:
+    # Canceled issues sit outside the progress scope; see ``_epic_line``.
     total = m.backlog + m.blocked + m.todo + m.doing + m.done
     progress = f"{m.done}/{total}"
     due = m.due_date.isoformat() if m.due_date is not None else "—"
