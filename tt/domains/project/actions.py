@@ -75,8 +75,9 @@ class EditProject(ObjectAction[Project, schemas.EditProjectPayload]):
     def execute(
         cls, obj: Project, payload: schemas.EditProjectPayload, deps: ActionDeps
     ) -> ActionResponse:
-        if payload.status is Status.ARCHIVED and obj.doing > 0:
-            raise Conflict(f"finish or drop {_issues(obj.doing)} first")
+        doing = obj.counts[IssueStatus.DOING]
+        if payload.status is Status.ARCHIVED and doing > 0:
+            raise Conflict(f"finish or drop {_issues(doing)} first")
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")

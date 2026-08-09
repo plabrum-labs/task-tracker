@@ -20,13 +20,13 @@ from sqlalchemy import Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.issue.enums import Status as IssueStatus
-from tt.domains.issue.models import Issue
+from tt.domains.issue.models import Issue, IssueContainer
 from tt.domains.project.enums import Status
 from tt.platform.db import BaseDBModel
 from tt.platform.enums import TextEnum
 
 
-class Project(BaseDBModel):
+class Project(IssueContainer, BaseDBModel):
     __tablename__ = "projects"
     __table_args__ = (
         Index("projects_slug_live", "slug", unique=True, sqlite_where=text("deleted_at IS NULL")),
@@ -45,12 +45,6 @@ class Project(BaseDBModel):
         cascade="all, delete-orphan",
         order_by="Issue.priority.desc(), Issue.created_at",
     )
-
-    @property
-    def live_issues(self) -> list[Issue]:
-        """The loaded issues that are not themselves deleted — what the counts are
-        over, so a soft-deleted issue drops out of its project's tally."""
-        return [issue for issue in self.issues if issue.deleted_at is None]
 
     @property
     def backlog(self) -> int:
@@ -75,9 +69,6 @@ class Project(BaseDBModel):
     @property
     def canceled(self) -> int:
         return sum(1 for issue in self.live_issues if issue.status is IssueStatus.CANCELED)
-
-    def issue_count(self) -> int:
-        return len(self.live_issues)
 
     def subject(self) -> str:
         return f"project {self.slug}"

@@ -9,6 +9,8 @@ query per row.
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Iterable
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -24,7 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from tt.domains.issue.enums import Priority, Status
+from tt.domains.issue.enums import Priority, Status, StatusCounts
 from tt.domains.tag.models import Tag, issue_tags
 from tt.platform.db import BaseDBModel
 from tt.platform.enums import IntEnum, TextEnum
@@ -127,3 +129,33 @@ class Issue(BaseDBModel):
 
     def subject(self) -> str:
         return f"issue {self.ref}"
+
+
+def status_counts(issues: Iterable[Issue]) -> StatusCounts:
+    """A dense per-status tally: every status present, zero when nobody sits at
+    it, so a caller can index any status without a missing-key guard."""
+    tally = Counter(issue.status for issue in issues)
+    return {status: tally[status] for status in Status}
+
+
+class IssueContainer:
+    """The live-issue tally shared by the containers that hold issues — a project,
+    an epic, a milestone. Relies on an ``issues`` relationship the concrete model
+    defines; the counts read off it, so a soft-deleted issue drops out of the
+    tally and a hook reading them sees the object after the session is gone."""
+
+    if TYPE_CHECKING:
+        # Declared for the type checker only; the concrete model maps the real
+        # relationship, so declarative never sees this and never tries to map it.
+        issues: Mapped[list[Issue]]
+
+    @property
+    def live_issues(self) -> list[Issue]:
+        return [issue for issue in self.issues if issue.deleted_at is None]
+
+    @property
+    def counts(self) -> StatusCounts:
+        return status_counts(self.live_issues)
+
+    def issue_count(self) -> int:
+        return len(self.live_issues)

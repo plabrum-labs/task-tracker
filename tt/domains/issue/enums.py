@@ -26,6 +26,13 @@ class Status(StrEnum):
 # order above, so it sorts last wherever status is the ordering key.
 CLOSED: frozenset[Status] = frozenset({Status.DONE, Status.CANCELED})
 
+# A per-status tally: how many issues sit at each status. The ``Status`` enum is
+# the single source of the vocabulary, so a count-bearing surface names this one
+# mapping rather than re-listing the members as parallel scalars. ``dict`` rather
+# than ``Mapping`` because pydantic types a field from this alias invariantly — a
+# ``Mapping`` return would not be assignable to the ``dict`` field.
+type StatusCounts = dict[Status, int]
+
 
 class Priority(enum.IntEnum):
     NONE = 0

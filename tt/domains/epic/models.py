@@ -18,6 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.epic.enums import Status
 from tt.domains.issue.enums import Status as IssueStatus
+from tt.domains.issue.models import IssueContainer
 from tt.platform.db import BaseDBModel
 from tt.platform.enums import TextEnum
 
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from tt.domains.project.models import Project
 
 
-class Epic(BaseDBModel):
+class Epic(IssueContainer, BaseDBModel):
     __tablename__ = "epics"
     __table_args__ = (
         Index(
@@ -55,12 +56,6 @@ class Epic(BaseDBModel):
     issues: Mapped[list[Issue]] = relationship(back_populates="epic", lazy="raise")
 
     @property
-    def live_issues(self) -> list[Issue]:
-        """The loaded issues that are not themselves deleted — what the derived
-        counts are over, so a soft-deleted issue drops out of its epic's tally."""
-        return [issue for issue in self.issues if issue.deleted_at is None]
-
-    @property
     def backlog(self) -> int:
         return sum(1 for issue in self.live_issues if issue.status is IssueStatus.BACKLOG)
 
@@ -83,9 +78,6 @@ class Epic(BaseDBModel):
     @property
     def canceled(self) -> int:
         return sum(1 for issue in self.live_issues if issue.status is IssueStatus.CANCELED)
-
-    def issue_count(self) -> int:
-        return len(self.live_issues)
 
     @property
     def ref(self) -> str:
