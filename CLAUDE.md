@@ -74,7 +74,7 @@ comment.
 
 ## Architecture
 
-Dependency flow: `frontend` (`cli`/`tui`) → domain `api` → `platform` → SQLAlchemy → SQLite.
+Dependency flow: `frontend` (`cli`/`tui`) / `tt.api` → domain `api` → `platform` → SQLAlchemy → SQLite.
 
 - `tt/domains/{issue,project}/` — each domain is `models` (the mapped
   table), `enums`, `schemas` (the wire shapes), `queries` (the reads that name
@@ -87,6 +87,13 @@ Dependency flow: `frontend` (`cli`/`tui`) → domain `api` → `platform` → SQ
 - `tt/frontend/` — `cli` (Typer) and `tui` (Textual). No frontend names an
   action key; the subcommands and forms are derived from the registered action
   schemas. An agent drives the tracker through the `cli` (see the `tt` skill).
+- `tt/api/` — the public, versioned client library (`TtClient` + frozen
+  read shapes in `types`, `enums`, `exceptions`). A second consumer of the
+  domain `api` layer, parallel to the frontends: it holds the `Engine` and
+  `_adapt`s the internal wire schemas into its own contract, so an internal
+  shape change is absorbed there rather than reaching a consumer. Its data
+  module is `types`, not `models`, because `schema.py` discovers every
+  `models.py` under `tt` as a mapped-table module.
 - `tt/schema.py` — `create_all` and the metadata that binds the domains'
   tables to one engine.
 - `alembic/` — the on-disk migration history. `alembic.ini` prepends the repo
