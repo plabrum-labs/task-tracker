@@ -12,13 +12,17 @@ description: >-
 
 `tt` is a personal task tracker. Its containers, from outermost in:
 
-- **Project** — pinned to a repo, permanent, never completes. Holds issues and epics.
+- **Project** — pinned to a repo, permanent, never completes. Holds issues, epics
+  and milestones.
 - **Epic** — a completable deliverable inside a project. Carries its **own status**
   (`active` / `done`) and an optional due date.
-- **Milestone** — a dated checkpoint inside an **epic**: just a name and an
-  optional due date, no status of its own (its progress is derived from its issues).
+- **Milestone** — a dated checkpoint inside a **project**: a title and an optional
+  due date, no status of its own (its progress is derived from its issues). It may
+  carry one **epic** as an optional label, but it is not owned by an epic — a
+  checkpoint can span several epics or none.
 - **Issue** — the unit of work. Lives in a project and may *optionally* belong to
-  one epic and one milestone (the milestone must be in the issue's epic), carry a
+  one epic and one milestone (two independent links — the milestone need **not**
+  be in the issue's epic), depend on other issues in the same project, carry a
   due date, and wear any number of tags.
 - **Comment** — a dated note under an **issue**: just a body. A thread of them
   builds up over time; each is editable and deletable. Addressed by its own
@@ -30,16 +34,21 @@ It runs as a CLI over a shared per-user SQLite database — the same file the us
 TUI opens — so your writes and their TUI see the same data. You drive it by
 running `tt` in the shell.
 
-## Refs: how issues, epics and milestones are addressed
+## How each object is addressed
 
-An issue, epic or milestone is addressed by its **ref** — the project's slug, a
-hyphen, and a per-project number: `ENG-12`. Numbering is scoped to the project, so
-each project counts from 1 and `ENG-1` and `WEB-1` are different objects; the
-number never resets or gets reused. Each object type has its own run, so an issue,
-an epic and a milestone in the same project can each be `ENG-1` — the subcommand
-(`tt issue …` vs `tt epic …`) says which. A `show`/`ls` reports the ref as `ref`.
-Projects are still addressed by their slug, and tags by their `--id` (tags are
-global, not per-project).
+- **Issue** — by its **ref**: the project's slug, a hyphen, and a per-project
+  number, `TT-12`. Numbering is scoped to the project, so each project counts from
+  1 and `TT-1` and `WEB-1` are different issues; the number never resets or gets
+  reused. A `show`/`ls` reports the ref as `ref`. Only issues carry a ref.
+- **Epic / Milestone** — by its **title within a project**: pass the title as the
+  argument and the project as `--project SLUG`
+  (`tt epic show "Payments" --project TT`). A live project cannot hold two epics —
+  or two milestones — with the same title, so the pair (project, title) is unique.
+  Epics and milestones have **no ref**: nothing like `TT-3` addresses them.
+- **Project** — by its **slug**. Slugs are stored **uppercase** and resolved
+  case-insensitively, so every ref reads `TT-12` regardless of how the slug was
+  typed. You may pass a slug in any case.
+- **Tag** — by its `--id` (tags are global, not per-project).
 
 ## Invocation
 
@@ -55,18 +64,21 @@ state, so the reliable pattern is to read the current state and then act on it:
 
 1. **List** to find the object (pass `--json` whenever you parse the output;
    without it you get a human-readable text table):
-   - `tt project ls --json` — live projects, each with its issue rollup
-     (`backlog`, `blocked`, `todo`, `doing`, `done`).
+   - `tt project ls --json` — live projects, each with a `counts` rollup: a
+     mapping of every issue status to its tally (`backlog`, `blocked`, `todo`,
+     `doing`, `done`, `canceled`).
    - `tt issue ls --json` — live issues; add `--project SLUG` to scope to one.
-     Filter with `--tag NAME`, `--epic REF`, `--milestone REF` (the last two need
-     `--project`), and order with `--sort <field>[:asc|desc]`, field one of
+     Filter with `--tag NAME`, `--epic TITLE`, `--milestone TITLE` (the last two
+     need `--project`), and order with `--sort <field>[:asc|desc]`, field one of
      `priority`, `created`, `updated`, `due`, `status` (e.g. `--sort due:desc`).
    - `tt epic ls --json` — live epics; add `--project SLUG` to scope to one.
-   - `tt milestone ls --json` — live milestones; add `--epic REF` to scope to one.
+   - `tt milestone ls --json` — live milestones; add `--project SLUG` to scope to
+     one, and `--epic TITLE` (needs `--project`) to a single epic's milestones.
    - `tt tag ls --json` — the global tag vocabulary.
 2. **Show** the object you will act on:
-   - `tt project show SLUG` / `tt issue show REF` / `tt epic show REF` /
-     `tt milestone show REF`  (REF is `<slug>-<number>`, e.g. `ENG-12`)
+   - `tt project show SLUG` / `tt issue show REF`  (REF is `<slug>-<number>`, e.g.
+     `TT-12`)
+   - `tt epic show TITLE --project SLUG` / `tt milestone show TITLE --project SLUG`
    - Returns JSON with the object **and an `actions` array**: every action the
      object offers, each with its `key`, `label`, `state`, and the `arguments`
      its payload takes (`name`, `required`, `type`, and enum `values`). This is
@@ -74,8 +86,8 @@ state, so the reliable pattern is to read the current state and then act on it:
      before every write.
 3. **Act** with the key and a JSON payload:
    - `tt issue action REF KEY '<json>'`
-   - `tt epic action REF KEY '<json>'`
-   - `tt milestone action REF KEY '<json>'`
+   - `tt epic action TITLE KEY '<json>' --project SLUG`
+   - `tt milestone action TITLE KEY '<json>' --project SLUG`
    - `tt project action KEY '<json>' --slug SLUG`  (omit `--slug` for a top-level create)
    - `tt tag action KEY '<json>' --id ID`  (omit `--id` for a top-level create)
 
@@ -85,10 +97,10 @@ state, so the reliable pattern is to read the current state and then act on it:
 you. The full set:
 
 - **Issues** — `edit`, `setStatus`, `setDueDate`, `tagIssue`, `untagIssue`,
-  `addComment`, `delete`.
+  `addDependency`, `removeDependency`, `addComment`, `delete`.
 - **Projects** — `edit`, `delete`, `setPath` (associate a filesystem path),
-  `addIssue`, `addEpic`. Plus the top-level `createProject`.
-- **Epics** — `edit`, `setStatus`, `setDueDate`, `addMilestone`, `delete`.
+  `addIssue`, `addEpic`, `addMilestone`. Plus the top-level `createProject`.
+- **Epics** — `edit`, `setStatus`, `setDueDate`, `delete`.
 - **Milestones** — `edit`, `setDueDate`, `delete`.
 - **Comments** — `edit`, `delete`. Created through the issue's `addComment`.
 - **Tags** — `rename`, `delete`. Plus the top-level `createTag`.
@@ -98,21 +110,27 @@ Creating (top-level creates take no address):
 - **Project:** `tt project action createProject '{"slug":"web","title":"Website"}'`
 - **Issue** (a project action): `tt project action addIssue '{"title":"Fix login","priority":"high"}' --slug web`
 - **Epic** (a project action): `tt project action addEpic '{"title":"v1","due_date":"2026-09-01"}' --slug web`
-- **Milestone** (an epic action): `tt epic action ENG-3 addMilestone '{"title":"alpha","due_date":"2026-09-01"}'`
-- **Comment** (an issue action): `tt issue action ENG-1 addComment '{"body":"first note"}'`
+- **Milestone** (a project action): `tt project action addMilestone '{"title":"alpha","due_date":"2026-09-01","epic":"v1"}' --slug web`
+- **Comment** (an issue action): `tt issue action TT-1 addComment '{"body":"first note"}'`
 - **Tag** (top-level): `tt tag action createTag '{"name":"bug"}'`
 
+A milestone's `epic` is the **title** of an epic to file it under, and is
+optional — omit it or send `null` for a milestone that stands on its own.
+
 Spelled-out subcommands exist for a person at a prompt
-(`tt issue edit ENG-1 --title … --status …`, `tt issue setDueDate ENG-1 --due_date 2026-09-01`),
+(`tt issue edit TT-1 --title … --status …`, `tt issue setDueDate TT-1 --due_date 2026-09-01`),
 but prefer the JSON `action` path from an agent: it takes the same payload `show`
 describes, verbatim.
 
 ## Issue statuses
 
 An issue's status is one of, in order:
-`backlog` → `blocked` → `todo` → `doing` → `done`. There is no status
-machine — any status may follow any other. Use `setStatus` for a quick move
-(`tt issue action ENG-1 setStatus '{"status":"doing"}'`), or set `status` as part of
+`backlog` → `blocked` → `todo` → `doing` → `done` → `canceled`. `done` and
+`canceled` are the two **terminal** statuses — work that needs no more doing,
+whether it finished (`done`) or was abandoned (`canceled`); a dependency at
+either no longer holds its dependents back. There is no status machine — any
+status may follow any other. Use `setStatus` for a quick move
+(`tt issue action TT-1 setStatus '{"status":"doing"}'`), or set `status` as part of
 the whole-object `edit`.
 
 ## `edit` is a whole-object write — read first
@@ -126,23 +144,21 @@ and send the complete set back.**
 
 An issue's `edit` payload carries `title`, `body`, `status`, `priority`,
 `due_date`, `epic`, and `milestone`. `due_date` is `YYYY-MM-DD` or `null`; `epic`
-and `milestone` are **refs** (e.g. `"ENG-3"`) or `null`, and must name an epic /
-milestone in the issue's own project. Blank/`null` clears the field.
+and `milestone` are **titles** (e.g. `"Payments"`) or `null`, and must name an
+epic / milestone in the issue's own project. Blank/`null` clears the field.
 
 ```
-tt issue show ENG-1     # read every field as it is now
-tt issue action ENG-1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":null,"milestone":null}'
+tt issue show TT-1     # read every field as it is now
+tt issue action TT-1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":null,"milestone":null}'
 ```
 
-Grouping an issue under an epic and milestone (the milestone must belong to that
-epic, else the write is refused):
+Grouping an issue under an epic and a milestone — the two are **independent**
+links: the milestone need not belong to the named epic, and either may be set or
+cleared without regard to the other:
 
 ```
-tt issue action ENG-1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":"ENG-3","milestone":"ENG-7"}'
+tt issue action TT-1 edit '{"title":"first issue","body":"","status":"doing","priority":"high","due_date":null,"epic":"Payments","milestone":"Beta launch"}'
 ```
-
-Changing the epic to one the current milestone is not in **clears** the now-stale
-milestone rather than blocking the move.
 
 ## Tags are their own verbs, not part of `edit`
 
@@ -151,12 +167,33 @@ Tags are a many-to-many, not a scalar column, so they are attached and detached 
 
 ```
 tt tag action createTag '{"name":"bug"}'   # the tag must exist first
-tt issue action ENG-1 tagIssue '{"name":"bug"}'
-tt issue action ENG-1 untagIssue '{"name":"bug"}'
+tt issue action TT-1 tagIssue '{"name":"bug"}'
+tt issue action TT-1 untagIssue '{"name":"bug"}'
 ```
 
 `tagIssue` is idempotent; an unknown tag name is refused, and so is untagging a tag
 the issue does not wear. An issue's current tags show up as `tags` in `issue show`.
+
+## Dependencies are their own verbs too, and go by ref
+
+An issue can depend on other issues **in the same project**. Like tags, the graph
+is edited through focused verbs, not `edit`, and the other issue is named by its
+**ref**:
+
+```
+tt issue action TT-1 addDependency '{"dependency":"TT-4"}'      # TT-1 now waits on TT-4
+tt issue action TT-1 removeDependency '{"dependency":"TT-4"}'
+```
+
+`addDependency` is idempotent (an edge already there is a no-op that still
+succeeds). It is refused for a ref in another project, a self-edge, or an edge
+that would close a cycle. `removeDependency` is refused for an edge the issue does
+not carry.
+
+`issue show` reports the graph as refs: `depends_on` (what must finish before this
+issue can start) and `dependents` (what waits on it). The derived `waiting` is
+`true` when a live dependency is not yet at a terminal status — surfaced in
+`issue ls` too, so a blocked-on-work issue reads as waiting without opening it.
 
 ## Comments are added on the issue, then edited on their own
 
@@ -166,8 +203,8 @@ the issue's live comments (id, body, timestamps) show up as `comments` in
 ref — for its own `edit` (a whole-object write of the body) and `delete`:
 
 ```
-tt issue action ENG-1 addComment '{"body":"first note"}'   # creates comment id N
-tt issue show ENG-1                                         # comments[] lists it
+tt issue action TT-1 addComment '{"body":"first note"}'   # creates comment id N
+tt issue show TT-1                                          # comments[] lists it
 tt comment show N                                           # the comment + its offers
 tt comment action N edit '{"body":"revised"}'
 tt comment action N delete '{}'
@@ -179,8 +216,10 @@ A blank body is refused on both `addComment` and `edit`.
 
 An object can refuse an action — a project will not archive or delete while it has
 unfinished issues; an epic or milestone will not delete while live issues still
-point at it; a duplicate tag name is refused. A refusal exits **123** and prints
-the reason. That is the object's answer: **do not retry it unchanged.** Read the
+point at it; creating or renaming an epic or milestone to a title a live sibling
+in the same project already holds is refused, as is a duplicate project slug or
+tag name; a dependency edge that crosses projects, points at itself, or would
+close a cycle is refused. A refusal exits **123** and prints the reason. That is the object's answer: **do not retry it unchanged.** Read the
 reason and either satisfy it (reassign or close the blocking issues first) or tell
 the user why it cannot be done.
 
