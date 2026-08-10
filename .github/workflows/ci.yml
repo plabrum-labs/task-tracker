@@ -1,0 +1,28 @@
+name: CI
+
+# The gate that used to run in the pre-commit test hook. It runs on pull request
+# so the slow suite never blocks a local commit, and it shells out to the same
+# `just verify` recipe the hook and a manual run use, so CI can never run a
+# different version of a tool than a developer does.
+on:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Sync the environment from the lockfile
+        run: just sync
+
+      - name: Lint and test
+        run: just verify

@@ -22,13 +22,6 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
-      # The test suite is the slow part; it gates every commit rather than the
-      # push, so nothing slow runs at push time. always_run because a commit's
-      # correctness does not depend on which files the working tree touches.
-      - id: test
-        name: just test
-        entry: just test
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
+      # The test suite is the slow part and runs in CI on pull request (see
+      # .github/workflows/ci.yml), not on commit, so nothing slow gates a local
+      # commit.
