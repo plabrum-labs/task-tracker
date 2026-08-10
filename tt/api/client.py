@@ -29,7 +29,7 @@ class TtClient:
     location, or ``None`` for the shared per-user file the CLI opens."""
 
     def __init__(self, db: str | None = None) -> None:
-        self._engine = schema.bootstrap(db)
+        self._engine = schema.open_db(db)
 
     @classmethod
     def from_engine(cls, engine: Engine) -> "TtClient":

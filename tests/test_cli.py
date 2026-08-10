@@ -108,7 +108,7 @@ def test_no_subcommand_opens_the_tui_on_the_chosen_database(
     database: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Bare ``tt`` is the TUI, not a help screen, and it opens the database the
-    # callback bootstrapped rather than a fresh default.
+    # callback resolved rather than a fresh default.
     opened: list[object] = []
     monkeypatch.setattr("tt.frontend.tui.run", lambda engine: opened.append(engine))
     result = invoke(database)
@@ -119,8 +119,8 @@ def test_no_subcommand_opens_the_tui_on_the_chosen_database(
 def test_version_reports_the_source_tree_without_a_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # ``--version`` is eager: it must print and exit before the callback bootstraps
-    # a database or opens the TUI, so it works even when no database is reachable.
+    # ``--version`` is eager: it must print and exit before the callback opens a
+    # database or the TUI, so it works even when no database is reachable.
     opened: list[object] = []
     monkeypatch.setattr("tt.frontend.tui.run", lambda engine: opened.append(engine))
     result = runner.invoke(cli.app, ["--version"])

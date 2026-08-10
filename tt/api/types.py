@@ -7,7 +7,7 @@ change is absorbed by the adapter in ``_adapt`` rather than reaching the caller.
 Refs (``<PROJECT>-<n>``) address issues; an ``Epic`` is a title within a project
 and carries no ref of its own. Enums are already the public ones from ``enums``.
 
-The module is ``types`` and not ``models`` on purpose: the schema bootstrap
+The module is ``types`` and not ``models`` on purpose: the ``schema`` module
 discovers every ``models.py`` under ``tt`` as a table module, and these are plain
 data, not mapped rows.
 """

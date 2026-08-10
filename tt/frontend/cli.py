@@ -625,8 +625,8 @@ def _version_line() -> str:
 
 
 def _version_callback(show: bool) -> None:
-    """``--version`` is eager: it prints and exits before the callback bootstraps a
-    database or opens the TUI, so it works with no database reachable."""
+    """``--version`` is eager: it prints and exits before the callback opens a
+    database or the TUI, so it works with no database reachable."""
     if show:
         typer.echo(_version_line())
         raise typer.Exit()
@@ -662,7 +662,7 @@ def _main(
     callback runs even with no subcommand, and opens the TUI when none was
     invoked. Textual is imported only on that branch, so a CLI command does not
     pay to load it."""
-    engine = schema.bootstrap(database)
+    engine = schema.open_db(database)
     ctx.obj = engine
     if ctx.invoked_subcommand is None:
         from tt.frontend import tui
