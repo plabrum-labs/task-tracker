@@ -138,7 +138,7 @@ def list_issues(
     stmt = _loaded.where(
         Issue.deleted_at.is_(None),
         Project.deleted_at.is_(None),
-        Project.slug == project_slug,
+        Project.slug == project_slug.upper(),
     ).order_by(*_ordering(sort))
     if filter.tag is not None:
         # ``any`` rather than a join so an issue wearing the tag is returned once,

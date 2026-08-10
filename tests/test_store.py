@@ -54,7 +54,7 @@ def test_create_returns_the_stored_row_with_its_assigned_id(db: Engine) -> None:
     assert made.id > 0
     assert made.status == Status.TODO
     # The slug comes from the loaded project, not a column on the issue.
-    assert made.project.slug == "tt"
+    assert made.project.slug == "TT"
     assert made.created_at == made.updated_at
 
 
@@ -202,7 +202,7 @@ def test_a_slug_is_reusable_once_its_project_is_deleted(db: Engine) -> None:
     second = a_project(db, "tt")
     assert second.id != first.id
     with platform_db.reading(db) as s:
-        assert [p.slug for p in project_queries.list_projects(s)] == ["tt"]
+        assert [p.slug for p in project_queries.list_projects(s)] == ["TT"]
 
 
 # --- the assertion the OCaml side cannot make -----------------------------
@@ -215,7 +215,10 @@ def test_a_duplicate_live_slug_is_refused_by_the_constraint(db: Engine) -> None:
     # up as a refusal.
     a_project(db, "tt")
     with pytest.raises(SQLAlchemyError), platform_db.transaction(db) as tx:
-        tx.add(Project(slug="tt", title="", body="", status=ProjectStatus.ACTIVE, issues=[]))
+        # A slug is stored uppercase, so the row that collides with the seeded "tt"
+        # is the canonical "TT"; inserting straight past the hook is what leaves the
+        # database to answer.
+        tx.add(Project(slug="TT", title="", body="", status=ProjectStatus.ACTIVE, issues=[]))
         tx.flush()
 
 

@@ -226,7 +226,9 @@ class CreateProject(TopLevelAction[schemas.CreateProjectPayload]):
 
     @classmethod
     def execute(cls, payload: schemas.CreateProjectPayload, deps: ActionDeps) -> ActionResponse:
-        slug = payload.slug.strip()
+        # Slugs are stored uppercase so every ref reads ``TT-12`` however the slug was
+        # typed; the length cap and the duplicate check both run against that form.
+        slug = payload.slug.strip().upper()
         if not slug:
             raise Invalid("slug is required")
         if len(slug) > SLUG_MAX_LENGTH:

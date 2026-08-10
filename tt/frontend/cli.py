@@ -277,6 +277,9 @@ def _issue_ls(
         slugs = [p.slug for p in project_api.project_list(engine)]
         filter = IssueFilter(tag=tag)
     else:
+        # Slugs are stored uppercase, so a ``--project`` typed in any case is
+        # canonicalised before it is looked up or compared against a row's slug.
+        project_slug = project_slug.upper()
         if project_api.project_get(engine, project_slug) is None:
             raise Invalid(f"no project {project_slug!r}")
         slugs = [project_slug]
@@ -295,6 +298,7 @@ def _issue_ls(
 
 def _epic_ls(engine: Engine, project_slug: str | None, as_json: bool) -> str:
     if project_slug is not None:
+        project_slug = project_slug.upper()
         if project_api.project_get(engine, project_slug) is None:
             raise Invalid(f"no project {project_slug!r}")
         slugs = [project_slug]

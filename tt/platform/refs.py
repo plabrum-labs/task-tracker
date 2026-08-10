@@ -5,6 +5,9 @@ A ref is a project's slug, a hyphen, and the row's project-scoped number —
 hyphen is left whole. A string that is not a ref (no hyphen, an empty half, or a
 non-numeric number) parses to ``None``, which a resolver turns into "no such row"
 rather than a crash.
+
+Slugs are stored uppercase, so the slug half is uppercased here — the canonical
+form a resolver matches on — and a ref types the same in any case.
 """
 
 
@@ -13,4 +16,4 @@ def parse_ref(ref: str) -> tuple[str, int] | None:
     slug, sep, number = ref.rpartition("-")
     if not sep or not slug or not number.isdigit():
         return None
-    return slug, int(number)
+    return slug.upper(), int(number)

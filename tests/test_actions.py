@@ -219,7 +219,7 @@ def test_edit_sets_every_field_at_once(db: Engine) -> None:
             priority=Priority.HIGH,
         ),
     )
-    assert response.message == "issue tt-1: saved"
+    assert response.message == "issue TT-1: saved"
     with platform_db.reading(db) as s:
         read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
@@ -263,7 +263,7 @@ def test_set_status_moves_to_each_status(db: Engine) -> None:
             seeded.ref,
             issue_schemas.SetStatusPayload(status=status),
         )
-        assert response.message == f"issue tt-1: {status}"
+        assert response.message == f"issue TT-1: {status}"
         with platform_db.reading(db) as s:
             read = issue_queries.get_issue(s, seeded.id)
         assert read is not None
@@ -299,7 +299,7 @@ def test_set_due_date_sets_and_clears(db: Engine) -> None:
         seeded.ref,
         issue_schemas.SetDueDatePayload(due_date=date(2026, 9, 1)),
     )
-    assert response.message == "issue tt-1: due 2026-09-01"
+    assert response.message == "issue TT-1: due 2026-09-01"
     with platform_db.reading(db) as s:
         read = issue_queries.get_issue(s, seeded.id)
     assert read is not None
@@ -309,7 +309,7 @@ def test_set_due_date_sets_and_clears(db: Engine) -> None:
     response = run_issue(
         db, issue_actions.SetDueDate, seeded.ref, issue_schemas.SetDueDatePayload(due_date=None)
     )
-    assert response.message == "issue tt-1: due cleared"
+    assert response.message == "issue TT-1: due cleared"
     with platform_db.reading(db) as s:
         cleared = issue_queries.get_issue(s, seeded.id)
     assert cleared is not None
@@ -331,7 +331,7 @@ def test_delete_hides_an_issue(db: Engine) -> None:
     seeded = an_issue(db, tt, "here")
 
     response = run_issue(db, issue_actions.Delete, seeded.ref, Empty())
-    assert response.message == "issue tt-1: deleted"
+    assert response.message == "issue TT-1: deleted"
     with platform_db.reading(db) as s:
         assert issue_queries.get_issue(s, seeded.id) is None
 
@@ -388,7 +388,7 @@ def test_edit_keeps_a_busy_project_editable_while_it_stays_active(db: Engine) ->
     response = project_api.project_action(
         db, "edit", {"title": "renamed", "body": "notes", "status": "active", "path": None}, "tt"
     )
-    assert response.message == "project tt: saved"
+    assert response.message == "project TT: saved"
     with platform_db.reading(db) as s:
         read = project_queries.get_project(s, "tt")
     assert read is not None
@@ -411,7 +411,7 @@ def test_edit_archives_when_nothing_is_doing(db: Engine) -> None:
     response = project_api.project_action(
         db, "edit", {"title": "tt", "body": "", "status": "archived", "path": None}, "tt"
     )
-    assert response.message == "project tt: saved"
+    assert response.message == "project TT: saved"
     with platform_db.reading(db) as s:
         read = project_queries.get_project(s, "tt")
     assert read is not None
@@ -445,7 +445,7 @@ def test_edit_refuses_a_path_another_live_project_owns(db: Engine) -> None:
     a_project(db, "tt")
     a_project(db, "other")
     project_api.project_action(db, "setPath", {"path": "/work/shared"}, "other")
-    with pytest.raises(Conflict, match='path already belongs to "other"'):
+    with pytest.raises(Conflict, match='path already belongs to "OTHER"'):
         project_api.project_action(
             db,
             "edit",
@@ -470,7 +470,7 @@ def test_delete_is_refused_while_the_project_is_active(db: Engine) -> None:
     assert archived is not None
     assert project_actions.Delete.availability(archived) == Runnable()
     response = run_project(db, project_actions.Delete, "tt", Empty())
-    assert response.message == "project tt: deleted"
+    assert response.message == "project TT: deleted"
     with platform_db.reading(db) as s:
         assert project_queries.get_project(s, "tt") is None
 
@@ -495,7 +495,7 @@ def test_add_issue_defaults_what_the_payload_leaves_out(db: Engine) -> None:
         "tt",
         project_schemas.AddIssuePayload(title=" ship it ", body=None, priority=None),
     )
-    assert response.message == "issue tt-1: created"
+    assert response.message == "issue TT-1: created"
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         created = issue_queries.list_issues(s, "tt")[0]
@@ -524,8 +524,8 @@ def test_issue_numbers_restart_per_project(db: Engine) -> None:
 
     eng = [i.ref for i in issue_api.issue_list(db, "eng")]
     web = [i.ref for i in issue_api.issue_list(db, "web")]
-    assert eng == ["eng-1", "eng-2"]
-    assert web == ["web-1"]  # a fresh run, not eng-3
+    assert eng == ["ENG-1", "ENG-2"]
+    assert web == ["WEB-1"]  # a fresh run, not eng-3
 
 
 def test_a_ref_resolves_the_right_project_scoped_issue(db: Engine) -> None:
@@ -550,7 +550,7 @@ def test_a_deleted_number_is_not_reissued(db: Engine) -> None:
     issue_api.issue_action(db, "delete", {}, "eng-1")
     project_api.project_action(db, "addIssue", {"title": "two"}, "eng")
     live = [i.ref for i in issue_api.issue_list(db, "eng")]
-    assert live == ["eng-2"]  # eng-1 is gone and its number was not handed out again
+    assert live == ["ENG-2"]  # eng-1 is gone and its number was not handed out again
 
 
 def test_add_issue_honors_an_explicit_status(db: Engine) -> None:
@@ -578,11 +578,27 @@ def test_create_project_refuses_a_slug_the_live_list_already_holds(db: Engine) -
         response = project_group.trigger(
             ActionDeps(tx), "createProject", {"slug": "other", "title": "another"}
         )
-    assert response.message == "project other: created"
+    assert response.message == "project OTHER: created"
     with platform_db.reading(db) as s:
         made = project_queries.get_project(s, "other")
     assert made is not None
     assert made.title == "another"
+
+
+def test_create_project_uppercases_the_slug_and_addresses_case_insensitively(db: Engine) -> None:
+    # A slug is stored uppercase so every ref reads ``ENG-12`` however it was typed;
+    # the duplicate check folds case too, and a project is then addressable in any
+    # case.
+    with platform_db.transaction(db) as tx:
+        response = project_group.trigger(
+            ActionDeps(tx), "createProject", {"slug": "Eng", "title": "engineering"}
+        )
+    assert response.message == "project ENG: created"
+    with platform_db.transaction(db) as tx, pytest.raises(Conflict):
+        project_group.trigger(ActionDeps(tx), "createProject", {"slug": "eng", "title": None})
+    with platform_db.reading(db) as s:
+        assert project_queries.get_project(s, "eng") is not None
+        assert project_queries.get_project(s, "ENG") is not None
 
 
 def test_create_project_refuses_a_slug_over_the_length_cap(db: Engine) -> None:
@@ -594,7 +610,7 @@ def test_create_project_refuses_a_slug_over_the_length_cap(db: Engine) -> None:
         response = project_group.trigger(
             ActionDeps(tx), "createProject", {"slug": "abcde", "title": None}
         )
-    assert response.message == "project abcde: created"
+    assert response.message == "project ABCDE: created"
 
 
 # --- epics -----------------------------------------------------------------
@@ -642,7 +658,7 @@ def test_add_epic_creates_an_epic_under_the_project(db: Engine) -> None:
         "tt",
         project_schemas.AddEpicPayload(title=" v1 ", body=None, due_date=date(2026, 9, 1)),
     )
-    assert response.message == "epic tt-1: created"
+    assert response.message == "epic TT-1: created"
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         made = epic_queries.get_epic(s, 1)
@@ -691,7 +707,7 @@ def test_epic_edit_sets_every_field_and_refuses_a_blank_title(db: Engine) -> Non
             title=" done ", body="notes", status=EpicStatus.DONE, due_date=date(2026, 12, 1)
         ),
     )
-    assert response.message == "epic tt-1: saved"
+    assert response.message == "epic TT-1: saved"
     with platform_db.reading(db) as s:
         read = epic_queries.resolve_ref(s, epic_ref)
     assert read is not None
@@ -712,7 +728,7 @@ def test_epic_set_status_and_due_date_move(db: Engine) -> None:
     response = run_epic(
         db, epic_actions.SetStatus, epic_ref, epic_schemas.SetStatusPayload(status=EpicStatus.DONE)
     )
-    assert response.message == "epic tt-1: done"
+    assert response.message == "epic TT-1: done"
 
     run_epic(
         db,
@@ -746,7 +762,7 @@ def test_epic_delete_is_refused_while_it_holds_live_issues(db: Engine) -> None:
         empty_epic = epic_queries.resolve_ref(s, epic_ref)
     assert empty_epic is not None
     assert epic_actions.Delete.availability(empty_epic) == Runnable()
-    assert run_epic(db, epic_actions.Delete, epic_ref, Empty()).message == "epic tt-1: deleted"
+    assert run_epic(db, epic_actions.Delete, epic_ref, Empty()).message == "epic TT-1: deleted"
     with platform_db.reading(db) as s:
         assert epic_queries.resolve_ref(s, epic_ref) is None
 
@@ -834,7 +850,7 @@ def test_add_milestone_creates_one_under_the_epic(db: Engine) -> None:
         epic_ref,
         epic_schemas.AddMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
     )
-    assert response.message == "milestone tt-1: created"
+    assert response.message == "milestone TT-1: created"
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         made = milestone_queries.get_milestone(s, 1)
@@ -869,7 +885,7 @@ def test_milestone_edit_and_set_due_date(db: Engine) -> None:
         milestone_ref,
         milestone_schemas.EditMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
     )
-    assert response.message == "milestone tt-1: saved"
+    assert response.message == "milestone TT-1: saved"
     with platform_db.reading(db) as s:
         read = milestone_queries.resolve_ref(s, milestone_ref)
     assert read is not None
@@ -914,7 +930,7 @@ def test_milestone_delete_is_refused_while_it_holds_live_issues(db: Engine) -> N
     assert empty_milestone is not None
     assert milestone_actions.Delete.availability(empty_milestone) == Runnable()
     assert run_milestone(db, milestone_actions.Delete, milestone_ref, Empty()).message == (
-        "milestone tt-1: deleted"
+        "milestone TT-1: deleted"
     )
 
 
@@ -1030,7 +1046,7 @@ def test_tag_and_untag_attach_detach_and_refuse(db: Engine) -> None:
 
     # Attach, and attaching again is an idempotent success.
     assert issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.ref).message == (
-        'issue tt-1: tagged "bug"'
+        'issue TT-1: tagged "bug"'
     )
     issue_api.issue_action(db, "tagIssue", {"name": "bug"}, made.ref)
     detail = issue_api.issue_get(db, made.ref)
@@ -1045,7 +1061,7 @@ def test_tag_and_untag_attach_detach_and_refuse(db: Engine) -> None:
 
     # Detach, and detaching an absent tag is a refusal.
     assert issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.ref).message == (
-        'issue tt-1: untagged "bug"'
+        'issue TT-1: untagged "bug"'
     )
     with pytest.raises(Conflict, match='not tagged "bug"'):
         issue_api.issue_action(db, "untagIssue", {"name": "bug"}, made.ref)
@@ -1073,7 +1089,7 @@ def test_the_list_row_carries_an_issues_tags_sorted(db: Engine) -> None:
         issue_api.issue_action(db, "tagIssue", {"name": name}, tagged.ref)
 
     rows = {row.ref: row.tags for row in issue_api.issue_list(db, "tt")}
-    assert rows == {tagged.ref: ["bug", "perf", "ui"], "tt-2": []}
+    assert rows == {tagged.ref: ["bug", "perf", "ui"], "TT-2": []}
 
     # And an untagged issue reads back empty once its tags are detached again.
     issue_api.issue_action(db, "untagIssue", {"name": "bug"}, tagged.ref)
@@ -1409,7 +1425,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
     seeded = an_issue(typed, tt, "old")
     via_typed = run_issue(typed, issue_actions.EditIssue, seeded.ref, _edit(title=" new ")).message
 
-    assert via_api == via_typed == "issue tt-1: saved"
+    assert via_api == via_typed == "issue TT-1: saved"
 
     # The same for a creator, whose execute writes a different table.
     erased = _fresh()
@@ -1425,7 +1441,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
         project_schemas.AddIssuePayload(title="one", body=None, priority=None),
     ).message
 
-    assert via_api == via_typed == "issue tt-1: created"
+    assert via_api == via_typed == "issue TT-1: created"
 
 
 def test_a_malformed_payload_is_invalid(db: Engine) -> None:
@@ -1478,7 +1494,7 @@ def test_a_malformed_payload_is_invalid(db: Engine) -> None:
 def test_an_action_with_no_arguments_takes_an_empty_object_and_not_null(db: Engine) -> None:
     tt = a_project(db, "tt")
     seeded = an_issue(db, tt, "here")
-    assert issue_api.issue_action(db, "delete", {}, seeded.ref).message == "issue tt-1: deleted"
+    assert issue_api.issue_action(db, "delete", {}, seeded.ref).message == "issue TT-1: deleted"
     # ``null`` is refused where an empty object is not — the decode is the same one
     # a dispatch runs.
     assert decode(issue_actions.Delete, {}) == Empty()

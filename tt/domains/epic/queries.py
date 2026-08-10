@@ -26,11 +26,13 @@ _loaded = (
 
 
 def list_epics(db: Session, project_slug: str) -> list[Epic]:
-    """Live epics of a live project, oldest first, each carrying its counts."""
+    """Live epics of a live project, oldest first, each carrying its counts. Slugs
+    are stored uppercase, so the argument is uppercased and may be given in any
+    case."""
     stmt = _loaded.where(
         Epic.deleted_at.is_(None),
         Project.deleted_at.is_(None),
-        Project.slug == project_slug,
+        Project.slug == project_slug.upper(),
     )
     return list(db.scalars(stmt))
 

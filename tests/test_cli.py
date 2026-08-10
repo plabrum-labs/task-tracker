@@ -257,7 +257,7 @@ def test_set_status_is_its_own_subcommand_taking_only_status(database: str) -> N
     # the status, and it writes the move at once.
     moved = invoke(database, "issue", "setStatus", "tt-1", "--status", "doing")
     assert moved.exit_code == 0
-    assert "issue tt-1: doing" in moved.output
+    assert "issue TT-1: doing" in moved.output
     shown = invoke(database, "issue", "show", "tt-1")
     assert json.loads(shown.output)["issue"]["status"] == "doing"
     # A value outside the closed set is a usage error listing the alternatives.
@@ -276,7 +276,7 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
     result = invoke(database, "issue", "show", "tt-1")
     assert result.exit_code == 0
     value = json.loads(result.output)
-    assert value["issue"]["project"] == "tt"
+    assert value["issue"]["project"] == "TT"
     assert value["issue"]["priority"] == "high"
 
     keys = [action["key"] for action in value["actions"]]
@@ -309,9 +309,9 @@ def test_add_dependency_over_the_cli_and_a_cycle_is_a_refusal(database: str) -> 
     invoke(database, "project", "action", "addIssue", '{"title":"b"}', "--slug", "tt")
     added = invoke(database, "issue", "addDependency", "tt-2", "--dependency", "tt-1")
     assert added.exit_code == 0
-    assert "depends on tt-1" in added.output
+    assert "depends on TT-1" in added.output
     shown = json.loads(invoke(database, "issue", "show", "tt-2").output)
-    assert shown["issue"]["depends_on"] == ["tt-1"]
+    assert shown["issue"]["depends_on"] == ["TT-1"]
     assert shown["issue"]["waiting"] is True
     # The waiting issue carries the marker in the text list.
     listed = invoke(database, "issue", "ls", "--project", "tt")
@@ -325,12 +325,12 @@ def test_add_dependency_over_the_cli_and_a_cycle_is_a_refusal(database: str) -> 
 def test_ls_json_emits_a_structured_array_and_text_stays_the_default(database: str) -> None:
     projects = invoke(database, "project", "ls", "--json")
     assert projects.exit_code == 0
-    assert [p["slug"] for p in json.loads(projects.output)] == ["tt"]
+    assert [p["slug"] for p in json.loads(projects.output)] == ["TT"]
 
     issues = invoke(database, "issue", "ls", "--json")
     assert issues.exit_code == 0
     rows = json.loads(issues.output)
-    assert rows[0]["project"] == "tt"
+    assert rows[0]["project"] == "TT"
     assert rows[0]["priority"] == "high"
 
     # Without the flag the reads stay the human text table, not JSON, so a person's
@@ -362,9 +362,9 @@ def test_counts_are_one_nested_object_keyed_by_status_name(database: str) -> Non
 def test_create_project_is_reached_through_the_top_level_action_path(database: str) -> None:
     made = invoke(database, "project", "action", "createProject", '{"slug":"new","title":"New"}')
     assert made.exit_code == 0
-    assert "project new: created" in made.output
+    assert "project NEW: created" in made.output
     listed = invoke(database, "project", "ls")
-    assert "new" in listed.output
+    assert "NEW" in listed.output
     # A duplicate slug is the object's refusal, not a usage error.
     dup = invoke(database, "project", "action", "createProject", '{"slug":"new"}')
     assert dup.exit_code == cli.REFUSED
@@ -375,7 +375,7 @@ def test_init_binds_a_project_to_the_directory_it_is_given(database: str, tmp_pa
     here = str(tmp_path)
     made = invoke(database, "project", "init", "web", "--title", "Web", "--path", here)
     assert made.exit_code == 0
-    assert "project web: created" in made.output
+    assert "project WEB: created" in made.output
     shown = json.loads(invoke(database, "project", "show", "web").output)
     assert shown["project"]["path"] == here
 
@@ -454,7 +454,7 @@ def test_issue_ls_filters_by_tag_and_sorts_by_the_chosen_field(database: str) ->
     tagged = json.loads(
         invoke(database, "issue", "ls", "--project", "tt", "--tag", "bug", "--json").output
     )
-    assert [row["ref"] for row in tagged] == ["tt-1"]
+    assert [row["ref"] for row in tagged] == ["TT-1"]
 
     ascending = json.loads(
         invoke(

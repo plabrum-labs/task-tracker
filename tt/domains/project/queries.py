@@ -20,5 +20,8 @@ def list_projects(db: Session) -> list[Project]:
 
 def get_project(db: Session, slug: str) -> Project | None:
     """The one live project of a slug, or ``None`` — at most one, since the partial
-    unique index covers live rows."""
-    return db.scalars(_loaded.where(Project.deleted_at.is_(None), Project.slug == slug)).first()
+    unique index covers live rows. Slugs are stored uppercase, so the argument is
+    uppercased and a project may be addressed in any case."""
+    return db.scalars(
+        _loaded.where(Project.deleted_at.is_(None), Project.slug == slug.upper())
+    ).first()

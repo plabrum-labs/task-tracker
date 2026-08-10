@@ -1186,7 +1186,7 @@ async def test_v_saves_the_live_state_verbatim(seeded: Engine) -> None:
         stored = config.load().views
         assert [view.name for view in stored] == ["hot"]
         # The scope, the grouping and the filter as they stood, not as they default.
-        assert stored[0].project == "tt"
+        assert stored[0].project == "TT"
         assert stored[0].group == ("status",)
         assert stored[0].filter == SavedFilter(priority="high")
 
@@ -1213,7 +1213,7 @@ async def test_a_saved_view_is_recalled_in_one_keystroke_across_sessions(seeded:
         await pilot.press("enter")  # the saved view is the first row
         await pilot.pause()
         main = _main(second)
-        assert main.scope == ProjectScope("tt")
+        assert main.scope == ProjectScope("TT")
         assert main.view_group == ("status",)
         assert main.view_filter == Filter(priority="high")
         assert _titles(second) == ["ship the mvp"]
