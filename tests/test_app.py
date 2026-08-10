@@ -33,6 +33,7 @@ from tt.frontend.tui.domainview import (
     HeaderAt,
     Navigate,
     ProjectScope,
+    ProjectTarget,
     RunAction,
     TagTarget,
 )
@@ -358,13 +359,13 @@ async def test_the_detail_pane_shows_the_relations_the_issue_carries(seeded: Eng
         await pilot.pause()
         pane = _main(app).query_one(DetailPane)
         pane.detail = _fabricated(
-            due_date=date(2026, 8, 9), epic="tt-3", milestone="tt-4", tags=["parser", "ux"]
+            due_date=date(2026, 8, 9), epic="auth", milestone="beta", tags=["parser", "ux"]
         )
         await pilot.pause()
         rendered = _rendered(pane)
         assert "due" in rendered and "2026-08-09" in rendered
-        assert "epic" in rendered and "tt-3" in rendered
-        assert "milestone" in rendered and "tt-4" in rendered
+        assert "epic" in rendered and "auth" in rendered
+        assert "milestone" in rendered and "beta" in rendered
         assert "tags" in rendered and "#parser" in rendered and "#ux" in rendered
 
 
@@ -390,17 +391,17 @@ async def test_the_rollup_line_summarises_the_epic_the_issue_belongs_to(seeded: 
         pane = _main(app).query_one(DetailPane)
         # Three issues in the epic and one outside it, so the line counts its own.
         pane.peers = [
-            _peer(1, "todo", "tt-3"),
-            _peer(2, "doing", "tt-3"),
-            _peer(3, "done", "tt-3"),
+            _peer(1, "todo", "auth"),
+            _peer(2, "doing", "auth"),
+            _peer(3, "done", "auth"),
             _peer(4, "done", None),
         ]
-        pane.detail = _fabricated(epic="tt-3", milestone="tt-4")
+        pane.detail = _fabricated(epic="auth", milestone="beta")
         await pilot.pause()
         line = pane.query_one(RollupRow)
         rendered = " ".join(str(widget.render()) for widget in line.query(Static))
-        assert "tt-3" in rendered  # the identity
-        assert "tt-4" in rendered  # the related column
+        assert "auth" in rendered  # the identity
+        assert "beta" in rendered  # the related column
         assert "1/3" in rendered  # one of the epic's three is done
         # The breakdown carries a glyph and a count per status the epic is spread over.
         assert "○ 1" in rendered and "◐ 1" in rendered and "● 1" in rendered
@@ -805,7 +806,8 @@ async def test_folds_are_remembered_per_grouping_for_the_session(seeded: Engine)
 
 
 async def _an_epic(engine: Engine) -> str:
-    """One epic over the first seeded issue, so grouping by epic heads a group with it."""
+    """One epic over the first seeded issue, so grouping by epic heads a group with it.
+    Returns the epic's title — the value its header reads and its api addresses it by."""
     project_api.project_action(engine, "addEpic", {"title": "the parser"}, "tt")
     epic = epic_api.epic_list(engine, "tt")[0]
     first = issue_api.issue_list(engine, "tt")[0]
@@ -818,12 +820,12 @@ async def _an_epic(engine: Engine) -> str:
             "status": first.status,
             "priority": first.priority,
             "due_date": None,
-            "epic": epic.ref,
+            "epic": epic.title,
             "milestone": None,
         },
         first.ref,
     )
-    return epic.ref
+    return epic.title
 
 
 async def test_x_on_an_epic_header_opens_the_epics_menu(seeded: Engine) -> None:
@@ -835,22 +837,23 @@ async def test_x_on_an_epic_header_opens_the_epics_menu(seeded: Engine) -> None:
         assert _main(app).view_group == ("epic",)
         await pilot.press("k")  # up off the first issue onto the header of its epic
         await pilot.pause()
-        assert _main(app).cursor == HeaderAt((ref,), "epic", ref)
+        assert _main(app).cursor == HeaderAt((ref,), "epic", ref, "TT")
 
         await pilot.press("x")
         await pilot.pause()
         menu = app.screen
         assert isinstance(menu, MenuScreen)
-        # What the epic offers, addressed by its ref — not the issue under it.
+        # What the epic offers, addressed by its title within its project — not the
+        # issue under it. An epic no longer creates milestones, so its menu has none.
         targets = {c.run.target for c in menu._commands if isinstance(c.run, RunAction)}
-        assert targets == {EpicTarget(ref)}
-        assert "Add milestone" in [c.label for c in menu._commands]
+        assert targets == {EpicTarget("TT", ref)}
+        assert "Add milestone" not in [c.label for c in menu._commands]
         # A live issue is still filed under it, so the delete reads its refusal.
         delete = next(c for c in menu._commands if c.label == "Delete")
         assert delete.reason is not None and "reassign or close" in delete.reason
 
 
-async def test_the_palette_creates_a_tag_and_a_milestone_under_the_epic_in_focus(
+async def test_the_palette_creates_a_milestone_through_the_project_and_a_tag(
     seeded: Engine,
 ) -> None:
     ref = await _an_epic(seeded)
@@ -866,13 +869,15 @@ async def test_the_palette_creates_a_tag_and_a_milestone_under_the_epic_in_focus
         menu = app.screen
         assert isinstance(menu, MenuScreen)
         labels = [c.label for c in menu._commands]
-        # The project's own create, the milestone against the epic in focus — labelled
-        # with which one — and the global tag create.
+        # A milestone is project-level now, so it is the project's own create — labelled
+        # plainly, with no epic suffix, and addressed at the project. An epic is filed
+        # under through the milestone's form, not by which header is in focus.
         assert "Add epic" in labels
-        assert f"Add milestone · {ref}" in labels
+        assert "Add milestone" in labels
+        assert f"Add milestone · {ref}" not in labels
         assert "Create tag" in labels
         creates = {c.label: c.run.target for c in menu._commands if isinstance(c.run, RunAction)}
-        assert creates[f"Add milestone · {ref}"] == EpicTarget(ref)
+        assert creates["Add milestone"] == ProjectTarget("TT")
         assert creates["Create tag"] == TagTarget(None)
 
 
@@ -1122,7 +1127,7 @@ async def test_entering_an_epic_header_filters_to_that_epic(seeded: Engine) -> N
         await _group_by(pilot, 2)  # Epic, two rows under No grouping
         await pilot.press("k")  # up off the first issue onto the header of its epic
         await pilot.pause()
-        assert _main(app).cursor == HeaderAt((ref,), "epic", ref)
+        assert _main(app).cursor == HeaderAt((ref,), "epic", ref, "TT")
 
         await pilot.press("enter")  # entering the epic is applying its facet
         await pilot.pause()

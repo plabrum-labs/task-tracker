@@ -27,7 +27,6 @@ address the selected comment instead.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import date
 from typing import Any
 
@@ -733,11 +732,21 @@ class MainScreen(Screen[None]):
         takes it. ``None`` when that object is no longer there to ask."""
         match header.by:
             case "epic":
-                epic, offers = epic_api.epic_detail(self.engine, header.value)
-                return epic_commands(offers, header.value, epic.model_dump(mode="json"))
+                if header.project is None:
+                    return None
+                epic, offers = epic_api.epic_detail(self.engine, header.project, header.value)
+                return epic_commands(
+                    offers, header.project, header.value, epic.model_dump(mode="json")
+                )
             case "milestone":
-                milestone, offers = milestone_api.milestone_detail(self.engine, header.value)
-                return milestone_commands(offers, header.value, milestone.model_dump(mode="json"))
+                if header.project is None:
+                    return None
+                milestone, offers = milestone_api.milestone_detail(
+                    self.engine, header.project, header.value
+                )
+                return milestone_commands(
+                    offers, header.project, header.value, milestone.model_dump(mode="json")
+                )
             case "tag":
                 tag_id = self._tag_id(header.value)
                 if tag_id is None:
@@ -777,31 +786,11 @@ class MainScreen(Screen[None]):
         header = f"{issue.ref} · {issue.title}"
         self.app.push_screen(MenuScreen(header, commands), self._on_command)
 
-    def _focused_epic(self) -> str | None:
-        """The epic a milestone is created against: the one whose header the cursor is
-        on, or the one the selected issue is filed under."""
-        header = self._selected_header()
-        if header is not None and header.by == "epic":
-            return header.value
-        issue = self._selected_issue()
-        return issue.epic if issue is not None else None
-
     def _create_commands(self) -> list[Command]:
-        """The creates that hang off no selected row: a milestone against the epic in
-        focus — the create lives on the epic, so the label names which one — and a tag,
-        which is global and belongs to no project. A project's own creates come from
-        what the project offers."""
-        commands: list[Command] = []
-        epic_ref = self._focused_epic()
-        if epic_ref is not None:
-            _, offers = epic_api.epic_detail(self.engine, epic_ref)
-            add = [o for o in offers if o.key == "addMilestone"]
-            commands.extend(
-                replace(command, label=f"{command.label} · {epic_ref}")
-                for command in epic_commands(add, epic_ref)
-            )
-        commands.extend(tag_commands(tag_api.top_level_offers(), None))
-        return commands
+        """The creates that hang off no selected row: a tag, which is global and
+        belongs to no project. A project's own creates — including a milestone, which
+        is project-level — come from what the project offers."""
+        return tag_commands(tag_api.top_level_offers(), None)
 
     def action_project_menu(self) -> None:
         slug = self._slug()

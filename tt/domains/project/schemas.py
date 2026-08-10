@@ -8,6 +8,7 @@ same direction the actions already depend in.
 """
 
 from datetime import date, datetime
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,6 +16,7 @@ from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.enums import StatusCounts
 from tt.domains.issue.schemas import WirePriority
 from tt.domains.project.enums import Status
+from tt.platform.actions import REFERENCE
 
 
 class EditProjectPayload(BaseModel):
@@ -49,6 +51,21 @@ class AddEpicPayload(BaseModel):
     title: str = Field(description="What to call the epic.")
     body: str | None = Field(default=None, description="What the epic is about.")
     due_date: date | None = Field(default=None, description="When the epic is due, as YYYY-MM-DD.")
+
+
+class AddMilestonePayload(BaseModel):
+    # A milestone is project-level, so its create hangs off the project like
+    # ``addEpic``; the epic is an optional label it may be filed under.
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(description="What to call the milestone.")
+    due_date: date | None = Field(
+        default=None, description="When the milestone is due, as YYYY-MM-DD."
+    )
+    epic: Annotated[str | None, REFERENCE] = Field(
+        default=None,
+        description='The title of the epic to file it under, e.g. "Payments". Optional.',
+    )
 
 
 class CreateProjectPayload(BaseModel):

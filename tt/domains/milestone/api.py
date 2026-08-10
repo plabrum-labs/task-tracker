@@ -16,21 +16,24 @@ from tt.domains.milestone.actions import milestone_actions
 from tt.domains.milestone.models import Milestone
 from tt.platform.actions import ActionDeps, ActionResponse, Field, Invalid, Offer
 from tt.platform.db import with_transaction
+from tt.platform.refs import NamedRef
 
 # --- reads ----------------------------------------------------------------
 
 
-def _epic_ref(milestone: Milestone) -> str:
-    """The ref of the epic the milestone belongs to. The epic shares the milestone's
-    project, so the ref is that slug and the epic's project-scoped number."""
-    return f"{milestone.project.slug}-{milestone.epic.number}"
+def _epic_title(milestone: Milestone) -> str | None:
+    """The title of the epic the milestone is filed under, or ``None`` when it is
+    unfiled. The epic is an optional label on a project-level milestone, and a
+    soft-deleted one reads as no epic — a milestone outlives the epic it was under."""
+    epic = milestone.epic
+    return epic.title if epic is not None and epic.deleted_at is None else None
 
 
 def _list_item(milestone: Milestone) -> schemas.MilestoneListItem:
     return schemas.MilestoneListItem(
         id=milestone.id,
-        ref=milestone.ref,
-        epic=_epic_ref(milestone),
+        project=milestone.project.slug,
+        epic=_epic_title(milestone),
         title=milestone.title,
         due_date=milestone.due_date,
         counts=milestone.counts,
@@ -40,8 +43,8 @@ def _list_item(milestone: Milestone) -> schemas.MilestoneListItem:
 def _detail(milestone: Milestone) -> schemas.MilestoneDetail:
     return schemas.MilestoneDetail(
         id=milestone.id,
-        ref=milestone.ref,
-        epic=_epic_ref(milestone),
+        project=milestone.project.slug,
+        epic=_epic_title(milestone),
         title=milestone.title,
         due_date=milestone.due_date,
         counts=milestone.counts,
@@ -51,22 +54,27 @@ def _detail(milestone: Milestone) -> schemas.MilestoneDetail:
 
 
 @with_transaction
-def milestone_list(tx: Session, epic_id: int) -> list[schemas.MilestoneListItem]:
-    return [_list_item(m) for m in queries.list_milestones(tx, epic_id)]
+def milestone_list(
+    tx: Session, project_slug: str, epic_id: int | None = None
+) -> list[schemas.MilestoneListItem]:
+    return [_list_item(m) for m in queries.list_milestones(tx, project_slug, epic_id)]
 
 
 @with_transaction
-def milestone_get(tx: Session, ref: str) -> schemas.MilestoneDetail | None:
-    milestone = queries.resolve_ref(tx, ref)
+def milestone_get(tx: Session, project_slug: str, title: str) -> schemas.MilestoneDetail | None:
+    milestone = queries.resolve_by_title(tx, NamedRef(project_slug, title))
     return _detail(milestone) if milestone is not None else None
 
 
 @with_transaction
-def milestone_detail(tx: Session, ref: str) -> tuple[schemas.MilestoneDetail, list[Offer]]:
+def milestone_detail(
+    tx: Session, project_slug: str, title: str
+) -> tuple[schemas.MilestoneDetail, list[Offer]]:
     """A milestone and what it offers, for a detail view."""
-    milestone = queries.resolve_ref(tx, ref)
+    address = NamedRef(project_slug, title)
+    milestone = queries.resolve_by_title(tx, address)
     if milestone is None:
-        raise Invalid(f"no milestone {ref}")
+        raise Invalid(f"no milestone {address!r}")
     return _detail(milestone), milestone_actions.offers(milestone)
 
 
@@ -74,11 +82,13 @@ def milestone_detail(tx: Session, ref: str) -> tuple[schemas.MilestoneDetail, li
 
 
 @with_transaction
-def milestone_action(tx: Session, key: str, payload: Any, ref: str) -> ActionResponse:
+def milestone_action(
+    tx: Session, key: str, payload: Any, project_slug: str, title: str
+) -> ActionResponse:
     """Run an action by key against the addressed milestone. Availability is
     enforced against the live row, so what a detail view reported stays a
     snapshot."""
-    return milestone_actions.trigger(ActionDeps(tx), key, payload, ref)
+    return milestone_actions.trigger(ActionDeps(tx), key, payload, NamedRef(project_slug, title))
 
 
 # --- codegen --------------------------------------------------------------

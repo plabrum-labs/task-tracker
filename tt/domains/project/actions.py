@@ -18,11 +18,15 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from tt.domains.epic import queries as epic_queries
 from tt.domains.epic.enums import Status as EpicStatus
 from tt.domains.epic.models import Epic
 from tt.domains.issue.enums import Priority
 from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.models import Issue
+from tt.domains.milestone import queries as milestone_queries
+from tt.domains.milestone.actions import resolve_epic
+from tt.domains.milestone.models import Milestone
 from tt.domains.project import queries, schemas
 from tt.domains.project.enums import Status
 from tt.domains.project.models import Project
@@ -40,8 +44,8 @@ from tt.platform.sequences import next_number
 
 project_actions: ActionGroup[Project] = ActionGroup("project", locate=queries.get_project)
 
-# A slug prefixes every issue, epic and milestone ref (``<slug>-<number>``), so it
-# is kept short enough to leave the ref readable in a list column.
+# A slug prefixes every issue ref (``<slug>-<number>``), so it is kept short enough
+# to leave the ref readable in a list column.
 SLUG_MAX_LENGTH = 5
 
 
@@ -199,9 +203,12 @@ class AddEpic(ObjectAction[Project, schemas.AddEpicPayload]):
         title = payload.title.strip()
         if not title:
             raise Invalid("title is required")
+        # An epic is addressed by title within its project, so a title a live epic
+        # already holds is refused — the partial unique index guarantees it.
+        if epic_queries.title_owner(deps.tx, obj.id, title, exclude_id=None) is not None:
+            raise Conflict(f'an epic "{title}" already exists')
         epic = Epic(
             project=obj,
-            number=next_number(deps.tx, obj.id, "epic"),
             title=title,
             body=payload.body or "",
             status=EpicStatus.ACTIVE,
@@ -212,6 +219,47 @@ class AddEpic(ObjectAction[Project, schemas.AddEpicPayload]):
         deps.tx.flush()
         deps.tx.refresh(epic, ["created_at", "updated_at"])
         return ActionResponse(message=f"{epic.subject()}: created", created_id=epic.id)
+
+
+@project_actions
+class AddMilestone(ObjectAction[Project, schemas.AddMilestonePayload]):
+    # A milestone is project-level, so its create hangs off the project like
+    # ``addEpic``; the epic it is filed under, if any, is an optional label resolved
+    # by title within this project.
+    KEY = "addMilestone"
+    LABEL = "Add milestone"
+    Payload = schemas.AddMilestonePayload
+
+    @classmethod
+    def is_disabled(cls, obj: Project) -> str | None:
+        match obj.status:
+            case Status.ARCHIVED:
+                return "project is archived"
+            case Status.ACTIVE:
+                return None
+
+    @classmethod
+    def execute(
+        cls, obj: Project, payload: schemas.AddMilestonePayload, deps: ActionDeps
+    ) -> ActionResponse:
+        title = payload.title.strip()
+        if not title:
+            raise Invalid("title is required")
+        # A milestone is addressed by title within its project, so a title a live
+        # milestone already holds is refused — the partial unique index guarantees it.
+        if milestone_queries.title_owner(deps.tx, obj.id, title, exclude_id=None) is not None:
+            raise Conflict(f'a milestone "{title}" already exists')
+        milestone = Milestone(
+            project=obj,
+            epic_id=resolve_epic(deps, payload.epic, obj.slug),
+            title=title,
+            due_date=payload.due_date,
+            issues=[],
+        )
+        deps.tx.add(milestone)
+        deps.tx.flush()
+        deps.tx.refresh(milestone, ["created_at", "updated_at"])
+        return ActionResponse(message=f"{milestone.subject()}: created", created_id=milestone.id)
 
 
 @project_actions

@@ -312,12 +312,15 @@ class GroupKey:
     reads, and the second field it is filed under when the dimension has one — a
     milestone's epic. The dimension rides here because a header is only selectable when
     it stands for a real object, and the value alone cannot say which dimension it came
-    from."""
+    from. ``project`` is the slug an epic or milestone header is addressed within —
+    those are named per project, so a title needs its project to resolve — sourced from
+    the group's issues; ``None`` for a dimension that names no per-project object."""
 
     by: GroupBy
     value: str | None
     label: str
     related: str | None = None
+    project: str | None = None
 
 
 @dataclass(frozen=True)
@@ -365,7 +368,15 @@ def _single(
     named, missing = _by_value(issues, value_of)
     buckets = [
         (
-            GroupKey(by, value, value, related_of(rows[0]) if related_of is not None else None),
+            GroupKey(
+                by,
+                value,
+                value,
+                related_of(rows[0]) if related_of is not None else None,
+                # An epic or milestone is addressed by title within its project, so
+                # the header carries the project its issues sit in.
+                rows[0].project,
+            ),
             rows,
         )
         for value, rows in named.items()
@@ -884,12 +895,15 @@ def visible_issues(nodes: Sequence[GroupNode], collapsed: Collapsed) -> list[Iss
 @dataclass(frozen=True)
 class HeaderAt:
     """Where the cursor sits when it is on a group header: the ``path`` addressing the
-    node in the tree, the dimension ``by`` its group splits on, and the ``value`` naming
-    the object it heads — an epic or milestone ref, a tag's name."""
+    node in the tree, the dimension ``by`` its group splits on, the ``value`` naming
+    the object it heads — an epic or milestone title, a tag's name — and the
+    ``project`` an epic or milestone title resolves within (``None`` for a tag, which
+    is global)."""
 
     path: NodePath
     by: GroupBy
     value: str
+    project: str | None = None
 
 
 # What the cursor is on: an issue, by the id the list tracks it by, or the header of a
@@ -904,7 +918,7 @@ def header_at(node: GroupNode, path: NodePath) -> HeaderAt | None:
     key = node.key
     if key.by not in OBJECT_DIMENSIONS or key.value is None:
         return None
-    return HeaderAt(path, key.by, key.value)
+    return HeaderAt(path, key.by, key.value, key.project)
 
 
 def _stops(nodes: Sequence[GroupNode], collapsed: Collapsed, prefix: NodePath) -> list[Cursor]:
@@ -1095,16 +1109,20 @@ class CommentTarget:
 
 @dataclass(frozen=True)
 class EpicTarget:
-    """The epic a rollup header stands for, by the ref the header reads."""
+    """The epic a rollup header stands for, by the title it reads within its
+    project — an epic is named per project, not addressed by a ref."""
 
-    ref: str
+    project_slug: str
+    title: str
 
 
 @dataclass(frozen=True)
 class MilestoneTarget:
-    """The milestone a rollup header stands for, by the ref the header reads."""
+    """The milestone a rollup header stands for, by the title it reads within its
+    project — a milestone is named per project, not addressed by a ref."""
 
-    ref: str
+    project_slug: str
+    title: str
 
 
 @dataclass(frozen=True)
@@ -1203,15 +1221,15 @@ def comment_commands(
 
 
 def epic_commands(
-    offers: list[Offer], ref: str, detail: dict[str, Any] | None = None
+    offers: list[Offer], project_slug: str, title: str, detail: dict[str, Any] | None = None
 ) -> list[Command]:
-    return [_offer_command(offer, EpicTarget(ref), detail) for offer in offers]
+    return [_offer_command(offer, EpicTarget(project_slug, title), detail) for offer in offers]
 
 
 def milestone_commands(
-    offers: list[Offer], ref: str, detail: dict[str, Any] | None = None
+    offers: list[Offer], project_slug: str, title: str, detail: dict[str, Any] | None = None
 ) -> list[Command]:
-    return [_offer_command(offer, MilestoneTarget(ref), detail) for offer in offers]
+    return [_offer_command(offer, MilestoneTarget(project_slug, title), detail) for offer in offers]
 
 
 def tag_commands(

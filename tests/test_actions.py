@@ -38,6 +38,7 @@ from tt.domains.issue import schemas as issue_schemas
 from tt.domains.issue.actions import issue_actions as issue_group
 from tt.domains.milestone import Milestone
 from tt.domains.milestone import actions as milestone_actions
+from tt.domains.milestone import api as milestone_api
 from tt.domains.milestone import queries as milestone_queries
 from tt.domains.milestone import schemas as milestone_schemas
 from tt.domains.project import Project
@@ -64,6 +65,7 @@ from tt.platform.actions import (
     Runnable,
     decode,
 )
+from tt.platform.refs import NamedRef
 
 # --- run helpers ----------------------------------------------------------
 
@@ -93,19 +95,19 @@ def run_project[P: BaseModel](
 
 
 def run_epic[P: BaseModel](
-    engine: Engine, action: type[ObjectAction[Epic, P]], epic_ref: str, payload: P
+    engine: Engine, action: type[ObjectAction[Epic, P]], address: NamedRef, payload: P
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
-        obj = epic_queries.resolve_ref(tx, epic_ref)
+        obj = epic_queries.resolve_by_title(tx, address)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
 
 def run_milestone[P: BaseModel](
-    engine: Engine, action: type[ObjectAction[Milestone, P]], milestone_ref: str, payload: P
+    engine: Engine, action: type[ObjectAction[Milestone, P]], address: NamedRef, payload: P
 ) -> ActionResponse:
     with platform_db.transaction(engine) as tx:
-        obj = milestone_queries.resolve_ref(tx, milestone_ref)
+        obj = milestone_queries.resolve_by_title(tx, address)
         assert obj is not None
         return action.run(obj, payload, ActionDeps(tx))
 
@@ -616,14 +618,12 @@ def test_create_project_refuses_a_slug_over_the_length_cap(db: Engine) -> None:
 # --- epics -----------------------------------------------------------------
 
 
-def an_epic(engine: Engine, project_slug: str, title: str) -> str:
-    """Create an epic and return its ref, the address every public call now takes."""
+def an_epic(engine: Engine, project_slug: str, title: str) -> NamedRef:
+    """Create an epic and return its address — a title within a project, the address
+    every public call now takes."""
     response = project_api.project_action(engine, "addEpic", {"title": title}, project_slug)
     assert response.created_id is not None
-    with platform_db.reading(engine) as s:
-        epic = epic_queries.get_epic(s, response.created_id)
-        assert epic is not None
-        return epic.ref
+    return NamedRef(project_slug, title)
 
 
 def epic(*, issues: list[Issue] | None = None) -> Epic:
@@ -658,7 +658,7 @@ def test_add_epic_creates_an_epic_under_the_project(db: Engine) -> None:
         "tt",
         project_schemas.AddEpicPayload(title=" v1 ", body=None, due_date=date(2026, 9, 1)),
     )
-    assert response.message == "epic TT-1: created"
+    assert response.message == 'epic "v1": created'
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         made = epic_queries.get_epic(s, 1)
@@ -675,6 +675,15 @@ def test_add_epic_creates_an_epic_under_the_project(db: Engine) -> None:
             "tt",
             project_schemas.AddEpicPayload(title="  ", body=None, due_date=None),
         )
+
+
+def test_add_epic_refuses_a_title_a_live_sibling_holds(db: Engine) -> None:
+    # An epic is addressed by title within its project, so a title a live epic already
+    # holds is refused — the partial unique index read as a sentence.
+    a_project(db, "tt")
+    an_epic(db, "tt", "v1")
+    with pytest.raises(Conflict, match='an epic "v1" already exists'):
+        project_api.project_action(db, "addEpic", {"title": "v1"}, "tt")
 
 
 def _edit_epic(**over: Any) -> epic_schemas.EditEpicPayload:
@@ -698,18 +707,20 @@ def test_epic_edit_and_status_are_always_offered() -> None:
 
 def test_epic_edit_sets_every_field_and_refuses_a_blank_title(db: Engine) -> None:
     a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "old")
+    address = an_epic(db, "tt", "old")
     response = run_epic(
         db,
         epic_actions.EditEpic,
-        epic_ref,
+        address,
         _edit_epic(
             title=" done ", body="notes", status=EpicStatus.DONE, due_date=date(2026, 12, 1)
         ),
     )
-    assert response.message == "epic TT-1: saved"
+    assert response.message == 'epic "done": saved'
+    # The edit renames the epic, so it is addressed by its new title from here on.
+    renamed = NamedRef("tt", "done")
     with platform_db.reading(db) as s:
-        read = epic_queries.resolve_ref(s, epic_ref)
+        read = epic_queries.resolve_by_title(s, renamed)
     assert read is not None
     assert (read.title, read.body, read.status, read.due_date) == (
         "done",
@@ -719,25 +730,35 @@ def test_epic_edit_sets_every_field_and_refuses_a_blank_title(db: Engine) -> Non
     )
 
     with pytest.raises(Invalid):
-        run_epic(db, epic_actions.EditEpic, epic_ref, _edit_epic(title="   "))
+        run_epic(db, epic_actions.EditEpic, renamed, _edit_epic(title="   "))
+
+
+def test_epic_edit_refuses_a_title_a_live_sibling_holds(db: Engine) -> None:
+    # A rename onto a title another live epic already holds is refused, the same
+    # partial unique index the create reads.
+    a_project(db, "tt")
+    an_epic(db, "tt", "v1")
+    second = an_epic(db, "tt", "v2")
+    with pytest.raises(Conflict, match='an epic "v1" already exists'):
+        run_epic(db, epic_actions.EditEpic, second, _edit_epic(title="v1"))
 
 
 def test_epic_set_status_and_due_date_move(db: Engine) -> None:
     a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
+    address = an_epic(db, "tt", "v1")
     response = run_epic(
-        db, epic_actions.SetStatus, epic_ref, epic_schemas.SetStatusPayload(status=EpicStatus.DONE)
+        db, epic_actions.SetStatus, address, epic_schemas.SetStatusPayload(status=EpicStatus.DONE)
     )
-    assert response.message == "epic TT-1: done"
+    assert response.message == 'epic "v1": done'
 
     run_epic(
         db,
         epic_actions.SetDueDate,
-        epic_ref,
+        address,
         epic_schemas.SetDueDatePayload(due_date=date(2026, 9, 1)),
     )
     with platform_db.reading(db) as s:
-        read = epic_queries.resolve_ref(s, epic_ref)
+        read = epic_queries.resolve_by_title(s, address)
     assert read is not None
     assert read.status is EpicStatus.DONE
     assert read.due_date == date(2026, 9, 1)
@@ -750,21 +771,21 @@ def test_epic_delete_is_refused_while_it_holds_live_issues(db: Engine) -> None:
     assert epic_actions.Delete.availability(busy) == Refused("reassign or close 1 issue first")
 
     tt = a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
+    address = an_epic(db, "tt", "v1")
     made = an_issue(db, tt, "under the epic")
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref), made.ref)
+    issue_api.issue_action(db, "edit", _wire_edit(epic="v1"), made.ref)
     with pytest.raises(Conflict):
-        run_epic(db, epic_actions.Delete, epic_ref, Empty())
+        run_epic(db, epic_actions.Delete, address, Empty())
 
     # Clear the link, and the epic goes.
     issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.ref)
     with platform_db.reading(db) as s:
-        empty_epic = epic_queries.resolve_ref(s, epic_ref)
+        empty_epic = epic_queries.resolve_by_title(s, address)
     assert empty_epic is not None
     assert epic_actions.Delete.availability(empty_epic) == Runnable()
-    assert run_epic(db, epic_actions.Delete, epic_ref, Empty()).message == "epic TT-1: deleted"
+    assert run_epic(db, epic_actions.Delete, address, Empty()).message == 'epic "v1": deleted'
     with platform_db.reading(db) as s:
-        assert epic_queries.resolve_ref(s, epic_ref) is None
+        assert epic_queries.resolve_by_title(s, address) is None
 
 
 # --- an issue's epic link --------------------------------------------------
@@ -788,13 +809,13 @@ def _wire_edit(**over: Any) -> dict[str, Any]:
 
 def test_edit_assigns_and_clears_an_issues_epic(db: Engine) -> None:
     tt = a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
+    an_epic(db, "tt", "v1")
     made = an_issue(db, tt, "wire it")
 
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref), made.ref)
+    issue_api.issue_action(db, "edit", _wire_edit(epic="v1"), made.ref)
     detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
-    assert detail.epic == epic_ref
+    assert detail.epic == "v1"
 
     issue_api.issue_action(db, "edit", _wire_edit(epic=None), made.ref)
     cleared = issue_api.issue_get(db, made.ref)
@@ -802,78 +823,122 @@ def test_edit_assigns_and_clears_an_issues_epic(db: Engine) -> None:
     assert cleared.epic is None
 
 
-def test_edit_refuses_an_epic_from_another_project(db: Engine) -> None:
+def test_edit_refuses_an_epic_only_another_project_holds(db: Engine) -> None:
+    # An epic is resolved by title within the issue's own project, so a title only a
+    # different project carries does not resolve here — the resolution is project-scoped.
     tt = a_project(db, "tt")
     a_project(db, "web")
-    other_epic = an_epic(db, "web", "web v1")
+    an_epic(db, "web", "web only")
     made = an_issue(db, tt, "wire it")
-    with pytest.raises(Conflict, match="not in this project"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=other_epic), made.ref)
+    with pytest.raises(Conflict, match='no epic "web only"'):
+        issue_api.issue_action(db, "edit", _wire_edit(epic="web only"), made.ref)
 
 
 def test_edit_refuses_an_unknown_epic(db: Engine) -> None:
     tt = a_project(db, "tt")
     made = an_issue(db, tt, "wire it")
-    with pytest.raises(Conflict, match="no epic tt-999"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic="tt-999"), made.ref)
+    with pytest.raises(Conflict, match='no epic "ghost"'):
+        issue_api.issue_action(db, "edit", _wire_edit(epic="ghost"), made.ref)
 
 
-def test_epic_detail_refuses_an_unknown_ref(db: Engine) -> None:
-    with pytest.raises(Invalid):
-        epic_api.epic_detail(db, "tt-999")
+def test_epic_detail_refuses_an_unknown_title(db: Engine) -> None:
+    a_project(db, "tt")
+    with pytest.raises(Invalid, match="no epic"):
+        epic_api.epic_detail(db, "tt", "does-not-exist")
 
 
 # --- milestones ------------------------------------------------------------
 
 
-def a_milestone(engine: Engine, epic_ref: str, title: str) -> str:
-    """Create a milestone under the epic named by its ref, and return the milestone's
-    own ref."""
-    response = epic_api.epic_action(engine, "addMilestone", {"title": title}, epic_ref)
+def a_milestone(
+    engine: Engine, project_slug: str, title: str, epic_title: str | None = None
+) -> NamedRef:
+    """Create a milestone on the project — optionally filed under an epic by its title
+    — and return the milestone's address, a title within a project."""
+    response = project_api.project_action(
+        engine, "addMilestone", {"title": title, "epic": epic_title}, project_slug
+    )
     assert response.created_id is not None
-    with platform_db.reading(engine) as s:
-        milestone = milestone_queries.get_milestone(s, response.created_id)
-        assert milestone is not None
-        return milestone.ref
+    return NamedRef(project_slug, title)
 
 
 def milestone(*, issues: list[Issue] | None = None) -> Milestone:
-    return Milestone(id=1, epic_id=1, title="alpha", due_date=None, issues=list(issues or []))
+    return Milestone(id=1, project_id=1, title="alpha", due_date=None, issues=list(issues or []))
 
 
-def test_add_milestone_creates_one_under_the_epic(db: Engine) -> None:
+def test_add_milestone_creates_one_under_the_project(db: Engine) -> None:
+    # A milestone is project-level now, so its create hangs off the project; the epic
+    # it is filed under, if any, is an optional label named by title within the project.
     a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
-    response = run_epic(
+    an_epic(db, "tt", "v1")
+    response = run_project(
         db,
-        epic_actions.AddMilestone,
-        epic_ref,
-        epic_schemas.AddMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
+        project_actions.AddMilestone,
+        "tt",
+        project_schemas.AddMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1), epic="v1"),
     )
-    assert response.message == "milestone TT-1: created"
+    assert response.message == 'milestone "alpha": created'
     assert response.created_id == 1
     with platform_db.reading(db) as s:
         made = milestone_queries.get_milestone(s, 1)
     assert made is not None
     assert made.title == "alpha"  # trimmed
-    # Filed under the epic the ref names: the milestone's epic ref matches.
-    assert f"{made.project.slug}-{made.epic.number}" == epic_ref
+    # Filed under the epic the title names.
+    assert made.epic is not None
+    assert made.epic.title == "v1"
     assert made.due_date == date(2026, 9, 1)
 
     # A blank title is the object's refusal.
     with pytest.raises(Invalid):
-        run_epic(
+        run_project(
             db,
-            epic_actions.AddMilestone,
-            epic_ref,
-            epic_schemas.AddMilestonePayload(title="  ", due_date=None),
+            project_actions.AddMilestone,
+            "tt",
+            project_schemas.AddMilestonePayload(title="  ", due_date=None, epic=None),
         )
+
+
+def test_add_milestone_is_refused_while_the_project_is_archived(db: Engine) -> None:
+    archived = project(status=ProjectStatus.ARCHIVED)
+    assert project_actions.AddMilestone.availability(archived) == Refused("project is archived")
+    with pytest.raises(Conflict):
+        run_synthetic(
+            db,
+            project_actions.AddMilestone,
+            archived,
+            project_schemas.AddMilestonePayload(title="nope", due_date=None, epic=None),
+        )
+
+
+def test_add_milestone_files_under_an_epic_or_none(db: Engine) -> None:
+    # A milestone may carry an epic label or none; either reads back off the project.
+    a_project(db, "tt")
+    an_epic(db, "tt", "v1")
+    a_milestone(db, "tt", "unfiled")
+    a_milestone(db, "tt", "filed", epic_title="v1")
+    unfiled = milestone_api.milestone_get(db, "tt", "unfiled")
+    filed = milestone_api.milestone_get(db, "tt", "filed")
+    assert unfiled is not None and unfiled.epic is None
+    assert filed is not None and filed.epic == "v1"
+
+
+def test_add_milestone_refuses_a_title_a_live_sibling_holds(db: Engine) -> None:
+    a_project(db, "tt")
+    a_milestone(db, "tt", "alpha")
+    with pytest.raises(Conflict, match='a milestone "alpha" already exists'):
+        project_api.project_action(db, "addMilestone", {"title": "alpha"}, "tt")
+
+
+def test_add_milestone_refuses_an_unknown_epic(db: Engine) -> None:
+    a_project(db, "tt")
+    with pytest.raises(Conflict, match='no epic "ghost"'):
+        project_api.project_action(db, "addMilestone", {"title": "alpha", "epic": "ghost"}, "tt")
 
 
 def test_milestone_edit_and_set_due_date(db: Engine) -> None:
     a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
-    milestone_ref = a_milestone(db, epic_ref, "old")
+    a_milestone(db, "tt", "old")
+    address = NamedRef("tt", "old")
 
     seeded = milestone()
     assert milestone_actions.EditMilestone.availability(seeded) == Runnable()
@@ -882,12 +947,16 @@ def test_milestone_edit_and_set_due_date(db: Engine) -> None:
     response = run_milestone(
         db,
         milestone_actions.EditMilestone,
-        milestone_ref,
-        milestone_schemas.EditMilestonePayload(title=" alpha ", due_date=date(2026, 9, 1)),
+        address,
+        milestone_schemas.EditMilestonePayload(
+            title=" alpha ", due_date=date(2026, 9, 1), epic=None
+        ),
     )
-    assert response.message == "milestone TT-1: saved"
+    assert response.message == 'milestone "alpha": saved'
+    # The edit renames it, so it is addressed by its new title from here on.
+    renamed = NamedRef("tt", "alpha")
     with platform_db.reading(db) as s:
-        read = milestone_queries.resolve_ref(s, milestone_ref)
+        read = milestone_queries.resolve_by_title(s, renamed)
     assert read is not None
     assert read.title == "alpha"  # trimmed
     assert read.due_date == date(2026, 9, 1)
@@ -896,20 +965,72 @@ def test_milestone_edit_and_set_due_date(db: Engine) -> None:
         run_milestone(
             db,
             milestone_actions.EditMilestone,
-            milestone_ref,
-            milestone_schemas.EditMilestonePayload(title="   ", due_date=None),
+            renamed,
+            milestone_schemas.EditMilestonePayload(title="   ", due_date=None, epic=None),
         )
 
     run_milestone(
         db,
         milestone_actions.SetDueDate,
-        milestone_ref,
+        renamed,
         milestone_schemas.SetDueDatePayload(due_date=None),
     )
     with platform_db.reading(db) as s:
-        cleared = milestone_queries.resolve_ref(s, milestone_ref)
+        cleared = milestone_queries.resolve_by_title(s, renamed)
     assert cleared is not None
     assert cleared.due_date is None
+
+
+def test_milestone_edit_refuses_a_title_a_live_sibling_holds(db: Engine) -> None:
+    a_project(db, "tt")
+    a_milestone(db, "tt", "alpha")
+    second = a_milestone(db, "tt", "beta")
+    with pytest.raises(Conflict, match='a milestone "alpha" already exists'):
+        run_milestone(
+            db,
+            milestone_actions.EditMilestone,
+            second,
+            milestone_schemas.EditMilestonePayload(title="alpha", due_date=None, epic=None),
+        )
+
+
+def test_milestone_edit_sets_and_clears_its_epic(db: Engine) -> None:
+    # The whole-object milestone edit owns the optional epic label too: it can file
+    # the milestone under an epic by title and, given a blank, clear it back to none.
+    a_project(db, "tt")
+    an_epic(db, "tt", "v1")
+    a_milestone(db, "tt", "alpha")
+    address = NamedRef("tt", "alpha")
+
+    run_milestone(
+        db,
+        milestone_actions.EditMilestone,
+        address,
+        milestone_schemas.EditMilestonePayload(title="alpha", due_date=None, epic="v1"),
+    )
+    filed = milestone_api.milestone_get(db, "tt", "alpha")
+    assert filed is not None and filed.epic == "v1"
+
+    run_milestone(
+        db,
+        milestone_actions.EditMilestone,
+        address,
+        milestone_schemas.EditMilestonePayload(title="alpha", due_date=None, epic=None),
+    )
+    cleared = milestone_api.milestone_get(db, "tt", "alpha")
+    assert cleared is not None and cleared.epic is None
+
+
+def test_milestone_edit_refuses_an_unknown_epic(db: Engine) -> None:
+    a_project(db, "tt")
+    a_milestone(db, "tt", "alpha")
+    with pytest.raises(Conflict, match='no epic "ghost"'):
+        run_milestone(
+            db,
+            milestone_actions.EditMilestone,
+            NamedRef("tt", "alpha"),
+            milestone_schemas.EditMilestonePayload(title="alpha", due_date=None, epic="ghost"),
+        )
 
 
 def test_milestone_delete_is_refused_while_it_holds_live_issues(db: Engine) -> None:
@@ -917,82 +1038,92 @@ def test_milestone_delete_is_refused_while_it_holds_live_issues(db: Engine) -> N
     assert milestone_actions.Delete.availability(busy) == Refused("reassign or close 1 issue first")
 
     tt = a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
-    milestone_ref = a_milestone(db, epic_ref, "alpha")
+    address = a_milestone(db, "tt", "alpha")
     made = an_issue(db, tt, "under the milestone")
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone=milestone_ref), made.ref)
+    issue_api.issue_action(db, "edit", _wire_edit(milestone="alpha"), made.ref)
     with pytest.raises(Conflict):
-        run_milestone(db, milestone_actions.Delete, milestone_ref, Empty())
+        run_milestone(db, milestone_actions.Delete, address, Empty())
 
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone=None), made.ref)
+    issue_api.issue_action(db, "edit", _wire_edit(milestone=None), made.ref)
     with platform_db.reading(db) as s:
-        empty_milestone = milestone_queries.resolve_ref(s, milestone_ref)
+        empty_milestone = milestone_queries.resolve_by_title(s, address)
     assert empty_milestone is not None
     assert milestone_actions.Delete.availability(empty_milestone) == Runnable()
-    assert run_milestone(db, milestone_actions.Delete, milestone_ref, Empty()).message == (
-        "milestone TT-1: deleted"
+    assert run_milestone(db, milestone_actions.Delete, address, Empty()).message == (
+        'milestone "alpha": deleted'
     )
 
 
 # --- an issue's milestone link ---------------------------------------------
 
 
-def test_edit_assigns_a_milestone_within_the_issues_epic(db: Engine) -> None:
+def test_edit_assigns_an_epic_and_milestone_independently(db: Engine) -> None:
+    # An issue carries an epic and a milestone as two independent links, each resolved
+    # by title within the issue's project.
     tt = a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
-    milestone_ref = a_milestone(db, epic_ref, "alpha")
+    an_epic(db, "tt", "v1")
+    a_milestone(db, "tt", "alpha")
     made = an_issue(db, tt, "wire it")
 
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone=milestone_ref), made.ref)
+    issue_api.issue_action(db, "edit", _wire_edit(epic="v1", milestone="alpha"), made.ref)
     detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
-    assert (detail.epic, detail.milestone) == (epic_ref, milestone_ref)
+    assert (detail.epic, detail.milestone) == ("v1", "alpha")
 
 
-def test_edit_refuses_a_milestone_from_another_epic(db: Engine) -> None:
-    # The key invariant: an issue's milestone must belong to the issue's epic.
+def test_edit_files_a_milestone_from_any_epic_in_the_project(db: Engine) -> None:
+    # The old "milestone must match the issue's epic" rule is gone: a milestone need
+    # only be in the issue's project, whatever epic it is itself filed under.
     tt = a_project(db, "tt")
-    epic_a = an_epic(db, "tt", "v1")
-    epic_b = an_epic(db, "tt", "v2")
-    milestone_b = a_milestone(db, epic_b, "beta")
+    an_epic(db, "tt", "v1")
+    an_epic(db, "tt", "v2")
+    a_milestone(db, "tt", "beta", epic_title="v2")  # the milestone sits under v2
     made = an_issue(db, tt, "wire it")
-    with pytest.raises(Conflict, match="not in this epic"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_b), made.ref)
 
-
-def test_edit_refuses_a_milestone_when_the_issue_has_no_epic(db: Engine) -> None:
-    tt = a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
-    milestone_ref = a_milestone(db, epic_ref, "alpha")
-    made = an_issue(db, tt, "wire it")
-    with pytest.raises(Conflict, match="not in this epic"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=None, milestone=milestone_ref), made.ref)
-
-
-def test_changing_the_epic_clears_a_now_stale_milestone(db: Engine) -> None:
-    # Moving the issue to a different epic drops the milestone the old epic held
-    # rather than blocking the move — the stale link is cleared, not refused.
-    tt = a_project(db, "tt")
-    epic_a = an_epic(db, "tt", "v1")
-    epic_b = an_epic(db, "tt", "v2")
-    milestone_a = a_milestone(db, epic_a, "alpha")
-    made = an_issue(db, tt, "wire it")
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_a, milestone=milestone_a), made.ref)
-
-    # Re-submit with the epic changed to B and the stale milestone still named.
-    issue_api.issue_action(db, "edit", _wire_edit(epic=epic_b, milestone=milestone_a), made.ref)
+    # The issue is under epic v1 yet takes milestone beta (which is under v2).
+    issue_api.issue_action(db, "edit", _wire_edit(epic="v1", milestone="beta"), made.ref)
     detail = issue_api.issue_get(db, made.ref)
     assert detail is not None
-    assert detail.epic == epic_b
-    assert detail.milestone is None
+    assert (detail.epic, detail.milestone) == ("v1", "beta")
+
+
+def test_edit_assigns_a_milestone_when_the_issue_has_no_epic(db: Engine) -> None:
+    # A milestone is project-level, so it can be set on an issue that carries no epic.
+    tt = a_project(db, "tt")
+    a_milestone(db, "tt", "alpha")
+    made = an_issue(db, tt, "wire it")
+
+    issue_api.issue_action(db, "edit", _wire_edit(epic=None, milestone="alpha"), made.ref)
+    detail = issue_api.issue_get(db, made.ref)
+    assert detail is not None
+    assert detail.epic is None
+    assert detail.milestone == "alpha"
+
+
+def test_changing_the_epic_leaves_the_milestone_intact(db: Engine) -> None:
+    # Epic and milestone are independent, so moving the issue to a different epic no
+    # longer clears its milestone.
+    tt = a_project(db, "tt")
+    an_epic(db, "tt", "v1")
+    an_epic(db, "tt", "v2")
+    a_milestone(db, "tt", "alpha")
+    made = an_issue(db, tt, "wire it")
+    issue_api.issue_action(db, "edit", _wire_edit(epic="v1", milestone="alpha"), made.ref)
+
+    # Re-submit with the epic changed to v2 and the milestone still named.
+    issue_api.issue_action(db, "edit", _wire_edit(epic="v2", milestone="alpha"), made.ref)
+    detail = issue_api.issue_get(db, made.ref)
+    assert detail is not None
+    assert detail.epic == "v2"
+    assert detail.milestone == "alpha"
 
 
 def test_edit_refuses_an_unknown_milestone(db: Engine) -> None:
     tt = a_project(db, "tt")
-    epic_ref = an_epic(db, "tt", "v1")
+    an_epic(db, "tt", "v1")
     made = an_issue(db, tt, "wire it")
-    with pytest.raises(Conflict, match="no milestone tt-999"):
-        issue_api.issue_action(db, "edit", _wire_edit(epic=epic_ref, milestone="tt-999"), made.ref)
+    with pytest.raises(Conflict, match='no milestone "ghost"'):
+        issue_api.issue_action(db, "edit", _wire_edit(epic="v1", milestone="ghost"), made.ref)
 
 
 # --- tags ------------------------------------------------------------------
@@ -1389,6 +1520,7 @@ def test_offers_keep_refused_actions_and_drop_absent_ones() -> None:
         ("setPath", Runnable()),
         ("addIssue", Runnable()),
         ("addEpic", Runnable()),
+        ("addMilestone", Runnable()),
     ]
 
 

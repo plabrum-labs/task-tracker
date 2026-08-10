@@ -51,7 +51,7 @@ from tt.domains.tag import api as tag_api
 from tt.domains.tag.schemas import TagListItem
 from tt.platform import actions
 from tt.platform.actions import REFUSALS, Enum, Field, Invalid, Offer, Refused, Runnable
-from tt.platform.refs import parse_ref
+from tt.platform.refs import NamedRef
 
 # A refusal is the object's answer, not a usage error, so it is neither Click's 2
 # nor a success. 123 is what the Rust and OCaml spikes both return for the same
@@ -103,12 +103,13 @@ def _issue_line(i: IssueListItem) -> str:
 
 def _epic_line(e: EpicListItem) -> str:
     due = e.due_date.isoformat() if e.due_date is not None else "—"
-    return f"{e.ref:<10} {e.status:<8} {due:<12} {_progress(e.counts):<8} {e.title}"
+    return f"{e.status:<8} {due:<12} {_progress(e.counts):<8} {e.title}"
 
 
 def _milestone_line(m: MilestoneListItem) -> str:
     due = m.due_date.isoformat() if m.due_date is not None else "—"
-    return f"{m.ref:<10} epic {m.epic:<10} {due:<12} {_progress(m.counts):<8} {m.title}"
+    epic = m.epic if m.epic is not None else "—"
+    return f"{due:<12} {_progress(m.counts):<8} epic {epic:<20} {m.title}"
 
 
 def _tag_line(t: TagListItem) -> str:
@@ -169,12 +170,16 @@ def _issue_write(engine: Engine, ref: Any, key: str, payload: dict[str, Any]) ->
     return issue_api.issue_action(engine, key, payload, ref).message
 
 
-def _epic_write(engine: Engine, ref: Any, key: str, payload: dict[str, Any]) -> str:
-    return epic_api.epic_action(engine, key, payload, ref).message
+def _epic_write(engine: Engine, address: Any, key: str, payload: dict[str, Any]) -> str:
+    assert isinstance(address, NamedRef)
+    return epic_api.epic_action(engine, key, payload, address.project_slug, address.title).message
 
 
-def _milestone_write(engine: Engine, ref: Any, key: str, payload: dict[str, Any]) -> str:
-    return milestone_api.milestone_action(engine, key, payload, ref).message
+def _milestone_write(engine: Engine, address: Any, key: str, payload: dict[str, Any]) -> str:
+    assert isinstance(address, NamedRef)
+    return milestone_api.milestone_action(
+        engine, key, payload, address.project_slug, address.title
+    ).message
 
 
 def _tag_write(engine: Engine, tag_id: Any, key: str, payload: dict[str, Any]) -> str:
@@ -240,23 +245,22 @@ def _parse_sort(raw: str | None) -> IssueSort:
     return IssueSort(field=field, direction=direction)
 
 
-def _epic_id(engine: Engine, project_slug: str, ref: str) -> int:
-    """The id of the epic a ref names within the project, or a refusal. The ref
-    carries its own project's slug, so one from another project is no epic here."""
-    epic = epic_api.epic_get(engine, ref)
-    if epic is None or epic.project != project_slug:
-        raise Invalid(f"no epic {ref} in project {project_slug!r}")
+def _epic_id(engine: Engine, project_slug: str, title: str) -> int:
+    """The id of the epic a title names within the project, or a refusal. An epic is
+    addressed by its title within a project, so the lookup is scoped to it."""
+    epic = epic_api.epic_get(engine, project_slug, title)
+    if epic is None:
+        raise Invalid(f'no epic "{title}" in project {project_slug!r}')
     return epic.id
 
 
-def _milestone_id(engine: Engine, project_slug: str, ref: str) -> int:
-    """The id of the milestone a ref names within the project, or a refusal. A
-    milestone's ref is ``<project slug>-<number>`` like an epic's, so its slug is
-    what places it in the project."""
-    milestone = milestone_api.milestone_get(engine, ref)
-    parsed = parse_ref(ref)
-    if milestone is None or parsed is None or parsed[0] != project_slug:
-        raise Invalid(f"no milestone {ref} in project {project_slug!r}")
+def _milestone_id(engine: Engine, project_slug: str, title: str) -> int:
+    """The id of the milestone a title names within the project, or a refusal. A
+    milestone is addressed by its title within a project, so the lookup is scoped to
+    it."""
+    milestone = milestone_api.milestone_get(engine, project_slug, title)
+    if milestone is None:
+        raise Invalid(f'no milestone "{title}" in project {project_slug!r}')
     return milestone.id
 
 
@@ -316,39 +320,38 @@ def _project_show(engine: Engine, slug: str) -> str:
     return _pretty({"project": detail.model_dump(mode="json"), "actions": actions})
 
 
-def _epic_show(engine: Engine, ref: str) -> str:
-    detail, offers = epic_api.epic_detail(engine, ref)
+def _epic_show(engine: Engine, project_slug: str, title: str) -> str:
+    detail, offers = epic_api.epic_detail(engine, project_slug, title)
     actions = [_offer_json(offer) for offer in offers]
     return _pretty({"epic": detail.model_dump(mode="json"), "actions": actions})
 
 
-def _epic_ids(engine: Engine) -> list[int]:
-    """Every live epic id across every live project — what a milestone list with no
-    epic named ranges over. Ids, not refs: they feed ``milestone_list``, which reads
-    by the epic's own id rather than resolving a ref per epic."""
-    return [
-        epic.id
-        for project in project_api.project_list(engine)
-        for epic in epic_api.epic_list(engine, project.slug)
-    ]
-
-
-def _milestone_ls(engine: Engine, epic_ref: str | None, as_json: bool) -> str:
-    if epic_ref is not None:
-        epic = epic_api.epic_get(engine, epic_ref)
-        if epic is None:
-            raise Invalid(f"no epic {epic_ref}")
-        epic_ids = [epic.id]
+def _milestone_ls(
+    engine: Engine, project_slug: str | None, epic_title: str | None, as_json: bool
+) -> str:
+    if project_slug is not None:
+        project_slug = project_slug.upper()
+        if project_api.project_get(engine, project_slug) is None:
+            raise Invalid(f"no project {project_slug!r}")
+        epic_id = _epic_id(engine, project_slug, epic_title) if epic_title is not None else None
+        items = milestone_api.milestone_list(engine, project_slug, epic_id)
     else:
-        epic_ids = _epic_ids(engine)
-    items = [m for eid in epic_ids for m in milestone_api.milestone_list(engine, eid)]
+        # A milestone is project-scoped, so filtering by an epic only makes sense once
+        # a project is named; with none, every project's milestones are listed.
+        if epic_title is not None:
+            raise typer.BadParameter("--epic needs --project")
+        items = [
+            m
+            for project in project_api.project_list(engine)
+            for m in milestone_api.milestone_list(engine, project.slug)
+        ]
     if as_json:
         return _pretty([item.model_dump(mode="json") for item in items])
     return "\n".join(_milestone_line(m) for m in items)
 
 
-def _milestone_show(engine: Engine, ref: str) -> str:
-    detail, offers = milestone_api.milestone_detail(engine, ref)
+def _milestone_show(engine: Engine, project_slug: str, title: str) -> str:
+    detail, offers = milestone_api.milestone_detail(engine, project_slug, title)
     actions = [_offer_json(offer) for offer in offers]
     return _pretty({"milestone": detail.model_dump(mode="json"), "actions": actions})
 
@@ -502,6 +505,61 @@ def _register_generated(
     for key, fields in keys:
         command = _generated(key, fields, address_name, address_type, address_help, write)
         sub_app.command(key)(command)
+
+
+def _named_generated(
+    key: str, fields: list[Field], address_help: str, write: Writer
+) -> Callable[..., None]:
+    """One command per action for a row addressed by title within a project — an epic
+    or a milestone. The address is a ``--project`` option and a title argument the
+    writer resolves together; a named row carries no ``<slug>-<number>`` ref, so it
+    is not the single positional a project or an issue takes."""
+    name_annotation = Annotated[str, typer.Argument(help=address_help)]
+    project_annotation = Annotated[str, typer.Option("--project", help="The project it is in.")]
+
+    def impl(**kwargs: Any) -> None:
+        def outcome() -> str:
+            payload = _payload_of(fields, kwargs)
+            engine = _engine(kwargs["ctx"])
+            return write(engine, NamedRef(kwargs["project"], kwargs["name"]), key, payload)
+
+        _report(outcome)
+
+    parameters = [
+        inspect.Parameter("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context),
+        inspect.Parameter(
+            "name", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=name_annotation
+        ),
+        inspect.Parameter("project", inspect.Parameter.KEYWORD_ONLY, annotation=project_annotation),
+    ]
+    annotations: dict[str, Any] = {
+        "ctx": typer.Context,
+        "name": name_annotation,
+        "project": project_annotation,
+    }
+    for field in fields:
+        annotation = _option_annotation(field)
+        parameters.append(
+            inspect.Parameter(
+                field.name,
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=annotation,
+                default=inspect.Parameter.empty if field.required else None,
+            )
+        )
+        annotations[field.name] = annotation
+
+    impl.__signature__ = inspect.Signature(parameters)  # pyright: ignore[reportFunctionMemberAccess]
+    impl.__annotations__ = annotations
+    impl.__name__ = key
+    return impl
+
+
+def _register_named_generated(
+    sub_app: typer.Typer, keys: list[tuple[str, list[Field]]], address_help: str, write: Writer
+) -> None:
+    for key, fields in keys:
+        sub_app.command(key)(_named_generated(key, fields, address_help, write))
 
 
 # --- the runtime edge -----------------------------------------------------
@@ -677,13 +735,13 @@ def _issue_ls_command(
     tag: Annotated[str | None, typer.Option("--tag", help="Only issues wearing this tag.")] = None,
     epic: Annotated[
         str | None,
-        typer.Option("--epic", help="Only this epic's issues, by ref e.g. eng-3. Needs --project."),
+        typer.Option("--epic", help="Only this epic's issues, by title. Needs --project."),
     ] = None,
     milestone: Annotated[
         str | None,
         typer.Option(
             "--milestone",
-            help="Only this milestone's issues, by ref e.g. eng-5. Needs --project.",
+            help="Only this milestone's issues, by title. Needs --project.",
         ),
     ] = None,
     sort: Annotated[
@@ -736,50 +794,56 @@ def _epic_ls_command(
 @epic_app.command("show", help="Print an epic and what it offers.")
 def _epic_show_command(
     ctx: typer.Context,
-    ref: Annotated[str, typer.Argument(help="The epic's ref, e.g. ENG-3.")],
+    name: Annotated[str, typer.Argument(help="The epic's title.")],
+    project: Annotated[str, typer.Option("--project", help="The project it is in.")],
 ) -> None:
-    _report(lambda: _epic_show(_engine(ctx), ref))
+    _report(lambda: _epic_show(_engine(ctx), project, name))
 
 
 @epic_app.command("action", help="Run an action by key, passing its arguments as JSON.")
 def _epic_action_command(
     ctx: typer.Context,
-    ref: Annotated[str, typer.Argument(help="The epic's ref, e.g. ENG-3.")],
+    name: Annotated[str, typer.Argument(help="The epic's title.")],
     key: Annotated[str, typer.Argument(help=_KEY_HELP)],
+    project: Annotated[str, typer.Option("--project", help="The project it is in.")],
     payload: Annotated[str, typer.Argument(help=_JSON_HELP)] = "{}",
 ) -> None:
-    _report(lambda: _epic_write(_engine(ctx), ref, key, _blob(payload)))
+    _report(lambda: _epic_write(_engine(ctx), NamedRef(project, name), key, _blob(payload)))
 
 
 @milestone_app.command("ls", help="List live milestones.")
 def _milestone_ls_command(
     ctx: typer.Context,
+    project: Annotated[str | None, typer.Option("--project", help="Only this project.")] = None,
     epic: Annotated[
-        str | None, typer.Option("--epic", help="Only this epic's milestones, by ref e.g. ENG-3.")
+        str | None,
+        typer.Option("--epic", help="Only this epic's milestones, by title. Needs --project."),
     ] = None,
     as_json: Annotated[
         bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
     ] = False,
 ) -> None:
-    _report(lambda: _milestone_ls(_engine(ctx), epic, as_json))
+    _report(lambda: _milestone_ls(_engine(ctx), project, epic, as_json))
 
 
 @milestone_app.command("show", help="Print a milestone and what it offers.")
 def _milestone_show_command(
     ctx: typer.Context,
-    ref: Annotated[str, typer.Argument(help="The milestone's ref, e.g. ENG-5.")],
+    name: Annotated[str, typer.Argument(help="The milestone's title.")],
+    project: Annotated[str, typer.Option("--project", help="The project it is in.")],
 ) -> None:
-    _report(lambda: _milestone_show(_engine(ctx), ref))
+    _report(lambda: _milestone_show(_engine(ctx), project, name))
 
 
 @milestone_app.command("action", help="Run an action by key, passing its arguments as JSON.")
 def _milestone_action_command(
     ctx: typer.Context,
-    ref: Annotated[str, typer.Argument(help="The milestone's ref, e.g. ENG-5.")],
+    name: Annotated[str, typer.Argument(help="The milestone's title.")],
     key: Annotated[str, typer.Argument(help=_KEY_HELP)],
+    project: Annotated[str, typer.Option("--project", help="The project it is in.")],
     payload: Annotated[str, typer.Argument(help=_JSON_HELP)] = "{}",
 ) -> None:
-    _report(lambda: _milestone_write(_engine(ctx), ref, key, _blob(payload)))
+    _report(lambda: _milestone_write(_engine(ctx), NamedRef(project, name), key, _blob(payload)))
 
 
 @tag_app.command("ls", help="List live tags.")
@@ -842,20 +906,16 @@ _register_generated(
     "The issue's ref, e.g. ENG-12.",
     _issue_write,
 )
-_register_generated(
+_register_named_generated(
     epic_app,
     epic_api.action_schemas(),
-    "ref",
-    str,
-    "The epic's ref, e.g. ENG-3.",
+    "The epic's title.",
     _epic_write,
 )
-_register_generated(
+_register_named_generated(
     milestone_app,
     milestone_api.action_schemas(),
-    "ref",
-    str,
-    "The milestone's ref, e.g. ENG-5.",
+    "The milestone's title.",
     _milestone_write,
 )
 _register_generated(

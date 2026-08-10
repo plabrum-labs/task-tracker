@@ -72,10 +72,10 @@ def dispatch(engine: Engine, target: Target, key: str, payload: dict[str, Any]) 
             return project_api.project_action(engine, key, payload, slug).message
         case CommentTarget(comment_id=comment_id):
             return comment_api.comment_action(engine, key, payload, comment_id).message
-        case EpicTarget(ref=ref):
-            return epic_api.epic_action(engine, key, payload, ref).message
-        case MilestoneTarget(ref=ref):
-            return milestone_api.milestone_action(engine, key, payload, ref).message
+        case EpicTarget(project_slug=project_slug, title=title):
+            return epic_api.epic_action(engine, key, payload, project_slug, title).message
+        case MilestoneTarget(project_slug=project_slug, title=title):
+            return milestone_api.milestone_action(engine, key, payload, project_slug, title).message
         case TagTarget(tag_id=tag_id):
             return tag_api.tag_action(engine, key, payload, tag_id).message
         case RootTarget():

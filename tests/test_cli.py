@@ -77,6 +77,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "setPath",
         "addIssue",
         "addEpic",
+        "addMilestone",
     ]
     assert _names(cli.epic_app) == [
         "ls",
@@ -85,7 +86,6 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
         "edit",
         "setStatus",
         "setDueDate",
-        "addMilestone",
         "delete",
     ]
     assert _names(cli.milestone_app) == [
@@ -413,10 +413,11 @@ def test_an_unknown_object_or_malformed_json_is_invalid_rather_than_a_crash(data
 
 
 def test_issue_ls_epic_and_milestone_filters_need_a_project(database: str) -> None:
-    # A project-scoped ref has nowhere to resolve without a project, so pairing one
-    # with no ``--project`` is a usage error, not a refusal from a live row.
-    assert invoke(database, "issue", "ls", "--epic", "tt-1").exit_code == USAGE
-    assert invoke(database, "issue", "ls", "--milestone", "tt-1").exit_code == USAGE
+    # An epic or milestone title is project-scoped, so it has nowhere to resolve
+    # without a project; pairing one with no ``--project`` is a usage error, not a
+    # refusal from a live row.
+    assert invoke(database, "issue", "ls", "--epic", "v1").exit_code == USAGE
+    assert invoke(database, "issue", "ls", "--milestone", "alpha").exit_code == USAGE
 
 
 def test_issue_ls_rejects_an_unknown_sort_as_a_usage_error(database: str) -> None:
@@ -427,14 +428,16 @@ def test_issue_ls_rejects_an_unknown_sort_as_a_usage_error(database: str) -> Non
 
 
 def test_issue_ls_unknown_or_foreign_epic_is_a_refusal(database: str) -> None:
-    # An epic that names no row, and one that lives in another project, are both the
-    # object answer "no such epic here" (123), distinct from a malformed invocation.
-    assert invoke(database, "issue", "ls", "--project", "tt", "--epic", "tt-99").exit_code == (
+    # An epic title that names no row, and one that only another project holds, are
+    # both the object answer "no such epic here" (123) — resolution is scoped to the
+    # named project — distinct from a malformed invocation.
+    assert invoke(database, "issue", "ls", "--project", "tt", "--epic", "ghost").exit_code == (
         cli.REFUSED
     )
     invoke(database, "project", "action", "createProject", '{"slug":"web","title":"Web"}')
     invoke(database, "project", "action", "addEpic", '{"title":"v1"}', "--slug", "web")
-    foreign = invoke(database, "issue", "ls", "--project", "tt", "--epic", "web-1")
+    # "v1" is a live epic in web, but not in tt, so from tt it does not resolve.
+    foreign = invoke(database, "issue", "ls", "--project", "tt", "--epic", "v1")
     assert foreign.exit_code == cli.REFUSED
 
 

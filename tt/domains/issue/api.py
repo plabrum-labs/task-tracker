@@ -22,13 +22,6 @@ from tt.platform.db import with_transaction
 # --- reads ----------------------------------------------------------------
 
 
-def _link_ref(issue: Issue, number: int | None) -> str | None:
-    """The ref of a row the issue links — its epic or milestone. Both live in the
-    issue's project, so the ref is the issue's own slug and the linked row's
-    project-scoped number, built without loading the linked row's project."""
-    return f"{issue.project.slug}-{number}" if number is not None else None
-
-
 def _dep_refs(issue: Issue, linked: list[Issue]) -> list[str]:
     """The refs of the live issues on one end of the dependency graph, sorted by their
     project-scoped number. A dependency is same-project, so the ref is the issue's own
@@ -53,8 +46,8 @@ def _list_item(issue: Issue) -> schemas.IssueListItem:
         status=name_of(issue.status),
         priority=name_of(issue.priority),
         due_date=issue.due_date,
-        epic=_link_ref(issue, issue.epic.number if issue.epic is not None else None),
-        milestone=_link_ref(issue, issue.milestone.number if issue.milestone is not None else None),
+        epic=issue.epic.title if issue.epic is not None else None,
+        milestone=issue.milestone.title if issue.milestone is not None else None,
         tags=sorted(tag.name for tag in issue.tags),
         waiting=_waiting(issue),
     )
@@ -70,8 +63,8 @@ def _detail(issue: Issue) -> schemas.IssueDetail:
         status=name_of(issue.status),
         priority=name_of(issue.priority),
         due_date=issue.due_date,
-        epic=_link_ref(issue, issue.epic.number if issue.epic is not None else None),
-        milestone=_link_ref(issue, issue.milestone.number if issue.milestone is not None else None),
+        epic=issue.epic.title if issue.epic is not None else None,
+        milestone=issue.milestone.title if issue.milestone is not None else None,
         tags=sorted(tag.name for tag in issue.tags),
         comments=[
             CommentView(

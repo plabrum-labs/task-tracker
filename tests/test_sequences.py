@@ -1,10 +1,12 @@
 """The per-project counter ``next_number`` draws from.
 
 Numbers start at 1 and rise by one; each ``(project, type)`` keeps its own count,
-so two projects both start at 1 and issues and epics in one project do not share a
-run. The counter is exercised against a real in-memory SQLite engine, through the
-same ``StaticPool`` connection the domain tests use, so the ``RETURNING`` bump is
-the real SQL edge and not a stand-in.
+so two projects both start at 1 and two type strings in one project do not share a
+run. Only issues draw a number today, but the counter keys on an arbitrary type, so
+the independence case exercises that keying with a second type string directly. The
+counter is exercised against a real in-memory SQLite engine, through the same
+``StaticPool`` connection the domain tests use, so the ``RETURNING`` bump is the
+real SQL edge and not a stand-in.
 """
 
 from sqlalchemy import Engine
@@ -23,13 +25,15 @@ def test_a_sequence_starts_at_one_and_rises_by_one(db: Engine) -> None:
 
 
 def test_each_type_counts_independently(db: Engine) -> None:
+    # The domains only ever draw the "issue" type, but the counter keys on
+    # ``(project, type)``, so a second type string in the same project is its own run.
     project = a_project(db, "ENG")
     with platform_db.transaction(db) as tx:
         assert next_number(tx, project.id, "issue") == 1
         assert next_number(tx, project.id, "issue") == 2
-        # A different type in the same project is its own run, starting fresh.
-        assert next_number(tx, project.id, "epic") == 1
-        assert next_number(tx, project.id, "milestone") == 1
+        # A different type in the same project starts fresh at 1.
+        assert next_number(tx, project.id, "other") == 1
+        assert next_number(tx, project.id, "other") == 2
 
 
 def test_each_project_counts_independently(db: Engine) -> None:

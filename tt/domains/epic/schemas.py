@@ -6,7 +6,10 @@ each with ``extra="forbid"`` and a ``description`` per field. The whole-object
 edit carries ``status`` and ``due_date`` too; the focused ``setStatus`` and
 ``setDueDate`` are the one-field verbs a frontend binds to a key. ``AddEpicPayload``
 is a project's, in ``../project/schemas.py``, because ``addEpic`` hangs off a
-project.
+project — and so is ``AddMilestonePayload``, since a milestone is project-level.
+
+An epic is addressed by its title within a project, not by a ref, so the read
+shapes carry ``project`` and ``title`` and no ``ref``.
 """
 
 from datetime import date, datetime
@@ -44,18 +47,8 @@ class SetDueDatePayload(BaseModel):
     )
 
 
-class AddMilestonePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: str = Field(description="What to call the milestone.")
-    due_date: date | None = Field(
-        default=None, description="When the milestone is due, as YYYY-MM-DD."
-    )
-
-
 class EpicListItem(BaseModel):
     id: int
-    ref: str
     project: str
     title: str
     status: str
@@ -65,7 +58,6 @@ class EpicListItem(BaseModel):
 
 class EpicDetail(BaseModel):
     id: int
-    ref: str
     project: str
     title: str
     body: str

@@ -6,6 +6,9 @@ stored: the counts read straight off the loaded issues the way a project's do, s
 a hook that reads them runs after the session is gone and anything it reads has to
 be on the object. ``due_date`` is the optional deadline the whole-object edit and
 the focused ``setDueDate`` both carry.
+
+An epic is addressed by its ``title`` within its project, not by a ref, so the
+title is unique among a project's live epics — the partial index below.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, Index, Text, UniqueConstraint, text
+from sqlalchemy import Date, ForeignKey, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tt.domains.epic.enums import Status
@@ -35,17 +38,20 @@ class Epic(IssueContainer, BaseDBModel):
             "status",
             sqlite_where=text("deleted_at IS NULL"),
         ),
-        # Permanent and never reissued, so unique over deleted rows too — see the
-        # note on ``Issue``.
-        UniqueConstraint("project_id", "number", name="uq_epics_project_number"),
+        # An epic is addressed by title within its project, so the title is unique
+        # among a project's live epics; a deleted title is free to reuse.
+        Index(
+            "epics_title_live",
+            "project_id",
+            "title",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
     )
 
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # The project-scoped sequence number, drawn at creation. An epic is addressed
-    # and shown as ``<project slug>-<number>`` — the ``ref`` below.
-    number: Mapped[int] = mapped_column()
     title: Mapped[str] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[Status] = mapped_column(TextEnum(Status))
@@ -54,11 +60,5 @@ class Epic(IssueContainer, BaseDBModel):
     project: Mapped[Project] = relationship(lazy="raise")
     issues: Mapped[list[Issue]] = relationship(back_populates="epic", lazy="raise")
 
-    @property
-    def ref(self) -> str:
-        """How the epic is addressed and shown: its project's slug and its
-        project-scoped number, ``ENG-3``. Reads the eagerly-loaded project."""
-        return f"{self.project.slug}-{self.number}"
-
     def subject(self) -> str:
-        return f"epic {self.ref}"
+        return f'epic "{self.title}"'

@@ -1,9 +1,10 @@
 """The per-project counter table a business sequence is drawn from.
 
 A ``Sequence`` is one monotonic counter, keyed by the project it counts within and
-a string ``type`` — ``"issue"``, ``"epic"``, ``"milestone"``. The domains never
-key on anything but their own type name, so this platform table stays string-keyed
-and names no domain value, the same split snacks' ``business_sequences`` draws.
+a string ``type`` — only ``"issue"`` today, since an epic and a milestone are
+addressed by title rather than a project-scoped number. The domains never key on
+anything but their own type name, so this platform table stays string-keyed and
+names no domain value, the same split snacks' ``business_sequences`` draws.
 
 The counter is bookkeeping, not a soft-deletable row: it inherits the shared
 columns like every table, but nothing ever stamps its ``deleted_at``. One row per

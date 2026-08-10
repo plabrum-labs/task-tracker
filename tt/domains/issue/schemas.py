@@ -56,12 +56,11 @@ class EditIssuePayload(BaseModel):
         description="When the issue is due, as YYYY-MM-DD. Blank clears it."
     )
     epic: Annotated[str | None, REFERENCE] = Field(
-        description="The ref of the epic this issue belongs to, e.g. ENG-3. Blank clears it."
+        description='The title of the epic this issue belongs to, e.g. "Payments". Blank clears it.'
     )
     milestone: Annotated[str | None, REFERENCE] = Field(
         description=(
-            "The ref of the milestone this issue belongs to, within its epic, e.g. ENG-5. "
-            "Blank clears it."
+            'The title of the milestone this issue belongs to, e.g. "Beta launch". Blank clears it.'
         )
     )
 

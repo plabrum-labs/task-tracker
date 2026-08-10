@@ -30,7 +30,7 @@ def _item(
     return IssueListItem(
         id=issue_id,
         ref=f"tt-{issue_id}",
-        project="tt",
+        project="TT",
         title=f"issue {issue_id}",
         status=status,
         priority=priority,
@@ -88,14 +88,14 @@ def test_group_tree_files_the_issues_under_each_dimension() -> None:
         (
             "epic, in the order the epics first appear, unfiled issues trailing",
             "epic",
-            [_item(1, epic="tt-9"), _item(2), _item(3, epic="tt-4"), _item(4, epic="tt-9")],
-            [("tt-9", [1, 4]), ("tt-4", [3]), ("(no epic)", [2])],
+            [_item(1, epic="auth"), _item(2), _item(3, epic="billing"), _item(4, epic="auth")],
+            [("auth", [1, 4]), ("billing", [3]), ("(no epic)", [2])],
         ),
         (
             "milestone",
             "milestone",
-            [_item(1, milestone="tt-5", epic="tt-4"), _item(2, epic="tt-4")],
-            [("tt-5", [1]), ("(no milestone)", [2])],
+            [_item(1, milestone="beta", epic="billing"), _item(2, epic="billing")],
+            [("beta", [1]), ("(no milestone)", [2])],
         ),
         (
             "tag, with an issue wearing two filed under both",
@@ -133,7 +133,7 @@ def test_group_tree_files_the_issues_under_each_dimension() -> None:
 
 
 def test_a_group_carries_the_rollup_its_header_draws() -> None:
-    issues = [_item(1, "todo", epic="tt-9"), _item(2, "done", epic="tt-9"), _item(3, "todo")]
+    issues = [_item(1, "todo", epic="auth"), _item(2, "done", epic="auth"), _item(3, "todo")]
     epic, unfiled = dv.group_tree(issues, ("epic",))
     assert epic.rollup == dv.rollup([issues[0], issues[1]])
     assert (epic.rollup.done, epic.rollup.total) == (1, 2)
@@ -144,9 +144,9 @@ def test_a_group_carries_the_rollup_its_header_draws() -> None:
 def test_a_milestone_group_carries_the_epic_it_sits_under() -> None:
     # The rollup row draws a second, related field beside the identity; for a
     # milestone that is the epic it belongs to.
-    issues = [_item(1, milestone="tt-5", epic="tt-4")]
+    issues = [_item(1, milestone="beta", epic="billing")]
     milestone = dv.group_tree(issues, ("milestone",))[0]
-    assert (milestone.key.value, milestone.key.related) == ("tt-5", "tt-4")
+    assert (milestone.key.value, milestone.key.related) == ("beta", "billing")
 
 
 # --- the nested tree ------------------------------------------------------
@@ -154,25 +154,26 @@ def test_a_milestone_group_carries_the_epic_it_sits_under() -> None:
 
 def _epic_milestone() -> list[IssueListItem]:
     return [
-        _item(1, "done", epic="tt-9", milestone="tt-5"),
-        _item(2, "todo", epic="tt-9", milestone="tt-5"),
-        _item(3, "todo", epic="tt-9"),
-        _item(4, "doing", epic="tt-4", milestone="tt-7"),
+        _item(1, "done", epic="auth", milestone="beta"),
+        _item(2, "todo", epic="auth", milestone="beta"),
+        _item(3, "todo", epic="auth"),
+        _item(4, "doing", epic="billing", milestone="ga"),
         _item(5, "todo"),
     ]
 
 
 def _header(*path: str) -> dv.HeaderAt:
     """The cursor on a header of the epic › milestone tree, addressed by the values
-    down to it: one level in is an epic's header, two a milestone's."""
-    return dv.HeaderAt(path, "epic" if len(path) == 1 else "milestone", path[-1])
+    down to it: one level in is an epic's header, two a milestone's. Both dimensions
+    name a per-project object, so the header carries the project its issues sit in."""
+    return dv.HeaderAt(path, "epic" if len(path) == 1 else "milestone", path[-1], "TT")
 
 
 def test_group_tree_nests_the_second_dimension_inside_the_first() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
     assert _nested(nodes) == [
-        ("tt-9", [("tt-5", [1, 2]), ("(no milestone)", [3])]),
-        ("tt-4", [("tt-7", [4])]),
+        ("auth", [("beta", [1, 2]), ("(no milestone)", [3])]),
+        ("billing", [("ga", [4])]),
         # An issue filed under neither still heads a group at both levels, so it is
         # reachable rather than dropping out of the body.
         ("(no epic)", [("(no milestone)", [5])]),
@@ -193,17 +194,17 @@ def test_every_level_of_the_tree_carries_its_own_rollup() -> None:
 
 
 def test_group_tree_nests_two_levels_and_no_more() -> None:
-    issues = [_item(1, epic="tt-9", milestone="tt-5", priority="high")]
+    issues = [_item(1, epic="auth", milestone="beta", priority="high")]
     nodes = dv.group_tree(issues, ("epic", "milestone", "priority"))
-    assert _nested(nodes) == [("tt-9", [("tt-5", [1])])]
+    assert _nested(nodes) == [("auth", [("beta", [1])])]
     assert dv.MAX_LEVELS == 2
 
 
 def test_a_level_naming_no_dimension_drops_out_of_the_tree() -> None:
-    issues = [_item(1, epic="tt-9")]
+    issues = [_item(1, epic="auth")]
     # A second level of ``none`` is one level of grouping, and no level at all is the
     # flat list: one group holding everything, with no label and so no header.
-    assert _shape(dv.group_tree(issues, ("epic", "none"))) == [("tt-9", [1])]
+    assert _shape(dv.group_tree(issues, ("epic", "none"))) == [("auth", [1])]
     assert _shape(dv.group_tree(issues, ("none",))) == [("", [1])]
     assert _shape(dv.group_tree(issues, ())) == [("", [1])]
 
@@ -232,9 +233,9 @@ def _fleet() -> list[IssueListItem]:
     """One issue per shape the facets narrow on, so a facet case can name the ids it
     keeps and the ids it drops."""
     return [
-        _item(1, "todo", "high", epic="tt-9", milestone="tt-5", tags=["api"], due_date=TODAY),
-        _item(2, "doing", "low", epic="tt-9", tags=["api", "ui"], due_date=date(2026, 9, 1)),
-        _item(3, "done", "high", epic="tt-4", milestone="tt-7", tags=["ui"]),
+        _item(1, "todo", "high", epic="auth", milestone="beta", tags=["api"], due_date=TODAY),
+        _item(2, "doing", "low", epic="auth", tags=["api", "ui"], due_date=date(2026, 9, 1)),
+        _item(3, "done", "high", epic="billing", milestone="ga", tags=["ui"]),
         _item(4),
     ]
 
@@ -244,8 +245,8 @@ def test_apply_narrows_on_each_facet() -> None:
         ("the empty filter is the identity", dv.NO_FILTER, [1, 2, 3, 4]),
         ("status", dv.Filter(status="doing"), [2]),
         ("priority", dv.Filter(priority="high"), [1, 3]),
-        ("epic", dv.Filter(epic="tt-9"), [1, 2]),
-        ("milestone", dv.Filter(milestone="tt-7"), [3]),
+        ("epic", dv.Filter(epic="auth"), [1, 2]),
+        ("milestone", dv.Filter(milestone="ga"), [3]),
         ("tag, which an issue wears any number of", dv.Filter(tag="api"), [1, 2]),
         ("text, folded over the title", dv.Filter(text="ISSUE 3"), [3]),
         (
@@ -263,11 +264,11 @@ def test_apply_ands_its_facets_together() -> None:
     issues = _fleet()
     # Each facet alone keeps more than the two together do, and the order is the order
     # the issues arrived in.
-    assert [i.id for i in dv.apply(issues, dv.Filter(epic="tt-9"))] == [1, 2]
+    assert [i.id for i in dv.apply(issues, dv.Filter(epic="auth"))] == [1, 2]
     assert [i.id for i in dv.apply(issues, dv.Filter(priority="high"))] == [1, 3]
-    assert [i.id for i in dv.apply(issues, dv.Filter(epic="tt-9", priority="high"))] == [1]
+    assert [i.id for i in dv.apply(issues, dv.Filter(epic="auth", priority="high"))] == [1]
     # A third facet that agrees with neither takes the intersection to nothing.
-    both = dv.Filter(epic="tt-9", priority="high", status="done")
+    both = dv.Filter(epic="auth", priority="high", status="done")
     assert dv.apply(issues, both) == []
 
 
@@ -311,8 +312,8 @@ def test_facet_values_are_the_closed_lists_and_what_the_issues_carry() -> None:
     assert dv.facet_values(issues, "priority") == list(dv.PRIORITY_ORDER)
     # An epic, a milestone and a tag are objects, so only what is actually filed under
     # one is offered, sorted and without repeats.
-    assert dv.facet_values(issues, "epic") == ["tt-4", "tt-9"]
-    assert dv.facet_values(issues, "milestone") == ["tt-5", "tt-7"]
+    assert dv.facet_values(issues, "epic") == ["auth", "billing"]
+    assert dv.facet_values(issues, "milestone") == ["beta", "ga"]
     assert dv.facet_values(issues, "tag") == ["api", "ui"]
     # Text is typed, not picked.
     assert dv.facet_values(issues, "text") == []
@@ -360,10 +361,10 @@ def test_a_facets_value_rows_mark_the_one_in_force() -> None:
 
 
 def test_drill_rows_name_the_facet_and_the_value_together() -> None:
-    issue = _item(1, epic="tt-9", milestone="tt-5", tags=["api", "ui"])
+    issue = _item(1, epic="auth", milestone="beta", tags=["api", "ui"])
     assert dv.drill_commands(issue) == [
-        dv.Command("Enter epic tt-9", None, None, dv.Navigate("enter", "epic", "tt-9")),
-        dv.Command("Enter milestone tt-5", None, None, dv.Navigate("enter", "milestone", "tt-5")),
+        dv.Command("Enter epic auth", None, None, dv.Navigate("enter", "epic", "auth")),
+        dv.Command("Enter milestone beta", None, None, dv.Navigate("enter", "milestone", "beta")),
         dv.Command("Enter tag api", None, None, dv.Navigate("enter", "tag", "api")),
         dv.Command("Enter tag ui", None, None, dv.Navigate("enter", "tag", "ui")),
     ]
@@ -375,7 +376,7 @@ def test_filtering_composes_with_grouping() -> None:
     # Filter first, then group: the tree is built over what survives, so a group that
     # the filter emptied is not drawn at all.
     issues = _fleet()
-    narrowed = dv.apply(issues, dv.Filter(epic="tt-9"))
+    narrowed = dv.apply(issues, dv.Filter(epic="auth"))
     assert _shape(dv.group_tree(narrowed, ("tag",))) == [("#api", [1, 2]), ("#ui", [2])]
 
 
@@ -446,11 +447,11 @@ def test_the_view_overlay_of_an_empty_file_only_offers_the_save_row() -> None:
 def test_fold_paths_address_every_node_of_the_tree() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
     assert dv.fold_paths(nodes) == [
-        ("tt-9",),
-        ("tt-9", "tt-5"),
-        ("tt-9", None),  # the milestone-less group, addressed by the value it lacks
-        ("tt-4",),
-        ("tt-4", "tt-7"),
+        ("auth",),
+        ("auth", "beta"),
+        ("auth", None),  # the milestone-less group, addressed by the value it lacks
+        ("billing",),
+        ("billing", "ga"),
         (None,),
         (None, None),
     ]
@@ -469,9 +470,9 @@ def test_folding_a_node_takes_everything_under_it_off_the_page() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
     assert [i.id for i in dv.visible_issues(nodes, dv.EXPANDED)] == [1, 2, 3, 4, 5]
     # An inner node hides its own issues; the outer one hides its whole subtree.
-    inner = frozenset({("tt-9", "tt-5")})
+    inner = frozenset({("auth", "beta")})
     assert [i.id for i in dv.visible_issues(nodes, inner)] == [3, 4, 5]
-    outer = frozenset({("tt-9",)})
+    outer = frozenset({("auth",)})
     assert [i.id for i in dv.visible_issues(nodes, outer)] == [4, 5]
     # Whatever is folded, the tree still holds every issue — the headers stay drawn.
     assert [i.id for i in dv.all_issues(nodes)] == [1, 2, 3, 4, 5]
@@ -480,30 +481,30 @@ def test_folding_a_node_takes_everything_under_it_off_the_page() -> None:
 
 def test_toggle_fold_shuts_an_open_node_and_opens_a_shut_one() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
-    shut = dv.toggle_fold(dv.EXPANDED, ("tt-9", "tt-5"))
-    assert shut == frozenset({("tt-9", "tt-5")})
-    assert dv.toggle_fold(shut, ("tt-9", "tt-5")) == dv.EXPANDED
+    shut = dv.toggle_fold(dv.EXPANDED, ("auth", "beta"))
+    assert shut == frozenset({("auth", "beta")})
+    assert dv.toggle_fold(shut, ("auth", "beta")) == dv.EXPANDED
     # Fold-all shuts every node; expanding is the empty state it started from.
     everything = dv.fold_all(nodes)
     assert everything == frozenset(dv.fold_paths(nodes))
-    assert dv.toggle_fold(everything, ("tt-4",)) == everything - {("tt-4",)}
+    assert dv.toggle_fold(everything, ("billing",)) == everything - {("billing",)}
 
 
 def test_fold_target_is_the_innermost_node_holding_the_selection() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
-    assert dv.fold_target(nodes, 1) == ("tt-9", "tt-5")
-    assert dv.fold_target(nodes, 3) == ("tt-9", None)
+    assert dv.fold_target(nodes, 1) == ("auth", "beta")
+    assert dv.fold_target(nodes, 3) == ("auth", None)
     assert dv.fold_target(nodes, 5) == (None, None)
     assert dv.fold_target(nodes, 99) is None  # nothing selected, nothing to fold
     # One dimension is one level deep, so the target is the group itself.
-    assert dv.fold_target(dv.group_tree(_epic_milestone(), ("epic",)), 1) == ("tt-9",)
+    assert dv.fold_target(dv.group_tree(_epic_milestone(), ("epic",)), 1) == ("auth",)
 
 
 def test_folded_reads_the_state_a_header_draws_its_caret_from() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic",))
     epic = nodes[0]
     path = dv.path_of((), epic)
-    assert path == ("tt-9",)
+    assert path == ("auth",)
     assert not dv.folded(epic, path, dv.EXPANDED)
     assert dv.folded(epic, path, frozenset({path}))
 
@@ -538,16 +539,16 @@ def test_move_selection_crosses_group_boundaries_when_stacked() -> None:
 
 def test_move_selection_steps_over_a_folded_subtree() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
-    shut = frozenset({("tt-9", "tt-5")})  # hides issues 1 and 2
+    shut = frozenset({("auth", "beta")})  # hides issues 1 and 2
     # Down out of the group before the folded one lands past it, not inside it. The
     # epic and milestone headers stand for objects, so they are stops of their own and
     # the walk crosses them on the way.
-    assert dv.move_selection(nodes, "stacked", shut, 3, -1, 0) == _header("tt-9", "tt-5")
-    assert dv.move_selection(nodes, "stacked", shut, 4, -1, 0) == _header("tt-4", "tt-7")
-    assert dv.move_selection(nodes, "stacked", shut, 3, 1, 0) == _header("tt-4")
+    assert dv.move_selection(nodes, "stacked", shut, 3, -1, 0) == _header("auth", "beta")
+    assert dv.move_selection(nodes, "stacked", shut, 4, -1, 0) == _header("billing", "ga")
+    assert dv.move_selection(nodes, "stacked", shut, 3, 1, 0) == _header("billing")
     # The whole epic shut, and the walk skips what it holds from either side.
-    epic_shut = frozenset({("tt-9",)})
-    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == _header("tt-4", "tt-7")
+    epic_shut = frozenset({("auth",)})
+    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == _header("billing", "ga")
     assert dv.move_selection(nodes, "stacked", epic_shut, 4, 1, 0) == 5
 
 
@@ -555,16 +556,16 @@ def test_a_selection_folded_out_of_sight_moves_to_the_edge_of_what_hid_it() -> N
     # ``za`` leaves the cursor on the issue it shut away, so toggling back restores it.
     # Until then a move lands on the stop after the hidden run, or the one before it.
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
-    shut = frozenset({("tt-9", "tt-5")})
+    shut = frozenset({("auth", "beta")})
     assert dv.move_selection(nodes, "stacked", shut, 1, 1, 0) == 3  # first row after
     # Nothing of the epic's is left before it but the header that shut it away.
-    assert dv.move_selection(nodes, "stacked", shut, 2, -1, 0) == _header("tt-9", "tt-5")
-    epic_shut = frozenset({("tt-9",)})
-    assert dv.move_selection(nodes, "stacked", epic_shut, 1, 1, 0) == _header("tt-4")
-    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == _header("tt-4", "tt-7")
+    assert dv.move_selection(nodes, "stacked", shut, 2, -1, 0) == _header("auth", "beta")
+    epic_shut = frozenset({("auth",)})
+    assert dv.move_selection(nodes, "stacked", epic_shut, 1, 1, 0) == _header("billing")
+    assert dv.move_selection(nodes, "stacked", epic_shut, 4, -1, 0) == _header("billing", "ga")
     # Everything shut leaves only the headers, and an epic's is a stop, so the cursor
     # lands on the one after the run it was hidden in.
-    assert dv.move_selection(nodes, "stacked", dv.fold_all(nodes), 1, 1, 0) == _header("tt-4")
+    assert dv.move_selection(nodes, "stacked", dv.fold_all(nodes), 1, 1, 0) == _header("billing")
     # Where no header stands for an object there is nothing left to land on, and the
     # selection waits where it is until a node is opened again.
     statuses = dv.group_tree([_item(1, "todo"), _item(2, "done")], ("status",))
@@ -597,13 +598,13 @@ def test_the_cursor_stops_on_the_headers_that_stand_for_an_object() -> None:
     # lands on their headers; the group of issues carrying none of them is not one.
     epics = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
     assert dv.visible_stops(epics, dv.EXPANDED) == [
-        _header("tt-9"),
-        _header("tt-9", "tt-5"),
+        _header("auth"),
+        _header("auth", "beta"),
         1,
         2,
         3,  # under "(no milestone)", whose header stands for nothing
-        _header("tt-4"),
-        _header("tt-4", "tt-7"),
+        _header("billing"),
+        _header("billing", "ga"),
         4,
         5,  # under "(no epic)" › "(no milestone)", neither of them a stop
     ]
@@ -628,19 +629,19 @@ def test_the_cursor_steps_over_a_header_that_stands_for_no_object() -> None:
 def test_move_selection_walks_onto_and_off_an_object_header() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic",))
     # Nothing selected takes the first stop, which is the first epic's header.
-    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, None, 1, 0) == _header("tt-9")
+    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, None, 1, 0) == _header("auth")
     # Down off the header onto the first issue it heads, and back up onto it.
-    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, _header("tt-9"), 1, 0) == 1
-    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, 1, -1, 0) == _header("tt-9")
+    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, _header("auth"), 1, 0) == 1
+    assert dv.move_selection(nodes, "stacked", dv.EXPANDED, 1, -1, 0) == _header("auth")
     # A folded header keeps its stop: it is still drawn, so the cursor still reaches it.
-    shut = frozenset({("tt-9",)})
-    assert dv.move_selection(nodes, "stacked", shut, _header("tt-9"), 1, 0) == _header("tt-4")
+    shut = frozenset({("auth",)})
+    assert dv.move_selection(nodes, "stacked", shut, _header("auth"), 1, 0) == _header("billing")
 
 
 def test_fold_target_is_the_node_whose_header_the_cursor_is_on() -> None:
     nodes = dv.group_tree(_epic_milestone(), ("epic", "milestone"))
-    assert dv.fold_target(nodes, _header("tt-9")) == ("tt-9",)
-    assert dv.fold_target(nodes, _header("tt-9", "tt-5")) == ("tt-9", "tt-5")
+    assert dv.fold_target(nodes, _header("auth")) == ("auth",)
+    assert dv.fold_target(nodes, _header("auth", "beta")) == ("auth", "beta")
 
 
 def test_surviving_id_keeps_the_issue_or_takes_its_neighbour() -> None:
@@ -895,21 +896,22 @@ def test_the_edit_offer_carries_the_e_accelerator() -> None:
 
 def test_the_commands_of_a_header_address_the_object_it_stands_for() -> None:
     # Each builder addresses its object the way its own api takes one: an epic and a
-    # milestone by ref, a tag by the id behind the name issues wear.
+    # milestone by a title within a project, a tag by the id behind the name issues wear.
     edit = Offer(key="edit", label="Edit", state=Runnable(), fields=[], seed=True)
     delete = Offer(key="delete", label="Delete", state=Runnable(), fields=[])
     rename = Offer(key="rename", label="Rename", state=Runnable(), fields=[], seed=True)
 
-    epic_detail = {"ref": "tt-9", "title": "the parser"}
-    epic_edit, epic_delete = dv.epic_commands([edit, delete], "tt-9", epic_detail)
-    assert isinstance(epic_edit.run, dv.RunAction) and epic_edit.run.target == dv.EpicTarget("tt-9")
+    epic_detail = {"project": "TT", "title": "the parser"}
+    epic_edit, epic_delete = dv.epic_commands([edit, delete], "TT", "auth", epic_detail)
+    assert isinstance(epic_edit.run, dv.RunAction)
+    assert epic_edit.run.target == dv.EpicTarget("TT", "auth")
     assert epic_edit.run.seed == epic_detail  # seeds from the epic it opens on
     assert isinstance(epic_delete.run, dv.RunAction) and epic_delete.run.seed is None
     assert (epic_edit.hint, epic_delete.hint) == ("e", "d")  # the map already covers both
 
-    milestone = dv.milestone_commands([edit], "tt-5", {"ref": "tt-5"})[0]
+    milestone = dv.milestone_commands([edit], "TT", "beta", {"project": "TT", "title": "beta"})[0]
     assert isinstance(milestone.run, dv.RunAction)
-    assert milestone.run.target == dv.MilestoneTarget("tt-5")
+    assert milestone.run.target == dv.MilestoneTarget("TT", "beta")
 
     tag = dv.tag_commands([rename], 7, {"id": 7, "name": "api"})[0]
     assert isinstance(tag.run, dv.RunAction) and tag.run.target == dv.TagTarget(7)
@@ -924,8 +926,8 @@ def test_a_refused_header_offer_carries_its_reason_rather_than_running() -> None
     refused = Offer(
         key="delete", label="Delete", state=Refused("reassign 2 issues first"), fields=[]
     )
-    assert dv.epic_commands([refused], "tt-9")[0].reason == "reassign 2 issues first"
-    assert dv.milestone_commands([refused], "tt-5")[0].reason == "reassign 2 issues first"
+    assert dv.epic_commands([refused], "TT", "auth")[0].reason == "reassign 2 issues first"
+    assert dv.milestone_commands([refused], "TT", "beta")[0].reason == "reassign 2 issues first"
 
 
 def test_the_group_picker_offers_every_dimension_and_marks_the_one_in_force() -> None:

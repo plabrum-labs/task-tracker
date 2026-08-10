@@ -72,14 +72,15 @@ def test_the_merged_edit_payload_derives_a_field_per_editable_column() -> None:
             name="epic",
             required=True,
             kind=Reference(),
-            description="The ref of the epic this issue belongs to, e.g. ENG-3. Blank clears it.",
+            description='The title of the epic this issue belongs to, e.g. "Payments". '
+            "Blank clears it.",
         ),
         Field(
             name="milestone",
             required=True,
             kind=Reference(),
             description=(
-                "The ref of the milestone this issue belongs to, within its epic, e.g. ENG-5. "
+                'The title of the milestone this issue belongs to, e.g. "Beta launch". '
                 "Blank clears it."
             ),
         ),
@@ -93,7 +94,7 @@ def test_a_reference_field_is_marked_and_blanks_to_null() -> None:
     epic = fields["epic"]
     assert epic.kind == Reference()
     assert payload([(epic, "")]) == {"epic": None}
-    assert payload([(epic, "ENG-3")]) == {"epic": "ENG-3"}
+    assert payload([(epic, "Payments")]) == {"epic": "Payments"}
 
 
 def test_the_set_due_date_payload_derives_a_single_date_field() -> None:

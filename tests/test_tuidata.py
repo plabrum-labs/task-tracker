@@ -28,11 +28,11 @@ from tt.platform.actions import Conflict
 
 @pytest.fixture
 def seeded(db: Engine) -> Engine:
-    """One project holding an epic, a milestone under it, an issue, and one tag."""
+    """One project holding an epic, a milestone filed under it, an issue, and one tag."""
     project_api.project_action(db, "createProject", {"slug": "tt", "title": "task tracker"}, None)
     project_api.project_action(db, "addEpic", {"title": "the parser"}, "tt")
     project_api.project_action(db, "addIssue", {"title": "ship the mvp"}, "tt")
-    epic_api.epic_action(db, "addMilestone", {"title": "beta"}, _epic(db).ref)
+    project_api.project_action(db, "addMilestone", {"title": "beta", "epic": "the parser"}, "tt")
     tag_api.tag_action(db, "createTag", {"name": "api"}, None)
     return db
 
@@ -42,7 +42,7 @@ def _epic(engine: Engine) -> EpicListItem:
 
 
 def _milestone(engine: Engine) -> MilestoneListItem:
-    return milestone_api.milestone_list(engine, _epic(engine).id)[0]
+    return milestone_api.milestone_list(engine, "tt")[0]
 
 
 def _tag_id(engine: Engine) -> int:
@@ -50,17 +50,22 @@ def _tag_id(engine: Engine) -> int:
 
 
 def test_dispatch_routes_an_epic_target_to_the_epic_api(seeded: Engine) -> None:
-    ref = _epic(seeded).ref
-    message = data.dispatch(seeded, EpicTarget(ref), "setStatus", {"status": "done"})
+    title = _epic(seeded).title
+    message = data.dispatch(seeded, EpicTarget("tt", title), "setStatus", {"status": "done"})
     assert "done" in message
-    written = epic_api.epic_get(seeded, ref)
+    written = epic_api.epic_get(seeded, "tt", title)
     assert written is not None and written.status == "done"
 
 
 def test_dispatch_routes_a_milestone_target_to_the_milestone_api(seeded: Engine) -> None:
-    ref = _milestone(seeded).ref
-    data.dispatch(seeded, MilestoneTarget(ref), "edit", {"title": "beta cut", "due_date": None})
-    written = milestone_api.milestone_get(seeded, ref)
+    title = _milestone(seeded).title
+    data.dispatch(
+        seeded,
+        MilestoneTarget("tt", title),
+        "edit",
+        {"title": "beta cut", "due_date": None, "epic": None},
+    )
+    written = milestone_api.milestone_get(seeded, "tt", "beta cut")
     assert written is not None and written.title == "beta cut"
 
 
@@ -77,7 +82,7 @@ def test_dispatch_routes_a_tag_target_to_the_tag_api(seeded: Engine) -> None:
 def test_dispatch_carries_a_refusal_back_from_the_object_it_addressed(seeded: Engine) -> None:
     # The epic still holds a live issue, so its delete refuses — the object's answer,
     # raised for the screen to put in the status line rather than written.
-    ref = _epic(seeded).ref
+    title = _epic(seeded).title
     issue = issue_api.issue_list(seeded, "tt")[0]
     data.dispatch(
         seeded,
@@ -89,13 +94,13 @@ def test_dispatch_carries_a_refusal_back_from_the_object_it_addressed(seeded: En
             "status": issue.status,
             "priority": issue.priority,
             "due_date": None,
-            "epic": ref,
+            "epic": title,
             "milestone": None,
         },
     )
     with pytest.raises(Exception, match="reassign or close 1 issue first"):
-        data.dispatch(seeded, EpicTarget(ref), "delete", {})
-    assert epic_api.epic_get(seeded, ref) is not None
+        data.dispatch(seeded, EpicTarget("tt", title), "delete", {})
+    assert epic_api.epic_get(seeded, "tt", title) is not None
 
 
 def test_dispatch_still_routes_the_targets_that_were_here_before(seeded: Engine) -> None:

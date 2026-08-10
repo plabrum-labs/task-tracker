@@ -18,7 +18,6 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from conftest import a_project, an_issue
-from tt.domains.epic import api as epic_api
 from tt.domains.issue import Issue, Priority, Status
 from tt.domains.issue import queries as issue_queries
 from tt.domains.issue.enums import Direction, SortField
@@ -349,7 +348,7 @@ def test_filter_by_milestone_keeps_only_that_milestones_issues(db: Engine) -> No
     tt = a_project(db, "tt")
     epic = project_api.project_action(db, "addEpic", {"title": "v1"}, "tt")
     assert epic.created_id is not None
-    milestone = epic_api.epic_action(db, "addMilestone", {"title": "m1"}, "tt-1")
+    milestone = project_api.project_action(db, "addMilestone", {"title": "m1", "epic": "v1"}, "tt")
     milestone_id = milestone.created_id
     assert milestone_id is not None
     inside = an_issue(db, tt, "inside")

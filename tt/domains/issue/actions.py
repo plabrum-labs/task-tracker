@@ -31,42 +31,36 @@ from tt.platform.actions import (
     Invalid,
     ObjectAction,
 )
+from tt.platform.refs import NamedRef
 
 issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.resolve_ref)
 
 
-def _resolve_epic(deps: ActionDeps, epic_ref: str | None, project_id: int) -> int | None:
-    """The id of the live epic an issue is being filed under, addressed by its ref,
-    or ``None`` to clear the link. An epic in another project — or none at all — is
-    refused: an issue's epic must belong to the issue's project."""
-    if epic_ref is None:
+def _resolve_epic(deps: ActionDeps, epic_title: str | None, project_slug: str) -> int | None:
+    """The id of the live epic an issue is being filed under, addressed by its title
+    within the issue's project, or ``None`` to clear the link. An epic the project
+    does not hold is refused."""
+    if epic_title is None:
         return None
-    epic = epic_queries.resolve_ref(deps.tx, epic_ref)
+    epic = epic_queries.resolve_by_title(deps.tx, NamedRef(project_slug, epic_title))
     if epic is None:
-        raise Conflict(f"no epic {epic_ref}")
-    if epic.project_id != project_id:
-        raise Conflict(f"epic {epic_ref} is not in this project")
+        raise Conflict(f'no epic "{epic_title}"')
     return epic.id
 
 
 def _resolve_milestone(
-    deps: ActionDeps, milestone_ref: str | None, new_epic_id: int | None, old_epic_id: int | None
+    deps: ActionDeps, milestone_title: str | None, project_slug: str
 ) -> int | None:
     """The id of the live milestone an issue is being filed under, addressed by its
-    ref, or ``None``. A milestone must belong to the issue's (new) epic. A milestone
-    that instead belongs to the epic the issue is *leaving* is dropped rather than
-    blocking the epic move — that is the stale link a re-submit carries. Any other
-    mismatch is an explicit foreign choice, and refused."""
-    if milestone_ref is None:
+    title within the issue's project, or ``None`` to clear the link. A milestone is
+    project-level, so it need only belong to the issue's project, resolved within it;
+    the epic the issue is filed under is independent."""
+    if milestone_title is None:
         return None
-    milestone = milestone_queries.resolve_ref(deps.tx, milestone_ref)
+    milestone = milestone_queries.resolve_by_title(deps.tx, NamedRef(project_slug, milestone_title))
     if milestone is None:
-        raise Conflict(f"no milestone {milestone_ref}")
-    if milestone.epic_id == new_epic_id:
-        return milestone.id
-    if milestone.epic_id == old_epic_id:
-        return None
-    raise Conflict(f"milestone {milestone_ref} is not in this epic")
+        raise Conflict(f'no milestone "{milestone_title}"')
+    return milestone.id
 
 
 @issue_actions
@@ -91,10 +85,8 @@ class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
         obj.status = payload.status
         obj.priority = payload.priority
         obj.due_date = payload.due_date
-        old_epic_id = obj.epic_id
-        new_epic_id = _resolve_epic(deps, payload.epic, obj.project_id)
-        obj.epic_id = new_epic_id
-        obj.milestone_id = _resolve_milestone(deps, payload.milestone, new_epic_id, old_epic_id)
+        obj.epic_id = _resolve_epic(deps, payload.epic, obj.project.slug)
+        obj.milestone_id = _resolve_milestone(deps, payload.milestone, obj.project.slug)
         return ActionResponse(message=f"{obj.subject()}: saved")
 
 
