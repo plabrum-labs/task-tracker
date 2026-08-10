@@ -96,8 +96,12 @@ Dependency flow: `frontend` (`cli`/`tui`) / `tt.api` → domain `api` → `platf
   `models.py` under `tt` as a mapped-table module.
 - `tt/schema.py` — `create_all` and the metadata that binds the domains'
   tables to one engine.
-- `alembic/` — the on-disk migration history. `alembic.ini` prepends the repo
-  root (`.`) to the path and autogenerates against the default database.
+- `tt/migrations/` — the on-disk Alembic migration history, shipped inside the
+  package so an installed wheel carries it (named `migrations`, not `alembic`, so
+  it does not shadow the `alembic` package). `alembic.ini` (at the repo root, for
+  the authoring CLI) prepends the repo root (`.`) to the path, points
+  `script_location` at `tt/migrations`, and autogenerates against the default
+  database.
 
 ## Bugs
 

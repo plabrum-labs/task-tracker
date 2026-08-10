@@ -9,7 +9,7 @@ mode rewrites the table instead, which is what a later migration against this fi
 will need.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -22,7 +22,7 @@ config = context.config
 target_metadata = BaseDBModel.metadata
 
 
-def render_item(type_: str, obj: Any, autogen_context: object) -> str | bool:
+def render_item(type_: str, obj: Any, autogen_context: object) -> str | Literal[False]:
     """Render the domain's column types as the SQLite types they actually are.
 
     ``TextEnum`` and ``IntEnum`` are Python-side mappings — a migration only needs

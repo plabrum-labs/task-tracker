@@ -31,7 +31,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 def _config(url: str) -> Config:
     config = Config(str(_REPO_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", url)
-    config.set_main_option("script_location", str(_REPO_ROOT / "alembic"))
+    config.set_main_option("script_location", str(_REPO_ROOT / "tt" / "migrations"))
     return config
 
 

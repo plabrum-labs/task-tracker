@@ -22,14 +22,19 @@ from tt.platform import db
 from tt.platform.db import BaseDBModel
 from tt.platform.discovery import discover_and_import
 
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+
 # Import every domain's ``models`` for its table-registration side effect. Runs at
 # import time so the metadata is populated before ``create_all``/``upgrade`` or
 # Alembic's ``env`` reads it.
-discover_and_import(["models.py"], search_root=Path(__file__).resolve().parent)
+discover_and_import(["models.py"], search_root=_PACKAGE_ROOT)
 
-# alembic.ini sits at the repo root, one level above the tt package.
-_ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
-_REPO_ROOT = _ALEMBIC_INI.parent
+# The migration tree ships inside the package (``tt/migrations``), so an installed
+# wheel carries it and this resolves the same in a source checkout or a
+# ``site-packages`` install — there is no repo root to reach for once installed.
+# Named ``migrations`` rather than ``alembic`` so it does not shadow the real
+# ``alembic`` package for tools resolving imports against the source tree.
+_MIGRATIONS_DIR = _PACKAGE_ROOT / "migrations"
 
 
 def create_all(engine: Engine) -> None:
@@ -40,13 +45,14 @@ def create_all(engine: Engine) -> None:
 def upgrade(url: str) -> None:
     """Run the migrations forward to head. Idempotent: a database already at head
     is left untouched."""
-    config = Config(str(_ALEMBIC_INI))
+    # Built without an ``alembic.ini``: that file configures the authoring CLI and
+    # is not shipped in the wheel. Runtime needs only an absolute ``script_location``
+    # (the CLI and TUI run from wherever the user is, not from any fixed directory)
+    # and the target database. ``env.py``'s ``import tt.schema`` resolves through the
+    # already-imported package, so no ``prepend_sys_path`` is required.
+    config = Config()
+    config.set_main_option("script_location", str(_MIGRATIONS_DIR))
     config.set_main_option("sqlalchemy.url", url)
-    # alembic.ini's ``script_location`` and ``prepend_sys_path`` are relative, so
-    # Alembic would resolve them against the current directory. The CLI and TUI run
-    # from wherever the user is, not the repo root, so anchor both to the repo here.
-    config.set_main_option("script_location", str(_REPO_ROOT / "alembic"))
-    config.set_main_option("prepend_sys_path", str(_REPO_ROOT))
     command.upgrade(config, "head")
 
 
