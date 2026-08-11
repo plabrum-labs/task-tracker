@@ -568,6 +568,38 @@ def test_add_issue_honors_an_explicit_status(db: Engine) -> None:
     assert created.status == Status.BACKLOG
 
 
+def test_add_issue_files_it_under_an_epic_and_milestone(db: Engine) -> None:
+    # An issue can be filed under an epic and a milestone at create, addressed by
+    # title within its project — the same resolution the edit takes, so a create no
+    # longer has to be followed by an edit to place the issue.
+    a_project(db, "tt")
+    an_epic(db, "tt", "v1")
+    a_milestone(db, "tt", "alpha")
+    response = run_project(
+        db,
+        project_actions.AddIssue,
+        "tt",
+        project_schemas.AddIssuePayload(title="ship it", epic="v1", milestone="alpha"),
+    )
+    assert response.created_id is not None
+    filed = issue_api.issue_get(db, "tt-1")
+    assert filed is not None
+    assert filed.epic == "v1"
+    assert filed.milestone == "alpha"
+
+
+def test_add_issue_refuses_an_unknown_epic(db: Engine) -> None:
+    a_project(db, "tt")
+    with pytest.raises(Conflict, match='no epic "ghost"'):
+        project_api.project_action(db, "addIssue", {"title": "x", "epic": "ghost"}, "tt")
+
+
+def test_add_issue_refuses_an_unknown_milestone(db: Engine) -> None:
+    a_project(db, "tt")
+    with pytest.raises(Conflict, match='no milestone "ghost"'):
+        project_api.project_action(db, "addIssue", {"title": "x", "milestone": "ghost"}, "tt")
+
+
 def test_create_project_refuses_a_slug_the_live_list_already_holds(db: Engine) -> None:
     # A top-level action: no object, so the duplicate check queries through the
     # transaction the group hands ``execute``.

@@ -26,6 +26,7 @@ from tt.domains.issue.enums import Priority
 from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.models import Issue
 from tt.domains.milestone import queries as milestone_queries
+from tt.domains.milestone.actions import resolve_milestone
 from tt.domains.milestone.models import Milestone
 from tt.domains.project import queries, schemas
 from tt.domains.project.enums import Status
@@ -173,6 +174,8 @@ class AddIssue(ObjectAction[Project, schemas.AddIssuePayload]):
             # ``Priority.NONE`` is a real level whose value is 0, so an explicit
             # "none" must survive; only an unsent priority falls back to the default.
             priority=payload.priority if payload.priority is not None else Priority.MEDIUM,
+            epic_id=resolve_epic(deps, payload.epic, obj.slug),
+            milestone_id=resolve_milestone(deps, payload.milestone, obj.slug),
         )
         deps.tx.add(issue)
         deps.tx.flush()

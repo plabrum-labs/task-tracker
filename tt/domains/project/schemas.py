@@ -43,6 +43,14 @@ class AddIssuePayload(BaseModel):
     priority: WirePriority | None = Field(
         default=None, description="How far up the list it sorts. Defaults to medium."
     )
+    epic: Annotated[str | None, REFERENCE] = Field(
+        default=None,
+        description='The title of the epic to file it under, e.g. "Payments". Optional.',
+    )
+    milestone: Annotated[str | None, REFERENCE] = Field(
+        default=None,
+        description='The title of the milestone to file it under, e.g. "Beta launch". Optional.',
+    )
 
 
 class AddEpicPayload(BaseModel):

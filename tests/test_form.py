@@ -132,7 +132,14 @@ def test_the_fields_are_in_the_order_the_payload_declares_them() -> None:
     # Alphabetically this would be body, priority, title. ``model_fields`` is in
     # declaration order and a dict preserves it.
     fields = fields_of(project_schemas.AddIssuePayload)
-    assert [field.name for field in fields] == ["title", "body", "status", "priority"]
+    assert [field.name for field in fields] == [
+        "title",
+        "body",
+        "status",
+        "priority",
+        "epic",
+        "milestone",
+    ]
 
 
 def test_an_action_with_no_arguments_renders_a_form_with_no_fields() -> None:
