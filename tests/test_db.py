@@ -61,3 +61,15 @@ def test_the_default_falls_back_to_local_share(
     monkeypatch.setattr(platform_db.Path, "home", lambda: tmp_path)
     url = platform_db.default_url()
     assert url == f"sqlite:///{tmp_path / '.local' / 'share' / 'tt' / 'tt.db'}"
+
+
+def test_data_dir_is_the_xdg_directory_created_on_demand(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # sync rsyncs this directory, not the sqlite URL, so it resolves and creates
+    # the tt directory itself — and TT_DB, which only overrides the URL, is ignored.
+    monkeypatch.setenv("TT_DB", "sqlite:///elsewhere.db")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    directory = platform_db.data_dir()
+    assert directory == tmp_path / "tt"
+    assert directory.is_dir()

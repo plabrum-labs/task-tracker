@@ -27,6 +27,20 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
 
 
+def data_dir() -> Path:
+    """The per-user directory the shared database and its WAL/shm sidecars live
+    in (``~/.local/share/tt`` under the XDG data home), created on demand.
+
+    ``default_url`` builds the database path inside it; ``tt sync`` rsyncs the
+    directory itself, so the two share this one resolution. ``TT_DB`` does not
+    reach here — it overrides the whole URL, not the directory a real file lives
+    under."""
+    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    path = Path(data_home) / "tt"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def default_url() -> str:
     """The database a frontend opens when given no explicit ``--db``.
 
@@ -38,10 +52,7 @@ def default_url() -> str:
     override = os.environ.get("TT_DB")
     if override is not None:
         return override
-    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    path = Path(data_home) / "tt" / "tt.db"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return f"sqlite:///{path}"
+    return f"sqlite:///{data_dir() / 'tt.db'}"
 
 
 def connect(url: str) -> Engine:
