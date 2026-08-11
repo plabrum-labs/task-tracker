@@ -230,3 +230,87 @@ def save_layout(layout: Layout) -> None:
 def save_views(views: Sequence[SavedView]) -> None:
     """Persist the saved views, leaving the other preferences intact."""
     save(replace(load(), views=tuple(views)))
+
+
+# --- the [sync] table -----------------------------------------------------
+#
+# The mirrors a device keeps itself fresh against, and the cadence its installed
+# schedule pulls on. tt reads this table and never writes it — a mirror is
+# hand-edited — so there is no save counterpart here, and the ``save`` hardening
+# above is what keeps a TUI theme write from erasing it.
+
+
+@dataclass(frozen=True)
+class Mirror:
+    """One ssh host tt mirrors its database to, and the remote data directory the
+    SQLite fileset lives under. ``path`` defaults to the same XDG-relative location
+    tt uses locally, so a mirror is a host and nothing else in the common case."""
+
+    host: str
+    path: str = ".local/share/tt"
+
+
+@dataclass(frozen=True)
+class SyncConfig:
+    """The [sync] table: the mirrors tt keeps a device fresh against, and the cadence
+    (in seconds) the installed schedule pulls on."""
+
+    mirrors: tuple[Mirror, ...] = ()
+    interval: int = 900
+
+
+_SYNC_DEFAULTS = SyncConfig()
+_INTERVAL_UNITS: Mapping[str, int] = {"s": 1, "m": 60, "h": 3600}
+
+
+def _interval(value: object) -> int:
+    """A cadence as whole seconds. Accepts a bare positive integer of seconds, or a
+    string with an ``s``/``m``/``h`` suffix (``"15m"`` → 900); anything unparseable
+    or non-positive falls back to the default rather than raising on a hand-edited
+    file. ``bool`` is not an integer count here — TOML has no bool cadence."""
+    if isinstance(value, bool):
+        return _SYNC_DEFAULTS.interval
+    if isinstance(value, int):
+        return value if value > 0 else _SYNC_DEFAULTS.interval
+    if not isinstance(value, str):
+        return _SYNC_DEFAULTS.interval
+    text = value.strip()
+    unit = _INTERVAL_UNITS.get(text[-1:])
+    number = text[:-1] if unit is not None else text
+    try:
+        seconds = int(number) * (unit if unit is not None else 1)
+    except ValueError:
+        return _SYNC_DEFAULTS.interval
+    return seconds if seconds > 0 else _SYNC_DEFAULTS.interval
+
+
+def _mirror(entry: object) -> Mirror | None:
+    """One configured mirror, or ``None`` when it names no host — a mirror with
+    nothing to rsync to is dropped rather than loaded hostless, the way a nameless
+    view is."""
+    if not isinstance(entry, dict):
+        return None
+    table: Mapping[str, object] = entry
+    host = _text(table, "host")
+    if not host:
+        return None
+    path = _text(table, "path")
+    if path:
+        return Mirror(host=host, path=path)
+    return Mirror(host=host)
+
+
+def load_sync() -> SyncConfig:
+    """Read the [sync] table, defaulting each field past anything the file cannot
+    supply. Total like ``load``: a missing or malformed table yields no mirrors and
+    the default interval, a mirror with no host is dropped, and a bad interval falls
+    back — sync is a convenience, never a precondition for the app starting."""
+    data = _raw_document()
+    sync = data.get("sync")
+    sync = sync if isinstance(sync, dict) else {}
+    mirrors = sync.get("mirror")
+    entries = mirrors if isinstance(mirrors, list) else []
+    return SyncConfig(
+        mirrors=tuple(m for m in (_mirror(entry) for entry in entries) if m is not None),
+        interval=_interval(sync.get("interval")),
+    )
