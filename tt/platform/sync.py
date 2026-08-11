@@ -156,12 +156,6 @@ def probe(mirror: Mirror) -> Probe:
     return Probe(mirror=mirror, mtime=max(_floats(completed.stdout), default=0.0), reachable=True)
 
 
-def remote_mtime(mirror: Mirror) -> float:
-    """The newest mtime across the mirror's database and WAL, or ``0.0`` when it is
-    unreachable or holds no fileset."""
-    return probe(mirror).mtime
-
-
 # --- the decision (pure) --------------------------------------------------
 
 
