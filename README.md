@@ -66,6 +66,41 @@ That symlinks the in-repo skill into `~/.claude/skills/` so it is available in
 every project, tracking your working copy the way `just install` does for the
 binary.
 
+## Sync across devices
+
+`tt` keeps each device's database fresh by mirroring the whole SQLite fileset
+(`tt.db` and its `-wal`/`-shm` sidecars) to and from ssh hosts over the tailnet.
+This is a handoff for a tracker used **one machine at a time**, not multi-writer
+replication: the cron path is pull-only and refuses to overwrite newer local
+work, and a pull skips the cycle if another `tt`/TUI is mid-write.
+
+Configure the mirrors and cadence in `~/.config/tt/config.toml` (hand-edited —
+`tt` reads this table, it never writes it):
+
+```toml
+[sync]
+interval = "15m"          # cadence; "30s"/"15m"/"1h" or bare seconds
+
+[[sync.mirror]]
+host = "walter"           # ssh host (tailnet)
+path = ".local/share/tt"  # remote data dir; this is the default
+```
+
+Then:
+
+```
+tt sync status      # mirrors, cadence, schedule state, freshness vs local
+tt sync run         # one pull cycle — what the scheduler calls
+tt sync pull        # pull the newest mirror in, if one is ahead
+tt sync push        # mirror local out to every mirror (--force overrides the guard)
+tt sync install     # install the schedule (launchd on macOS, cron elsewhere)
+tt sync uninstall   # remove it
+```
+
+`tt sync install` schedules `tt sync run` at the configured cadence, so each
+device pulls itself fresh unattended. `just push` / `just pull` delegate to
+`tt sync push` / `tt sync pull` for muscle memory.
+
 ## Develop
 
 `just verify` is the gate every commit must pass — it runs `just lint` (Ruff +

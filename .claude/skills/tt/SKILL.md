@@ -34,6 +34,10 @@ It runs as a CLI over a shared per-user SQLite database — the same file the us
 TUI opens — so your writes and their TUI see the same data. You drive it by
 running `tt` in the shell.
 
+The `tt sync` group (mirroring the database across the user's devices over ssh) is
+a **device-maintenance** operation, not part of the task loop — do not run it while
+managing tasks unless the user explicitly asks you to sync.
+
 ## How each object is addressed
 
 - **Issue** — by its **ref**: the project's slug, a hyphen, and a per-project
