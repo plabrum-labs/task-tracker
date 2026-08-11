@@ -465,3 +465,46 @@ def test_issue_ls_filters_by_tag_and_sorts_by_the_chosen_field(database: str) ->
         ).output
     )
     assert [row["title"] for row in ascending] == ["later", "ship the mvp"]
+
+
+# --- sync -----------------------------------------------------------------
+
+
+@pytest.fixture
+def sync_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the sync commands at a tmp config and data home, so a test neither reads
+    the real ``~/.config`` nor the real database directory. Returns the config path a
+    case writes a ``[sync]`` table into."""
+    config = tmp_path / "config.toml"
+    monkeypatch.setenv("TT_CONFIG", str(config))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    return config
+
+
+def test_sync_has_the_expected_subcommands() -> None:
+    assert _names(cli.sync_app) == ["run", "pull", "push", "status", "install", "uninstall"]
+
+
+def test_sync_run_with_no_mirrors_is_a_clean_no_op(sync_env: Path, database: str) -> None:
+    # No [sync] table, so a pull cycle reaches no network and exits zero.
+    result = invoke(database, "sync", "run")
+    assert result.exit_code == 0
+    assert "no mirrors configured" in result.output
+
+
+def test_sync_status_reports_no_mirrors_and_the_default_cadence(
+    sync_env: Path, database: str
+) -> None:
+    result = invoke(database, "sync", "status")
+    assert result.exit_code == 0
+    assert "mirrors: none configured" in result.output
+    # The default interval is 900s, rendered as its coarsest whole unit.
+    assert "every 15m" in result.output
+
+
+def test_sync_status_reads_the_cadence_from_config(sync_env: Path, database: str) -> None:
+    # Cadence comes from [sync] and needs no mirror, so this stays off the network.
+    sync_env.write_text('[sync]\ninterval = "30m"\n')
+    result = invoke(database, "sync", "status")
+    assert result.exit_code == 0
+    assert "every 30m" in result.output
