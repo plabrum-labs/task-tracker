@@ -137,6 +137,11 @@ BROWSING = "j/k move · enter open · x actions · s status · g group · f filt
 READING = "j/k comments · x/e/d act on the one selected · esc back"
 EDITING = "^s save · esc cancel"
 
+# The list is polled back on this cadence so a change made elsewhere — the CLI, another
+# tt window — shows without a manual ``R``. A few seconds' lag on a personal tracker is
+# fine; the point is that the page does not sit stale.
+REFRESH_SECONDS = 10.0
+
 # The due facet is a date rather than a pick off a list, so it is typed into the same
 # one-field form an action with a date field opens.
 DUE_FIELD = Field(
@@ -244,6 +249,7 @@ class MainScreen(Screen[None]):
         # Browse mode holds no focus, so every keystroke reaches the bindings rather
         # than a focused widget; ``/`` focuses the filter and closing it blurs back.
         self.set_focus(None)
+        self.set_interval(REFRESH_SECONDS, self._poll)
 
     # --- the visible slice and the selected row ---------------------------
 
@@ -1131,6 +1137,16 @@ class MainScreen(Screen[None]):
         # Wider still, the rail comes in as a third column beside the two.
         self.split = pane_split(event.size.width)
         self.rail = shows_rail(event.size.width)
+
+    def _poll(self) -> None:
+        """The timer's tick. It is held back while a menu overlay or the edit form is up:
+        a reload reconciles the cursor onto a survivor, and moving the selection out from
+        under an interaction the user is in the middle of is exactly the surprise the poll
+        must not cause. Dismissing the overlay lands back in browse, where the next tick
+        catches up."""
+        if self.app.screen is not self or self.query_one(EditPane).display:
+            return
+        self.reload()
 
     def action_refresh(self) -> None:
         self.reload()

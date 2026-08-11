@@ -601,6 +601,44 @@ async def test_x_opens_the_selected_comments_menu_rather_than_the_issues(seeded:
         assert targets == [CommentTarget(comment_id), CommentTarget(comment_id)]
 
 
+async def test_the_poll_picks_up_a_write_made_out_of_band(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert "triaged elsewhere" not in _titles(app)
+
+        # A second writer — the CLI, another tt window — adds a row behind the running
+        # UI. The timer's tick reads it back without the user pressing R.
+        project_api.project_action(seeded, "addIssue", {"title": "triaged elsewhere"}, "tt")
+        _main(app)._poll()
+        await pilot.pause()
+        assert "triaged elsewhere" in _titles(app)
+
+
+async def test_the_poll_is_held_back_while_a_menu_is_open(seeded: Engine) -> None:
+    app = _app(seeded)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        main = _main(app)
+        await pilot.press("x")  # open the issue menu — an overlay on top of the screen
+        await pilot.pause()
+        assert isinstance(app.screen, MenuScreen)
+
+        # A write lands while the menu is up. The tick does not reconcile the list under
+        # the overlay, so the selection the menu names cannot move out from under it.
+        project_api.project_action(seeded, "addIssue", {"title": "arrived mid-menu"}, "tt")
+        main._poll()
+        await pilot.pause()
+        assert "arrived mid-menu" not in [i.title for i in main.issues]
+
+        # Dismissing the overlay lands back in browse, where the next tick catches up.
+        await pilot.press("escape")
+        await pilot.pause()
+        main._poll()
+        await pilot.pause()
+        assert "arrived mid-menu" in _titles(app)
+
+
 async def test_detail_pane_stacks_below_the_list_when_narrow(seeded: Engine) -> None:
     wide = _app(seeded)
     async with wide.run_test(size=(DETAIL_BESIDE_MIN_WIDTH + 20, 30)) as pilot:
