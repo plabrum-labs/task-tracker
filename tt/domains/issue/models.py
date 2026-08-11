@@ -78,9 +78,9 @@ class Issue(BaseDBModel):
     epic_id: Mapped[int | None] = mapped_column(
         ForeignKey("epics.id", ondelete="SET NULL"), index=True, default=None
     )
-    # A milestone is optional and lives under the issue's epic; the edit refuses one
-    # from a different epic, and clears a now-stale one when the epic changes. On a
-    # milestone's hard delete the link falls to null.
+    # A milestone is optional and lives under the same project, resolved within it and
+    # independent of the epic the issue is filed under. On a milestone's hard delete
+    # the link falls to null.
     milestone_id: Mapped[int | None] = mapped_column(
         ForeignKey("milestones.id", ondelete="SET NULL"), index=True, default=None
     )
