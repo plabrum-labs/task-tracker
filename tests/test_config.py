@@ -6,6 +6,7 @@ layout, and the list of saved views — and the ways a bad file falls back.
 assert a default rather than an error.
 """
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -145,3 +146,17 @@ def test_a_nameless_view_is_dropped_and_the_rest_load(config_file: Path) -> None
 def test_views_that_are_not_tables_load_as_none(config_file: Path) -> None:
     config_file.write_text('views = ["mine", 3]\n\n[ui]\ntheme = "tt-dark"\n')
     assert load() == Prefs()
+
+
+# --- foreign tables -------------------------------------------------------
+
+
+def test_save_preserves_a_table_it_does_not_own(config_file: Path) -> None:
+    # [sync] is hand-edited and not this module's to write, so persisting a
+    # preference must leave it — and its nested array of tables — untouched.
+    config_file.write_text('[sync]\ninterval = "15m"\n\n[[sync.mirror]]\nhost = "walter"\n')
+    save_theme(ThemeName.LIGHT)
+    with config_file.open("rb") as handle:
+        raw = tomllib.load(handle)
+    assert raw["sync"] == {"interval": "15m", "mirror": [{"host": "walter"}]}
+    assert load().theme == ThemeName.LIGHT

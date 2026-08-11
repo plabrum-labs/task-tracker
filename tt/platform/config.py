@@ -184,13 +184,35 @@ def _view_table(view: SavedView) -> dict[str, object]:
     return table
 
 
+def _raw_document() -> dict[str, object]:
+    """The config file as its unparsed tables, or empty when it cannot be read.
+
+    Fail-soft the same way ``load`` is: a save must not lose a table it does not
+    own just because some other table in the file is malformed."""
+    try:
+        with config_path().open("rb") as handle:
+            return tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
 def save(prefs: Prefs) -> None:
-    """Write the preferences, creating the config directory on demand."""
+    """Write the preferences, creating the config directory on demand.
+
+    Only the ``ui`` and ``views`` tables are this module's to write, so the rest
+    of the existing document is loaded and preserved — a hand-edited ``[sync]``
+    table survives the TUI persisting a theme, which would otherwise erase every
+    table this rebuild did not list."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    document: dict[str, object] = {"ui": {"theme": prefs.theme.value, "layout": prefs.layout}}
+    document = _raw_document()
+    document["ui"] = {"theme": prefs.theme.value, "layout": prefs.layout}
     if prefs.views:
         document["views"] = [_view_table(view) for view in prefs.views]
+    else:
+        # No views is the absence of the table, not an empty one — so clearing them
+        # drops a stale ``[[views]]`` rather than leaving it for ``load`` to reread.
+        document.pop("views", None)
     with path.open("wb") as handle:
         tomli_w.dump(document, handle)
 
