@@ -23,12 +23,26 @@ from tt.platform.actions import (
     Invalid,
     ObjectAction,
 )
+from tt.platform.refs import NamedRef
 
 epic_actions: ActionGroup[Epic] = ActionGroup("epic", locate=queries.resolve_by_title)
 
 
 def _issues(n: int) -> str:
     return "1 issue" if n == 1 else f"{n} issues"
+
+
+def resolve_epic(deps: ActionDeps, epic_title: str | None, project_slug: str) -> int | None:
+    """The id of the live epic addressed by its title within a project, or ``None``
+    for no epic. An epic the project does not hold is refused. Shared by every
+    action that files a row under an epic — an issue's or milestone's create and
+    edit — so the resolution rule lives with the epic it resolves."""
+    if epic_title is None:
+        return None
+    epic = queries.resolve_by_title(deps.tx, NamedRef(project_slug, epic_title))
+    if epic is None:
+        raise Conflict(f'no epic "{epic_title}"')
+    return epic.id
 
 
 @epic_actions

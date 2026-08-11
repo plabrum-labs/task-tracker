@@ -11,7 +11,7 @@ registers by decorating itself with ``milestone_actions``.
 
 from datetime import UTC, datetime
 
-from tt.domains.epic import queries as epic_queries
+from tt.domains.epic.actions import resolve_epic
 from tt.domains.milestone import queries, schemas
 from tt.domains.milestone.models import Milestone
 from tt.platform.actions import (
@@ -34,16 +34,19 @@ def _issues(n: int) -> str:
     return "1 issue" if n == 1 else f"{n} issues"
 
 
-def resolve_epic(deps: ActionDeps, epic_title: str | None, project_slug: str) -> int | None:
-    """The id of the live epic a milestone is filed under, addressed by its title
-    within the milestone's project, or ``None`` to leave it unfiled. An epic the
-    project does not hold is refused."""
-    if epic_title is None:
+def resolve_milestone(
+    deps: ActionDeps, milestone_title: str | None, project_slug: str
+) -> int | None:
+    """The id of the live milestone addressed by its title within a project, or
+    ``None`` for no milestone. A milestone the project does not hold is refused.
+    Shared by every action that files an issue under a milestone — its create and
+    edit — so the resolution rule lives with the milestone it resolves."""
+    if milestone_title is None:
         return None
-    epic = epic_queries.resolve_by_title(deps.tx, NamedRef(project_slug, epic_title))
-    if epic is None:
-        raise Conflict(f'no epic "{epic_title}"')
-    return epic.id
+    milestone = queries.resolve_by_title(deps.tx, NamedRef(project_slug, milestone_title))
+    if milestone is None:
+        raise Conflict(f'no milestone "{milestone_title}"')
+    return milestone.id
 
 
 @milestone_actions

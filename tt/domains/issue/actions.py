@@ -17,10 +17,10 @@ dependency verbs enforce. Each action registers by decorating itself with
 from datetime import UTC, datetime
 
 from tt.domains.comment.models import Comment
-from tt.domains.epic import queries as epic_queries
+from tt.domains.epic.actions import resolve_epic
 from tt.domains.issue import queries, schemas
 from tt.domains.issue.models import Issue
-from tt.domains.milestone import queries as milestone_queries
+from tt.domains.milestone.actions import resolve_milestone
 from tt.domains.tag import queries as tag_queries
 from tt.platform.actions import (
     ActionDeps,
@@ -31,36 +31,8 @@ from tt.platform.actions import (
     Invalid,
     ObjectAction,
 )
-from tt.platform.refs import NamedRef
 
 issue_actions: ActionGroup[Issue] = ActionGroup("issue", locate=queries.resolve_ref)
-
-
-def _resolve_epic(deps: ActionDeps, epic_title: str | None, project_slug: str) -> int | None:
-    """The id of the live epic an issue is being filed under, addressed by its title
-    within the issue's project, or ``None`` to clear the link. An epic the project
-    does not hold is refused."""
-    if epic_title is None:
-        return None
-    epic = epic_queries.resolve_by_title(deps.tx, NamedRef(project_slug, epic_title))
-    if epic is None:
-        raise Conflict(f'no epic "{epic_title}"')
-    return epic.id
-
-
-def _resolve_milestone(
-    deps: ActionDeps, milestone_title: str | None, project_slug: str
-) -> int | None:
-    """The id of the live milestone an issue is being filed under, addressed by its
-    title within the issue's project, or ``None`` to clear the link. A milestone is
-    project-level, so it need only belong to the issue's project, resolved within it;
-    the epic the issue is filed under is independent."""
-    if milestone_title is None:
-        return None
-    milestone = milestone_queries.resolve_by_title(deps.tx, NamedRef(project_slug, milestone_title))
-    if milestone is None:
-        raise Conflict(f'no milestone "{milestone_title}"')
-    return milestone.id
 
 
 @issue_actions
@@ -85,8 +57,8 @@ class EditIssue(ObjectAction[Issue, schemas.EditIssuePayload]):
         obj.status = payload.status
         obj.priority = payload.priority
         obj.due_date = payload.due_date
-        obj.epic_id = _resolve_epic(deps, payload.epic, obj.project.slug)
-        obj.milestone_id = _resolve_milestone(deps, payload.milestone, obj.project.slug)
+        obj.epic_id = resolve_epic(deps, payload.epic, obj.project.slug)
+        obj.milestone_id = resolve_milestone(deps, payload.milestone, obj.project.slug)
         return ActionResponse(message=f"{obj.subject()}: saved")
 
 

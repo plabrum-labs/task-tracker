@@ -19,13 +19,13 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from tt.domains.epic import queries as epic_queries
+from tt.domains.epic.actions import resolve_epic
 from tt.domains.epic.enums import Status as EpicStatus
 from tt.domains.epic.models import Epic
 from tt.domains.issue.enums import Priority
 from tt.domains.issue.enums import Status as IssueStatus
 from tt.domains.issue.models import Issue
 from tt.domains.milestone import queries as milestone_queries
-from tt.domains.milestone.actions import resolve_epic
 from tt.domains.milestone.models import Milestone
 from tt.domains.project import queries, schemas
 from tt.domains.project.enums import Status
