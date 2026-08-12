@@ -142,69 +142,44 @@ def test_a_subcommand_does_not_open_the_tui(database: str, monkeypatch: pytest.M
 
 
 def test_a_required_field_is_a_required_option_and_an_enum_is_a_closed_one(database: str) -> None:
-    full = [
-        "--title",
-        "x",
-        "--body",
-        "",
-        "--status",
-        "todo",
-        "--priority",
-        "medium",
-        "--due_date",
-        "",
-        "--epic",
-        "",
-        "--milestone",
-        "",
-    ]
-    # The required options come from the schema, so an edit missing them is a usage
-    # error rather than a payload the decoder refuses further in.
-    assert invoke(database, "issue", "edit", "tt-1").exit_code == USAGE
+    # setStatus is a focused verb, not a whole-object edit, so its required field is
+    # a required option: missing it is a usage error, not a payload the action
+    # refuses further in.
+    assert invoke(database, "issue", "setStatus", "tt-1").exit_code == USAGE
     # A value outside the enum is a usage error listing the alternatives.
-    bad_enum = [
-        "--title",
-        "x",
-        "--body",
-        "",
-        "--status",
-        "shipped",
-        "--priority",
-        "medium",
-        "--due_date",
-        "",
-        "--epic",
-        "",
-        "--milestone",
-        "",
-    ]
-    assert invoke(database, "issue", "edit", "tt-1", *bad_enum).exit_code == USAGE
+    assert invoke(database, "issue", "setStatus", "tt-1", "--status", "shipped").exit_code == USAGE
+    # An option the schema does not advertise is rejected.
+    bogus = invoke(database, "issue", "setStatus", "tt-1", "--status", "todo", "--bogus", "x")
+    assert bogus.exit_code == USAGE
+
+
+def test_edit_hydrates_omitted_fields_and_an_explicit_blank_still_clears(database: str) -> None:
+    # A partial edit changes only the flags passed; every field omitted keeps its
+    # current value, read from the row rather than demanded at the parser or blanked.
+    before = json.loads(invoke(database, "issue", "show", "tt-1").output)["issue"]
+    invoke(database, "issue", "setDueDate", "tt-1", "--due_date", "2026-09-01")
+    moved = invoke(database, "issue", "edit", "tt-1", "--status", "doing")
+    assert moved.exit_code == 0
+    after = json.loads(invoke(database, "issue", "show", "tt-1").output)["issue"]
+    assert after["status"] == "doing"
+    # Untouched fields are preserved, not cleared.
+    assert after["title"] == before["title"]
+    assert after["priority"] == before["priority"]
+    assert after["due_date"] == "2026-09-01"
+    # An explicit blank is still a clear — distinct from an omitted flag.
+    cleared = invoke(database, "issue", "edit", "tt-1", "--due_date", "")
+    assert cleared.exit_code == 0
+    final = json.loads(invoke(database, "issue", "show", "tt-1").output)["issue"]
+    assert final["due_date"] is None
+    assert final["status"] == "doing"  # still preserved across the second edit
+
+
+def test_a_blank_required_field_is_the_actions_refusal_not_a_usage_error(database: str) -> None:
     # A blank title gets past the parser — what a title has to contain is the
-    # action's business — so this is a refusal (123), not a usage error (2).
-    blank = invoke(
-        database,
-        "issue",
-        "edit",
-        "tt-1",
-        "--title",
-        "",
-        "--body",
-        "",
-        "--status",
-        "todo",
-        "--priority",
-        "medium",
-        "--due_date",
-        "",
-        "--epic",
-        "",
-        "--milestone",
-        "",
-    )
+    # action's business — so clearing it is a refusal (123), not a usage error (2).
+    blank = invoke(database, "issue", "edit", "tt-1", "--title", "")
     assert blank.exit_code == cli.REFUSED
     assert "title is required" in blank.output
-    # An option the schema does not advertise is rejected.
-    assert invoke(database, "issue", "edit", "tt-1", *full, "--bogus", "x").exit_code == USAGE
 
 
 def test_the_help_text_carries_the_field_doc_and_the_enum_values(
@@ -355,6 +330,29 @@ def test_ls_json_emits_a_structured_array_and_text_stays_the_default(database: s
     assert text.exit_code == 0
     with pytest.raises(json.JSONDecodeError):
         json.loads(text.output)
+
+
+def test_issue_ls_hides_closed_work_until_all_is_asked(database: str) -> None:
+    # A second issue, closed. A bare ``ls`` is the open work only; ``--all`` widens
+    # it to include the done/canceled rows that would otherwise dominate the read.
+    invoke(database, "project", "action", "addIssue", '{"title":"shipped"}', "--slug", "tt")
+    invoke(database, "issue", "setStatus", "tt-2", "--status", "done")
+    default_refs = [r["ref"] for r in json.loads(invoke(database, "issue", "ls", "--json").output)]
+    assert "TT-2" not in default_refs
+    assert "TT-1" in default_refs
+    all_out = invoke(database, "issue", "ls", "--all", "--json").output
+    assert "TT-2" in [r["ref"] for r in json.loads(all_out)]
+
+
+def test_named_edit_hydrates_omitted_fields_too(database: str) -> None:
+    # The epic/milestone edit path (addressed by title within a project) hydrates the
+    # same way the ref-addressed one does: change the status, keep the title.
+    invoke(database, "project", "addEpic", "tt", "--title", "Payments", "--due_date", "2026-09-01")
+    moved = invoke(database, "epic", "edit", "Payments", "--project", "tt", "--status", "done")
+    assert moved.exit_code == 0
+    shown = json.loads(invoke(database, "epic", "show", "Payments", "--project", "tt").output)
+    assert shown["epic"]["status"] == "done"
+    assert shown["epic"]["due_date"] == "2026-09-01"  # preserved, not blanked
 
 
 def test_counts_are_one_nested_object_keyed_by_status_name(database: str) -> None:

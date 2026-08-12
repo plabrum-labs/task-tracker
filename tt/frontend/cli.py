@@ -40,7 +40,7 @@ from tt.domains.comment import api as comment_api
 from tt.domains.epic import api as epic_api
 from tt.domains.epic.schemas import EpicListItem
 from tt.domains.issue import api as issue_api
-from tt.domains.issue.enums import Direction, SortField, Status, StatusCounts
+from tt.domains.issue.enums import CLOSED, Direction, SortField, Status, StatusCounts
 from tt.domains.issue.queries import IssueFilter, IssueSort
 from tt.domains.issue.schemas import IssueListItem
 from tt.domains.milestone import api as milestone_api
@@ -66,6 +66,16 @@ _JSON_HELP = "The action's arguments, as a JSON object."
 
 # What a generated command hands its address and payload to.
 type Writer = Callable[[Engine, Any, str, dict[str, Any]], str]
+
+# How a generated command reads a row's current fields, keyed by field name, to
+# fill in an edit the caller left partial.
+type Reader = Callable[[Engine, Any], dict[str, Any]]
+
+# The one action every object exposes as a whole-object write: it carries every
+# editable field and sets each at once. Its generated subcommand takes the fields
+# as optional flags and hydrates the ones omitted from the row's current state, so
+# a caller changes one field without restating (or first reading) the rest.
+_WHOLE_OBJECT_EDIT = "edit"
 
 
 # --- rendering ------------------------------------------------------------
@@ -246,6 +256,12 @@ def _milestone_id(engine: Engine, project_slug: str, title: str) -> int:
     return milestone.id
 
 
+# The statuses a bare ``issue ls`` shows: the open ones. Closed work (done and
+# canceled) is the bulk of a mature project and rarely what a read is after, so it
+# is hidden unless ``--all`` asks for it.
+_OPEN: frozenset[Status] = frozenset(Status) - CLOSED
+
+
 def _issue_ls(
     engine: Engine,
     project_slug: str | None,
@@ -254,14 +270,16 @@ def _issue_ls(
     milestone: str | None,
     sort: IssueSort,
     as_json: bool,
+    include_closed: bool,
 ) -> str:
+    statuses = None if include_closed else _OPEN
     if project_slug is None:
         # An epic or milestone ref is project-scoped, so filtering by one only makes
         # sense once a project is named; a bare ref would range over every project.
         if epic is not None or milestone is not None:
             raise typer.BadParameter("--epic and --milestone need --project")
         slugs = [p.slug for p in project_api.project_list(engine)]
-        filter = IssueFilter(tag=tag)
+        filter = IssueFilter(tag=tag, statuses=statuses)
     else:
         # Slugs are stored uppercase, so a ``--project`` typed in any case is
         # canonicalised before it is looked up or compared against a row's slug.
@@ -275,6 +293,7 @@ def _issue_ls(
             milestone_id=_milestone_id(engine, project_slug, milestone)
             if milestone is not None
             else None,
+            statuses=statuses,
         )
     items = [issue for slug in slugs for issue in issue_api.issue_list(engine, slug, filter, sort)]
     if as_json:
@@ -377,6 +396,38 @@ def _comment_actions(engine: Engine, comment_id: int) -> str:
     return _pretty([_offer_availability(offer) for offer in offers])
 
 
+# --- current field values, for hydrating a partial edit -------------------
+#
+# Each reads the same detail an object's ``show`` does and dumps it to the wire
+# shape. A whole-object edit's field names are a subset of these keys (checked in
+# the tests), so the edit subcommand fills any field the caller omits from here.
+
+
+def _issue_current(engine: Engine, ref: Any) -> dict[str, Any]:
+    detail, _offers = issue_api.issue_detail(engine, ref)
+    return detail.model_dump(mode="json")
+
+
+def _project_current(engine: Engine, slug: Any) -> dict[str, Any]:
+    detail, _offers = project_api.project_detail(engine, slug)
+    return detail.model_dump(mode="json")
+
+
+def _epic_current(engine: Engine, address: Any) -> dict[str, Any]:
+    detail, _offers = epic_api.epic_detail(engine, address.project_slug, address.title)
+    return detail.model_dump(mode="json")
+
+
+def _milestone_current(engine: Engine, address: Any) -> dict[str, Any]:
+    detail, _offers = milestone_api.milestone_detail(engine, address.project_slug, address.title)
+    return detail.model_dump(mode="json")
+
+
+def _comment_current(engine: Engine, comment_id: Any) -> dict[str, Any]:
+    detail, _offers = comment_api.comment_detail(engine, comment_id)
+    return detail.model_dump(mode="json")
+
+
 # --- the arguments a typed-in command carries -----------------------------
 
 
@@ -417,6 +468,32 @@ def _payload_of(fields: list[Field], values: dict[str, Any]) -> dict[str, Any]:
     return actions.payload(given)
 
 
+def _hydrated_payload(
+    fields: list[Field], current: dict[str, Any], values: dict[str, Any]
+) -> dict[str, Any]:
+    """A whole-object edit's payload from a partial call: each field the caller
+    passed, over each field's current value for the ones they left out. This is the
+    read-modify-write of the whole-object write, done here so a caller sets one
+    field without restating the rest. A passed ``--field ""`` still clears (it is
+    not ``None``); only an omitted field falls back to the current value.
+
+    Every field must have a current value to fall back to — a name absent from
+    ``current`` means the edit reaches a field the row's detail does not report, and
+    filling it blank would silently erase it, so that is refused rather than
+    guessed."""
+    given: list[tuple[Field, str]] = []
+    for field in fields:
+        passed = values.get(field.name)
+        if passed is not None:
+            given.append((field, _as_str(passed)))
+            continue
+        if field.name not in current:
+            raise Invalid(f"no current value for {field.name!r} to preserve")
+        held = current[field.name]
+        given.append((field, "" if held is None else _as_str(held)))
+    return actions.payload(given)
+
+
 # --- the generated subcommands --------------------------------------------
 
 
@@ -428,18 +505,20 @@ def _enum_type(name: str, values: list[str]) -> type[enum.Enum]:
     return cast("type[enum.Enum]", enum.Enum(name, {value: value for value in values}, type=str))
 
 
-def _option_annotation(field: Field) -> Any:
+def _option_annotation(field: Field, optional: bool = False) -> Any:
     """One ``--<field>`` option, its type the field's kind and its help the field's
     description. A ``Kind.Enum`` becomes a closed choice, so a bad value is a usage
     error listing the alternatives rather than a decode failure quoting a type.
 
     The requirement is not restated here beyond ``required=`` — what a title has to
     *contain* is the action's, which is why a blank one gets past this and is
-    refused by ``execute``."""
+    refused by ``execute``. ``optional`` forces even a required field's option to be
+    omittable: a hydrated edit fills what the caller leaves out, so nothing is
+    demanded at the parser."""
     kind = field.kind
     base: Any = _enum_type(field.name, kind.values) if isinstance(kind, Enum) else str
     option = typer.Option(f"--{field.name}", help=field.description or "")
-    if field.required:
+    if field.required and not optional:
         return Annotated[base, option]
     return Annotated[base | None, option]
 
@@ -451,6 +530,7 @@ def _generated(
     address_type: type,
     address_help: str,
     write: Writer,
+    reader: Reader | None = None,
 ) -> Callable[..., None]:
     """One command function per action, whether or not it applies now.
 
@@ -458,14 +538,22 @@ def _generated(
     subcommand is parsed before the row has been read. So ``delete`` is a command on
     an active project too, and the refusal comes back from the dispatch against the
     live object rather than from the parser.
+
+    A ``reader`` makes this the whole-object edit: every field's option is optional,
+    and the ones the caller omits are filled from the row's current state instead of
+    demanded at the parser.
     """
     address_annotation = Annotated[address_type, typer.Argument(help=address_help)]
 
     def impl(**kwargs: Any) -> None:
         def outcome() -> str:
-            payload = _payload_of(fields, kwargs)
             engine = _engine(kwargs["ctx"])
-            return write(engine, kwargs[address_name], key, payload)
+            address = kwargs[address_name]
+            if reader is None:
+                payload = _payload_of(fields, kwargs)
+            else:
+                payload = _hydrated_payload(fields, reader(engine, address), kwargs)
+            return write(engine, address, key, payload)
 
         _report(outcome)
 
@@ -479,13 +567,13 @@ def _generated(
     ]
     annotations: dict[str, Any] = {"ctx": typer.Context, address_name: address_annotation}
     for field in fields:
-        annotation = _option_annotation(field)
+        annotation = _option_annotation(field, optional=reader is not None)
         parameters.append(
             inspect.Parameter(
                 field.name,
                 inspect.Parameter.KEYWORD_ONLY,
                 annotation=annotation,
-                default=inspect.Parameter.empty if field.required else None,
+                default=inspect.Parameter.empty if field.required and reader is None else None,
             )
         )
         annotations[field.name] = annotation
@@ -503,27 +591,38 @@ def _register_generated(
     address_type: type,
     address_help: str,
     write: Writer,
+    reader: Reader | None = None,
 ) -> None:
     for key, fields in keys:
-        command = _generated(key, fields, address_name, address_type, address_help, write)
+        edit_reader = reader if key == _WHOLE_OBJECT_EDIT else None
+        command = _generated(
+            key, fields, address_name, address_type, address_help, write, edit_reader
+        )
         sub_app.command(key)(command)
 
 
 def _named_generated(
-    key: str, fields: list[Field], address_help: str, write: Writer
+    key: str, fields: list[Field], address_help: str, write: Writer, reader: Reader | None = None
 ) -> Callable[..., None]:
     """One command per action for a row addressed by title within a project — an epic
     or a milestone. The address is a ``--project`` option and a title argument the
     writer resolves together; a named row carries no ``<slug>-<number>`` ref, so it
-    is not the single positional a project or an issue takes."""
+    is not the single positional a project or an issue takes.
+
+    A ``reader`` makes this the whole-object edit, as in ``_generated``: the omitted
+    fields are hydrated from the row rather than demanded at the parser."""
     name_annotation = Annotated[str, typer.Argument(help=address_help)]
     project_annotation = Annotated[str, typer.Option("--project", help="The project it is in.")]
 
     def impl(**kwargs: Any) -> None:
         def outcome() -> str:
-            payload = _payload_of(fields, kwargs)
             engine = _engine(kwargs["ctx"])
-            return write(engine, NamedRef(kwargs["project"], kwargs["name"]), key, payload)
+            address = NamedRef(kwargs["project"], kwargs["name"])
+            if reader is None:
+                payload = _payload_of(fields, kwargs)
+            else:
+                payload = _hydrated_payload(fields, reader(engine, address), kwargs)
+            return write(engine, address, key, payload)
 
         _report(outcome)
 
@@ -540,13 +639,13 @@ def _named_generated(
         "project": project_annotation,
     }
     for field in fields:
-        annotation = _option_annotation(field)
+        annotation = _option_annotation(field, optional=reader is not None)
         parameters.append(
             inspect.Parameter(
                 field.name,
                 inspect.Parameter.KEYWORD_ONLY,
                 annotation=annotation,
-                default=inspect.Parameter.empty if field.required else None,
+                default=inspect.Parameter.empty if field.required and reader is None else None,
             )
         )
         annotations[field.name] = annotation
@@ -558,10 +657,15 @@ def _named_generated(
 
 
 def _register_named_generated(
-    sub_app: typer.Typer, keys: list[tuple[str, list[Field]]], address_help: str, write: Writer
+    sub_app: typer.Typer,
+    keys: list[tuple[str, list[Field]]],
+    address_help: str,
+    write: Writer,
+    reader: Reader | None = None,
 ) -> None:
     for key, fields in keys:
-        sub_app.command(key)(_named_generated(key, fields, address_help, write))
+        edit_reader = reader if key == _WHOLE_OBJECT_EDIT else None
+        sub_app.command(key)(_named_generated(key, fields, address_help, write, edit_reader))
 
 
 # --- the runtime edge -----------------------------------------------------
@@ -763,12 +867,18 @@ def _issue_ls_command(
             ),
         ),
     ] = None,
+    all_statuses: Annotated[
+        bool,
+        typer.Option("--all", help="Include closed issues (done, canceled); hidden by default."),
+    ] = False,
     as_json: Annotated[
         bool, typer.Option("--json", help="Emit a JSON array instead of the text table.")
     ] = False,
 ) -> None:
     _report(
-        lambda: _issue_ls(_engine(ctx), project, tag, epic, milestone, _parse_sort(sort), as_json)
+        lambda: _issue_ls(
+            _engine(ctx), project, tag, epic, milestone, _parse_sort(sort), as_json, all_statuses
+        )
     )
 
 
@@ -943,6 +1053,7 @@ _register_generated(
     str,
     "The project's slug.",
     _project_write,
+    _project_current,
 )
 _register_generated(
     issue_app,
@@ -951,18 +1062,21 @@ _register_generated(
     str,
     "The issue's ref, e.g. ENG-12.",
     _issue_write,
+    _issue_current,
 )
 _register_named_generated(
     epic_app,
     epic_api.action_schemas(),
     "The epic's title.",
     _epic_write,
+    _epic_current,
 )
 _register_named_generated(
     milestone_app,
     milestone_api.action_schemas(),
     "The milestone's title.",
     _milestone_write,
+    _milestone_current,
 )
 _register_generated(
     tag_app,
@@ -979,6 +1093,7 @@ _register_generated(
     int,
     "The comment's id.",
     _comment_write,
+    _comment_current,
 )
 
 # --- sync -----------------------------------------------------------------

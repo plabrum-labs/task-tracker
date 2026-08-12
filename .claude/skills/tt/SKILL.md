@@ -103,9 +103,10 @@ its section below. There is no focused verb for an issue's `title`, `body`,
   - `tt project ls --json` — projects, each with a `counts` rollup (a mapping of
     every issue status to its tally: `backlog`, `blocked`, `todo`, `doing`,
     `done`, `canceled`).
-  - `tt issue ls --json` — issues; `--project SLUG` scopes to one. Filter with
-    `--tag NAME`, `--epic TITLE`, `--milestone TITLE` (the last two need
-    `--project`); order with `--sort <field>[:asc|desc]`, field one of
+  - `tt issue ls --json` — issues; `--project SLUG` scopes to one. **Closed issues
+    (`done`, `canceled`) are hidden by default** — add `--all` to include them.
+    Filter with `--tag NAME`, `--epic TITLE`, `--milestone TITLE` (the last two
+    need `--project`); order with `--sort <field>[:asc|desc]`, field one of
     `priority`, `created`, `updated`, `due`, `status`.
   - `tt epic ls --json` / `tt milestone ls --json` — add `--project SLUG` to
     scope; milestones also take `--epic TITLE` (needs `--project`).
@@ -159,35 +160,30 @@ status may follow any other. Use the focused `setStatus` verb for a move
 (`tt issue setStatus TT-1 --status doing`); `edit` can also set it, but only as
 part of the whole object.
 
-## `edit` is a whole-object write — read first, then use flags
+## `edit` sets the fields with no focused verb — pass only what changes
 
-`edit` carries **every** editable field and sets each one at once. It is not a
-patch: each field is required, so any you leave out is either rejected or
-overwritten. So for an `edit`:
-
-**`show` the object first, take its current fields, apply your one change, and
-pass the complete set as flags** (flags, not JSON — no quoting to get wrong):
-
-An issue's `edit` fields are `--title`, `--body`, `--status`, `--priority`,
-`--due_date`, `--epic`, and `--milestone`. `--due_date` is `YYYY-MM-DD`; `--epic`
-and `--milestone` are **titles** (e.g. `"Payments"`) and must name an epic /
-milestone in the issue's own project. A blank value (`--body ""`) clears that
-field.
+An issue's `title`, `body`, `priority`, `epic`, and `milestone` have no focused
+verb of their own; `edit` is how you set them. Pass **only the flags you want to
+change** — every field you omit keeps its current value (the CLI reads the row and
+fills the rest), so you do **not** `show` first:
 
 ```
-tt issue show TT-1     # read every field as it is now
-tt issue edit TT-1 --title "first issue" --body "" --status doing \
-  --priority high --due_date "" --epic "" --milestone ""
+tt issue edit TT-1 --priority high            # priority only; title, body, … untouched
+tt issue edit TT-1 --title "Fix the login form"
+tt issue edit TT-1 --epic "Payments" --milestone "Beta launch"   # group it
 ```
 
-Grouping an issue under an epic and a milestone is done through this same `edit`,
-and the two are **independent** links: the milestone need not belong to the named
-epic, and either may be set or cleared without regard to the other
-(`--epic "Payments" --milestone "Beta launch"`).
+`edit`'s fields are `--title`, `--body`, `--status`, `--priority`, `--due_date`,
+`--epic`, and `--milestone`. `--due_date` is `YYYY-MM-DD`; `--epic` and
+`--milestone` are **titles** and must name an epic / milestone in the issue's own
+project. An explicit blank **clears** a field (`--body ""`, `--epic ""`); an
+omitted flag leaves it. Epic and milestone are **independent** links — the
+milestone need not belong to the named epic, and either sets or clears without
+regard to the other.
 
-Because only `edit` reaches `title`, `body`, `priority`, `epic`, and `milestone`,
-those are the one case that still needs a `show` first; everything else has a
-focused verb that does not.
+(`edit` still writes the whole object under the hood, so a concurrent change
+between its read and its write is overwritten. For a single field that has a
+focused verb — status, due date, tags, dependencies — prefer the verb.)
 
 ## Tags are their own verbs, not part of `edit`
 

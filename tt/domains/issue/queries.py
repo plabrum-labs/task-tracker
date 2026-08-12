@@ -62,6 +62,7 @@ class IssueFilter:
     tag: str | None = None
     epic_id: int | None = None
     milestone_id: int | None = None
+    statuses: frozenset[Status] | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,8 @@ def list_issues(
         stmt = stmt.where(Issue.epic_id == filter.epic_id)
     if filter.milestone_id is not None:
         stmt = stmt.where(Issue.milestone_id == filter.milestone_id)
+    if filter.statuses is not None:
+        stmt = stmt.where(Issue.status.in_(filter.statuses))
     return list(db.scalars(stmt))
 
 
