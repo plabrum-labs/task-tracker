@@ -53,6 +53,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
     assert _names(cli.issue_app) == [
         "ls",
         "show",
+        "actions",
         "action",
         "edit",
         "setStatus",
@@ -70,6 +71,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
     assert _names(cli.project_app) == [
         "ls",
         "show",
+        "actions",
         "action",
         "init",
         "edit",
@@ -82,6 +84,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
     assert _names(cli.epic_app) == [
         "ls",
         "show",
+        "actions",
         "action",
         "edit",
         "setStatus",
@@ -91,6 +94,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
     assert _names(cli.milestone_app) == [
         "ls",
         "show",
+        "actions",
         "action",
         "edit",
         "setDueDate",
@@ -101,7 +105,7 @@ def test_every_registered_action_has_a_subcommand_and_nothing_else_does() -> Non
     assert _names(cli.tag_app) == ["ls", "action", "rename", "delete"]
     # A comment is created through its issue's ``addComment`` and has no global list,
     # so its own tree is ``show``/``action`` and the generated ``edit``/``delete``.
-    assert _names(cli.comment_app) == ["show", "action", "edit", "delete"]
+    assert _names(cli.comment_app) == ["show", "actions", "action", "edit", "delete"]
 
 
 def test_no_subcommand_opens_the_tui_on_the_chosen_database(
@@ -272,15 +276,26 @@ def test_a_refusal_comes_back_from_the_live_row_and_not_from_the_parser(database
     assert "archive it first" in result.output
 
 
-def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None:
+def test_show_carries_the_object_without_the_action_schemas(database: str) -> None:
+    # ``show`` is the object as it stands, nothing more. The offered actions are a
+    # separate read (``actions``), so flipping one field never drags the whole
+    # action schema back through the agent as a payload to reconstruct.
     result = invoke(database, "issue", "show", "tt-1")
     assert result.exit_code == 0
     value = json.loads(result.output)
     assert value["issue"]["project"] == "TT"
     assert value["issue"]["priority"] == "high"
+    assert "actions" not in value
 
-    keys = [action["key"] for action in value["actions"]]
-    assert keys == [
+
+def test_actions_lists_the_offers_compactly_with_refusal_reasons(database: str) -> None:
+    # The offers an object presents now, each keyed, labelled, and either runnable or
+    # refused with the live reason. The static argument schema is deliberately absent
+    # — that belongs to the verb's ``--help``, not to a per-row read.
+    result = invoke(database, "issue", "actions", "tt-1")
+    assert result.exit_code == 0
+    offers = json.loads(result.output)
+    assert [offer["key"] for offer in offers] == [
         "edit",
         "setStatus",
         "setDueDate",
@@ -291,16 +306,17 @@ def test_show_hands_an_agent_the_offers_and_their_schemas(database: str) -> None
         "addComment",
         "delete",
     ]
-    # Each offer carries a human label alongside its key.
-    assert value["actions"][0]["label"] == "Edit"
-    # Each action carries its fields, descriptions and all, for an agent to fill in.
-    title = value["actions"][0]["arguments"][0]
-    assert title == {
-        "name": "title",
-        "required": True,
-        "description": "What to call the issue.",
-        "type": "text",
-    }
+    edit = offers[0]
+    assert edit["label"] == "Edit"
+    assert edit["state"] == "runnable"
+    assert "arguments" not in edit
+
+    # A refused action comes back as the object's own reason, surfaced up front rather
+    # than only on a rejected write.
+    project_offers = json.loads(invoke(database, "project", "actions", "tt").output)
+    delete = next(offer for offer in project_offers if offer["key"] == "delete")
+    assert delete["state"] == "refused"
+    assert "archive it first" in delete["reason"]
 
 
 def test_add_dependency_over_the_cli_and_a_cycle_is_a_refusal(database: str) -> None:

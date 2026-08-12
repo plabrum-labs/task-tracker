@@ -116,28 +116,11 @@ def _tag_line(t: TagListItem) -> str:
     return f"{t.id:<4} {t.name}"
 
 
-def _field_json(field: Field) -> dict[str, Any]:
-    """One argument, as the JSON an agent reads before it fills anything in."""
-    base: dict[str, Any] = {
-        "name": field.name,
-        "required": field.required,
-        "description": field.description,
-    }
-    match field.kind:
-        case actions.Text():
-            return {**base, "type": "text"}
-        case actions.OptionalText():
-            return {**base, "type": "text", "optional": True}
-        case actions.Date():
-            return {**base, "type": "date"}
-        case actions.Reference():
-            return {**base, "type": "ref"}
-        case Enum(values=values):
-            return {**base, "type": "enum", "values": values}
-
-
-def _offer_json(offer: Offer) -> dict[str, Any]:
-    """One offered action, as the JSON an agent reads before it picks anything."""
+def _offer_availability(offer: Offer) -> dict[str, Any]:
+    """One offered action as an agent reads it when choosing what to do next: its
+    key and label, whether it is runnable against the live row, and why not when it
+    is refused. An action's argument schema is static per action, not per row, so it
+    lives in the verb's own ``--help`` rather than being repeated on every read."""
     fields: dict[str, Any] = {"key": offer.key, "label": offer.label}
     match offer.state:
         case Runnable():
@@ -145,7 +128,6 @@ def _offer_json(offer: Offer) -> dict[str, Any]:
         case Refused(reason):
             fields["state"] = "refused"
             fields["reason"] = reason
-    fields["arguments"] = [_field_json(field) for field in offer.fields]
     return fields
 
 
@@ -315,15 +297,23 @@ def _epic_ls(engine: Engine, project_slug: str | None, as_json: bool) -> str:
 
 
 def _project_show(engine: Engine, slug: str) -> str:
-    detail, offers = project_api.project_detail(engine, slug)
-    actions = [_offer_json(offer) for offer in offers]
-    return _pretty({"project": detail.model_dump(mode="json"), "actions": actions})
+    detail, _offers = project_api.project_detail(engine, slug)
+    return _pretty({"project": detail.model_dump(mode="json")})
+
+
+def _project_actions(engine: Engine, slug: str) -> str:
+    _detail, offers = project_api.project_detail(engine, slug)
+    return _pretty([_offer_availability(offer) for offer in offers])
 
 
 def _epic_show(engine: Engine, project_slug: str, title: str) -> str:
-    detail, offers = epic_api.epic_detail(engine, project_slug, title)
-    actions = [_offer_json(offer) for offer in offers]
-    return _pretty({"epic": detail.model_dump(mode="json"), "actions": actions})
+    detail, _offers = epic_api.epic_detail(engine, project_slug, title)
+    return _pretty({"epic": detail.model_dump(mode="json")})
+
+
+def _epic_actions(engine: Engine, project_slug: str, title: str) -> str:
+    _detail, offers = epic_api.epic_detail(engine, project_slug, title)
+    return _pretty([_offer_availability(offer) for offer in offers])
 
 
 def _milestone_ls(
@@ -351,9 +341,13 @@ def _milestone_ls(
 
 
 def _milestone_show(engine: Engine, project_slug: str, title: str) -> str:
-    detail, offers = milestone_api.milestone_detail(engine, project_slug, title)
-    actions = [_offer_json(offer) for offer in offers]
-    return _pretty({"milestone": detail.model_dump(mode="json"), "actions": actions})
+    detail, _offers = milestone_api.milestone_detail(engine, project_slug, title)
+    return _pretty({"milestone": detail.model_dump(mode="json")})
+
+
+def _milestone_actions(engine: Engine, project_slug: str, title: str) -> str:
+    _detail, offers = milestone_api.milestone_detail(engine, project_slug, title)
+    return _pretty([_offer_availability(offer) for offer in offers])
 
 
 def _tag_ls(engine: Engine, as_json: bool) -> str:
@@ -364,15 +358,23 @@ def _tag_ls(engine: Engine, as_json: bool) -> str:
 
 
 def _issue_show(engine: Engine, ref: str) -> str:
-    detail, offers = issue_api.issue_detail(engine, ref)
-    actions = [_offer_json(offer) for offer in offers]
-    return _pretty({"issue": detail.model_dump(mode="json"), "actions": actions})
+    detail, _offers = issue_api.issue_detail(engine, ref)
+    return _pretty({"issue": detail.model_dump(mode="json")})
+
+
+def _issue_actions(engine: Engine, ref: str) -> str:
+    _detail, offers = issue_api.issue_detail(engine, ref)
+    return _pretty([_offer_availability(offer) for offer in offers])
 
 
 def _comment_show(engine: Engine, comment_id: int) -> str:
-    detail, offers = comment_api.comment_detail(engine, comment_id)
-    actions = [_offer_json(offer) for offer in offers]
-    return _pretty({"comment": detail.model_dump(mode="json"), "actions": actions})
+    detail, _offers = comment_api.comment_detail(engine, comment_id)
+    return _pretty({"comment": detail.model_dump(mode="json")})
+
+
+def _comment_actions(engine: Engine, comment_id: int) -> str:
+    _detail, offers = comment_api.comment_detail(engine, comment_id)
+    return _pretty([_offer_availability(offer) for offer in offers])
 
 
 # --- the arguments a typed-in command carries -----------------------------
@@ -688,12 +690,20 @@ def _project_ls_command(
     _report(lambda: _project_ls(_engine(ctx), as_json))
 
 
-@project_app.command("show", help="Print a project and what it offers.")
+@project_app.command("show", help="Print a project.")
 def _project_show_command(
     ctx: typer.Context,
     slug: Annotated[str, typer.Argument(help="The project's slug.")],
 ) -> None:
     _report(lambda: _project_show(_engine(ctx), slug))
+
+
+@project_app.command("actions", help="List the actions this project offers now, refusals and all.")
+def _project_actions_command(
+    ctx: typer.Context,
+    slug: Annotated[str, typer.Argument(help="The project's slug.")],
+) -> None:
+    _report(lambda: _project_actions(_engine(ctx), slug))
 
 
 @project_app.command("action", help="Run an action by key, passing its arguments as JSON.")
@@ -762,12 +772,20 @@ def _issue_ls_command(
     )
 
 
-@issue_app.command("show", help="Print an issue and what it offers.")
+@issue_app.command("show", help="Print an issue.")
 def _issue_show_command(
     ctx: typer.Context,
     ref: Annotated[str, typer.Argument(help="The issue's ref, e.g. ENG-12.")],
 ) -> None:
     _report(lambda: _issue_show(_engine(ctx), ref))
+
+
+@issue_app.command("actions", help="List the actions this issue offers now, refusals and all.")
+def _issue_actions_command(
+    ctx: typer.Context,
+    ref: Annotated[str, typer.Argument(help="The issue's ref, e.g. ENG-12.")],
+) -> None:
+    _report(lambda: _issue_actions(_engine(ctx), ref))
 
 
 @issue_app.command("action", help="Run an action by key, passing its arguments as JSON.")
@@ -791,13 +809,22 @@ def _epic_ls_command(
     _report(lambda: _epic_ls(_engine(ctx), project, as_json))
 
 
-@epic_app.command("show", help="Print an epic and what it offers.")
+@epic_app.command("show", help="Print an epic.")
 def _epic_show_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The epic's title.")],
     project: Annotated[str, typer.Option("--project", help="The project it is in.")],
 ) -> None:
     _report(lambda: _epic_show(_engine(ctx), project, name))
+
+
+@epic_app.command("actions", help="List the actions this epic offers now, refusals and all.")
+def _epic_actions_command(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="The epic's title.")],
+    project: Annotated[str, typer.Option("--project", help="The project it is in.")],
+) -> None:
+    _report(lambda: _epic_actions(_engine(ctx), project, name))
 
 
 @epic_app.command("action", help="Run an action by key, passing its arguments as JSON.")
@@ -826,13 +853,24 @@ def _milestone_ls_command(
     _report(lambda: _milestone_ls(_engine(ctx), project, epic, as_json))
 
 
-@milestone_app.command("show", help="Print a milestone and what it offers.")
+@milestone_app.command("show", help="Print a milestone.")
 def _milestone_show_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The milestone's title.")],
     project: Annotated[str, typer.Option("--project", help="The project it is in.")],
 ) -> None:
     _report(lambda: _milestone_show(_engine(ctx), project, name))
+
+
+@milestone_app.command(
+    "actions", help="List the actions this milestone offers now, refusals and all."
+)
+def _milestone_actions_command(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="The milestone's title.")],
+    project: Annotated[str, typer.Option("--project", help="The project it is in.")],
+) -> None:
+    _report(lambda: _milestone_actions(_engine(ctx), project, name))
 
 
 @milestone_app.command("action", help="Run an action by key, passing its arguments as JSON.")
@@ -869,12 +907,20 @@ def _tag_action_command(
     _report(lambda: _tag_write(_engine(ctx), id, key, _blob(payload)))
 
 
-@comment_app.command("show", help="Print a comment and what it offers.")
+@comment_app.command("show", help="Print a comment.")
 def _comment_show_command(
     ctx: typer.Context,
     id: Annotated[int, typer.Argument(help="The comment's id.")],
 ) -> None:
     _report(lambda: _comment_show(_engine(ctx), id))
+
+
+@comment_app.command("actions", help="List the actions this comment offers now, refusals and all.")
+def _comment_actions_command(
+    ctx: typer.Context,
+    id: Annotated[int, typer.Argument(help="The comment's id.")],
+) -> None:
+    _report(lambda: _comment_actions(_engine(ctx), id))
 
 
 @comment_app.command("action", help="Run an action by key, passing its arguments as JSON.")
