@@ -64,6 +64,15 @@ REFUSED = 123
 _KEY_HELP = "The action to run."
 _JSON_HELP = "The action's arguments, as a JSON object."
 
+# ``show`` and ``actions`` always emit JSON; only ``ls`` defaults to a text table
+# and opts into JSON with ``--json``. These readers accept ``--json`` too so a
+# caller reaching for it out of ``ls`` habit gets JSON rather than a usage error —
+# on an always-JSON reader the flag is a no-op, present only to absorb the flag.
+_AcceptJson = Annotated[
+    bool,
+    typer.Option("--json", help="Accepted for symmetry with ls; show and actions are always JSON."),
+]
+
 # What a generated command hands its address and payload to.
 type Writer = Callable[[Engine, Any, str, dict[str, Any]], str]
 
@@ -798,6 +807,7 @@ def _project_ls_command(
 def _project_show_command(
     ctx: typer.Context,
     slug: Annotated[str, typer.Argument(help="The project's slug.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _project_show(_engine(ctx), slug))
 
@@ -806,6 +816,7 @@ def _project_show_command(
 def _project_actions_command(
     ctx: typer.Context,
     slug: Annotated[str, typer.Argument(help="The project's slug.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _project_actions(_engine(ctx), slug))
 
@@ -886,6 +897,7 @@ def _issue_ls_command(
 def _issue_show_command(
     ctx: typer.Context,
     ref: Annotated[str, typer.Argument(help="The issue's ref, e.g. ENG-12.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _issue_show(_engine(ctx), ref))
 
@@ -894,6 +906,7 @@ def _issue_show_command(
 def _issue_actions_command(
     ctx: typer.Context,
     ref: Annotated[str, typer.Argument(help="The issue's ref, e.g. ENG-12.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _issue_actions(_engine(ctx), ref))
 
@@ -924,6 +937,7 @@ def _epic_show_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The epic's title.")],
     project: Annotated[str, typer.Option("--project", help="The project it is in.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _epic_show(_engine(ctx), project, name))
 
@@ -933,6 +947,7 @@ def _epic_actions_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The epic's title.")],
     project: Annotated[str, typer.Option("--project", help="The project it is in.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _epic_actions(_engine(ctx), project, name))
 
@@ -968,6 +983,7 @@ def _milestone_show_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The milestone's title.")],
     project: Annotated[str, typer.Option("--project", help="The project it is in.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _milestone_show(_engine(ctx), project, name))
 
@@ -979,6 +995,7 @@ def _milestone_actions_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="The milestone's title.")],
     project: Annotated[str, typer.Option("--project", help="The project it is in.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _milestone_actions(_engine(ctx), project, name))
 
@@ -1021,6 +1038,7 @@ def _tag_action_command(
 def _comment_show_command(
     ctx: typer.Context,
     id: Annotated[int, typer.Argument(help="The comment's id.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _comment_show(_engine(ctx), id))
 
@@ -1029,6 +1047,7 @@ def _comment_show_command(
 def _comment_actions_command(
     ctx: typer.Context,
     id: Annotated[int, typer.Argument(help="The comment's id.")],
+    _json: _AcceptJson = False,
 ) -> None:
     _report(lambda: _comment_actions(_engine(ctx), id))
 

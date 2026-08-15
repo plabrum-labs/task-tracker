@@ -174,6 +174,22 @@ def test_edit_hydrates_omitted_fields_and_an_explicit_blank_still_clears(databas
     assert final["status"] == "doing"  # still preserved across the second edit
 
 
+def test_show_and_actions_accept_a_redundant_json_flag(database: str) -> None:
+    # ``ls`` opts into JSON with ``--json``; ``show`` and ``actions`` are always
+    # JSON. A caller that reaches for ``--json`` on them out of ``ls`` habit must
+    # still get JSON, not a usage error — the flag is accepted and ignored.
+    plain = invoke(database, "issue", "show", "tt-1")
+    flagged = invoke(database, "issue", "show", "tt-1", "--json")
+    assert flagged.exit_code == 0
+    assert json.loads(flagged.output) == json.loads(plain.output)
+
+    actions = invoke(database, "issue", "actions", "tt-1", "--json")
+    assert actions.exit_code == 0
+    assert json.loads(actions.output) == json.loads(
+        invoke(database, "issue", "actions", "tt-1").output
+    )
+
+
 def test_a_blank_required_field_is_the_actions_refusal_not_a_usage_error(database: str) -> None:
     # A blank title gets past the parser — what a title has to contain is the
     # action's business — so clearing it is a refusal (123), not a usage error (2).
