@@ -1,4 +1,4 @@
-"""The action layer, over a real in-memory SQLite database.
+"""The action layer, over a real Postgres database.
 
 Availability is a pure function of the object, so the menu cases run against
 literals with no database in sight. ``execute`` mutates the loaded row, so the
@@ -10,6 +10,7 @@ and the write refuses it. The issue edit refuses nothing at the menu, so for it 
 honest pair is "always offered" and the blank-title refusal ``execute`` states.
 """
 
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 
@@ -18,7 +19,6 @@ from pydantic import BaseModel
 from sqlalchemy import Engine
 
 from conftest import a_project, an_issue
-from tt import schema
 from tt.domains.comment import Comment
 from tt.domains.comment import actions as comment_actions
 from tt.domains.comment import api as comment_api
@@ -68,12 +68,6 @@ from tt.platform.actions import (
 from tt.platform.refs import NamedRef
 
 # --- run helpers ----------------------------------------------------------
-
-
-def _fresh() -> Engine:
-    engine = platform_db.connect("sqlite://")
-    schema.create_all(engine)
-    return engine
 
 
 def run_issue[P: BaseModel](
@@ -1569,8 +1563,10 @@ def test_dispatch_refuses_what_availability_refused(db: Engine) -> None:
         project_api.project_action(db, "delete", {}, "tt")
 
 
-def test_the_api_agrees_with_the_typed_path() -> None:
-    erased = _fresh()
+def test_the_api_agrees_with_the_typed_path(fresh: Callable[[], Engine]) -> None:
+    # Each path is run on its own emptied database so both land at TT-1 and the two
+    # messages compare directly; the api and the typed call must word it the same.
+    erased = fresh()
     tt = a_project(erased, "tt")
     seeded = an_issue(erased, tt, "old")
     wire = {
@@ -1584,7 +1580,7 @@ def test_the_api_agrees_with_the_typed_path() -> None:
     }
     via_api = issue_api.issue_action(erased, "edit", wire, seeded.ref).message
 
-    typed = _fresh()
+    typed = fresh()
     tt = a_project(typed, "tt")
     seeded = an_issue(typed, tt, "old")
     via_typed = run_issue(typed, issue_actions.EditIssue, seeded.ref, _edit(title=" new ")).message
@@ -1592,11 +1588,11 @@ def test_the_api_agrees_with_the_typed_path() -> None:
     assert via_api == via_typed == "issue TT-1: saved"
 
     # The same for a creator, whose execute writes a different table.
-    erased = _fresh()
+    erased = fresh()
     a_project(erased, "tt")
     via_api = project_api.project_action(erased, "addIssue", {"title": "one"}, "tt").message
 
-    typed = _fresh()
+    typed = fresh()
     a_project(typed, "tt")
     via_typed = run_project(
         typed,

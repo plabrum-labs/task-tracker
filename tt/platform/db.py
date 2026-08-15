@@ -4,10 +4,11 @@ An engine, the way to open one, a read scope and a write transaction, and the on
 ``BaseDBModel`` that carries the columns every row has. A domain's ``queries``
 names the tables; this file cannot.
 
-Sync SQLAlchemy on purpose. The tracker is one local single-user SQLite file, so
-there is no concurrency for async to buy — and a synchronous ``execute`` is a
-plain function of the object and the session, which is what keeps the whole
-action layer testable with one in-memory database and no event loop.
+Sync SQLAlchemy on purpose. The tracker is a single-user client of a Postgres
+server, so its concurrency is a person at one machine at a time, not a load async
+would relieve — and a synchronous ``execute`` is a plain function of the object
+and the session, which is what keeps the whole action layer testable without an
+event loop.
 
 Sessions do not expire on commit, so an object a read returns still answers for
 its columns and its eagerly-loaded relationships once the ``with`` block that
@@ -19,80 +20,35 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
-from pathlib import Path
 from typing import Concatenate
 
-from sqlalchemy import DateTime, Engine, create_engine, event, func
+from sqlalchemy import DateTime, Engine, create_engine, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
-from sqlalchemy.pool import StaticPool
 
+from tt.platform import config
 
-def data_dir() -> Path:
-    """The per-user directory the shared database and its WAL/shm sidecars live
-    in (``~/.local/share/tt`` under the XDG data home), created on demand.
-
-    ``default_url`` builds the database path inside it; ``tt sync`` rsyncs the
-    directory itself, so the two share this one resolution. ``TT_DB`` does not
-    reach here — it overrides the whole URL, not the directory a real file lives
-    under."""
-    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    path = Path(data_home) / "tt"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+# The local development/throwaway server (the `compose.yaml` Postgres on an
+# esoteric port). A real deployment names its own server in the ``[database]``
+# table (or ``TT_DB``); this is only the fallback so a checkout runs against the
+# container without ceremony.
+_DEV_URL = "postgresql+psycopg://tt:tt@localhost:54329/tt"
 
 
 def default_url() -> str:
     """The database a frontend opens when given no explicit ``--db``.
 
-    ``TT_DB`` overrides it — the tests and any throwaway database go through
-    that. Otherwise every frontend shares one per-user file under the XDG data
-    home (``~/.local/share/tt/tt.db``), created on demand, so the tracker a
-    project is filed against does not depend on the directory a command runs
-    in."""
-    override = os.environ.get("TT_DB")
-    if override is not None:
-        return override
-    return f"sqlite:///{data_dir() / 'tt.db'}"
+    ``TT_DB`` overrides everything — the tests and any throwaway database go
+    through it. Otherwise the ``[database] url`` in the per-user config names the
+    server a device talks to, and without that the local ``compose.yaml`` Postgres
+    is used, so a fresh checkout runs against the container."""
+    return os.environ.get("TT_DB") or config.load_database_url() or _DEV_URL
 
 
 def connect(url: str) -> Engine:
-    """Open the database. ``sqlite://`` is the shared in-memory one a test fixture
-    uses: SQLite gives each connection its own ``:memory:``, so a ``StaticPool``
-    holds the single connection that keeps the schema and the rows alive for the
-    life of the engine."""
-    if url == "sqlite://":
-        engine = create_engine(
-            url,
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-        )
-    else:
-        engine = create_engine(url)
-
-    # Pragmas every connection this engine opens must set for itself.
-    #
-    # foreign_keys: a cascade is only enforced on a connection that turned it on.
-    #
-    # busy_timeout: a connection that finds the file locked waits and retries for
-    # up to this long rather than erroring "database is locked" at once (the
-    # default is 0). This is what lets two processes — an agent driving the CLI
-    # while the TUI holds the same tt.db open — coexist.
-    #
-    # journal_mode=WAL: readers and a writer proceed without blocking each other,
-    # for file databases only. It is meaningless for the single-connection
-    # in-memory database a test holds open, which is never contended.
-    file_backed = url != "sqlite://"
-
-    @event.listens_for(engine, "connect")
-    def _configure_connection(dbapi_connection: object, _record: object) -> None:
-        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        if file_backed:
-            cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.close()
-
-    return engine
+    """Open the database. Postgres enforces foreign keys and lets readers and a
+    writer proceed without blocking on its own, so there is no per-connection
+    configuration to attach here the way a SQLite file needed."""
+    return create_engine(url)
 
 
 @contextmanager

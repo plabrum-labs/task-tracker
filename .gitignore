@@ -20,3 +20,9 @@ tt.db
 *.db
 *.db-wal
 *.db-shm
+
+# Local SQLite exports/snapshots (real ticket data) — never commit.
+backups/
+
+# Real database secrets — never commit.
+.env.prod

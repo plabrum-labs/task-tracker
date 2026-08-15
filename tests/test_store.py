@@ -1,8 +1,8 @@
-"""The SQL edge, against a real in-memory SQLite database.
+"""The SQL edge, against a real Postgres database.
 
 No mocks and no seam invented for one: ``create_all`` builds the same schema the
-migration does and every query below goes to sqlite. One ``connect`` is one
-database held open by a ``StaticPool``, so the tests cannot see each other's rows.
+migration does and every query below runs against Postgres. Each test starts from
+truncated tables, so it cannot see another test's rows.
 
 The soft-delete cases are the point. Liveness is derived rather than stored, so
 what has to be shown is that one row written on the way out is one row cleared on

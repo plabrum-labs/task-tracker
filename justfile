@@ -17,7 +17,8 @@ install-skill:
     mkdir -p ~/.claude/skills
     ln -sfn "{{ justfile_directory() }}/.claude/skills/tt" ~/.claude/skills/tt
 
-# The domain, the wire, the frontends, and the SQL edge against real SQLite.
+# The domain, the wire, the frontends, and the SQL edge against real Postgres.
+# Needs the local database up (`just db-up`).
 test:
     uv run pytest
 
@@ -37,12 +38,31 @@ cli *args:
 tui:
     uv run tt
 
+# Bring the local development/test Postgres up (the compose.yaml container on an
+# esoteric port) and wait for it to accept connections.
+db-up:
+    docker compose up -d --wait
+
+# Stop the local Postgres. Its named volume survives, so the data is kept.
+db-down:
+    docker compose down
+
+# Stand up (or update) the real Postgres on the always-on host over SSH. Reads the
+# password and bind address from `.env.prod` (gitignored; see `.env.prod.example`),
+# ships them beside `compose.prod.yaml`, and brings the container up. The named
+# volume there outlives the container, so a re-run never loses data.
+db-prod-up host="walter":
+    ssh {{ host }} 'mkdir -p ~/tt-postgres'
+    scp compose.prod.yaml {{ host }}:~/tt-postgres/compose.yaml
+    scp .env.prod {{ host }}:~/tt-postgres/.env
+    ssh {{ host }} 'cd ~/tt-postgres && docker compose up -d --wait'
+
 # Author a migration from a change to the models (autogenerate against the
-# default database, so upgrade it to head first).
+# local database, so upgrade it to head first).
 db-revision message:
     uv run alembic revision --autogenerate -m "{{ message }}"
 
-# Bring the default database up to the latest schema.
+# Bring the local database up to the latest schema.
 db-upgrade:
     uv run alembic upgrade head
 
@@ -57,18 +77,3 @@ lint:
 
 # Lints, and tests. Mirrors the root justfile's verify.
 verify: lint test
-
-# Hand the database off to/from the mirrors in ~/.config/tt/config.toml over the
-# tailnet, one implementation in `tt sync` so the host lives in config, not here.
-# A handoff for a tracker used one machine at a time: `tt sync` guards against a
-# live writer and refuses to overwrite newer work. See `tt sync status`, and
-# `tt sync install` to run `pull` on a schedule.
-#
-#     just push          # send local -> the mirrors
-#     just pull          # fetch the newest mirror -> local
-#     just push force    # override the newer-on-a-mirror guard
-push force="":
-    uv run tt sync push {{ if force != "" { "--force" } else { "" } }}
-
-pull:
-    uv run tt sync pull

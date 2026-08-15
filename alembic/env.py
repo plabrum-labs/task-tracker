@@ -3,10 +3,6 @@
 ``target_metadata`` is the one ``BaseDBModel.metadata`` every table maps on, so a
 ``--autogenerate`` diff sees the whole schema. Importing ``tt.schema`` is what
 pulls the domain models in and registers their tables before the diff runs.
-
-``render_as_batch`` is on because SQLite cannot ``ALTER`` a column in place — batch
-mode rewrites the table instead, which is what a later migration against this file
-will need.
 """
 
 from typing import Any
@@ -43,7 +39,6 @@ def run_migrations_offline() -> None:
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        render_as_batch=True,
         render_item=render_item,
         dialect_opts={"paramstyle": "named"},
     )
@@ -61,7 +56,6 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            render_as_batch=True,
             render_item=render_item,
         )
         with context.begin_transaction():

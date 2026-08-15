@@ -28,8 +28,12 @@ from tt.platform.enums import TextEnum
 class Project(IssueContainer, BaseDBModel):
     __tablename__ = "projects"
     __table_args__ = (
-        Index("projects_slug_live", "slug", unique=True, sqlite_where=text("deleted_at IS NULL")),
-        Index("projects_path_live", "path", unique=True, sqlite_where=text("deleted_at IS NULL")),
+        Index(
+            "projects_slug_live", "slug", unique=True, postgresql_where=text("deleted_at IS NULL")
+        ),
+        Index(
+            "projects_path_live", "path", unique=True, postgresql_where=text("deleted_at IS NULL")
+        ),
     )
 
     slug: Mapped[str] = mapped_column(Text)

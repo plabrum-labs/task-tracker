@@ -1,0 +1,28 @@
+# The real tracker database, run on an always-on host (walter) and reached over
+# Tailscale. Bound to the host's Tailscale address only (TT_PG_BIND), so it is
+# never exposed on the LAN or the public internet. The password comes from a
+# `.env` beside this file (see `.env.prod.example`); the data lives in a named
+# volume that outlives the container and survives `db-prod-up` re-runs.
+services:
+  db:
+    image: postgres:17
+    container_name: tt-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tt
+      POSTGRES_PASSWORD: ${TT_PG_PASSWORD:?set TT_PG_PASSWORD in .env}
+      POSTGRES_DB: tt
+    ports:
+      # host_ip:host_port:container_port — an esoteric host port because the host
+      # is shared and 5432 is taken by another service.
+      - "${TT_PG_BIND:?set TT_PG_BIND in .env}:${TT_PG_PORT:-54329}:5432"
+    volumes:
+      - tt-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tt -d tt"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  tt-pgdata:

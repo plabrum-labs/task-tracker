@@ -1,6 +1,6 @@
 # tt
 
-Personal task tracker. Python CLI + TUI over SQLite, backed by SQLAlchemy.
+Personal task tracker. Python CLI + TUI over Postgres, backed by SQLAlchemy.
 
 ## Commands
 
@@ -15,9 +15,11 @@ Enabling or disabling a linter is a stop-and-ask, and every suppression is
 justified in a comment (see the Stop and ask list).
 
 The environment is managed by `uv` from `uv.lock`. Run `just sync` to install
-it. Everything the build needs is a dev dependency in `pyproject.toml` and
-resolves from the lockfile — Alembic is the only tool that touches a real
-on-disk database, and only the `db-*` recipes invoke it.
+it, then `just db-up` to start the local Postgres — a Docker container (on an
+esoteric port) that the tests, the app, and the `db-*` recipes all talk to. The
+real tracker runs against a Postgres on an always-on host, reached over Tailscale
+(`just db-prod-up`); the connection URL lives in the `[database]` table of the
+per-user config, with `TT_DB` overriding it.
 
 ## Verify
 
@@ -74,7 +76,7 @@ comment.
 
 ## Architecture
 
-Dependency flow: `frontend` (`cli`/`tui`) / `tt.api` → domain `api` → `platform` → SQLAlchemy → SQLite.
+Dependency flow: `frontend` (`cli`/`tui`) / `tt.api` → domain `api` → `platform` → SQLAlchemy → Postgres.
 
 - `tt/domains/{issue,project}/` — each domain is `models` (the mapped
   table), `enums`, `schemas` (the wire shapes), `queries` (the reads that name
@@ -120,12 +122,13 @@ extracting a function or splitting a module, that refactor is part of the task.
 
 ## Testing
 
-The domain and action layers are what's worth testing, against a real in-memory
-SQLite engine from `tests/conftest.py` (`connect("sqlite://")` held open by a
-`StaticPool`, schema built with `create_all`). No mocks, and no interfaces
-invented for test seams — add an abstraction when a second implementation
-appears, not before. Fixtures seed rows through the create actions — the same
-path a frontend takes — so what a test reads back is persisted, not hand-built.
+The domain and action layers are what's worth testing, against a real Postgres
+engine from `tests/conftest.py` (the `compose.yaml` container, schema built once
+with `create_all` on a dedicated `tt_test` database, each test starting from
+truncated tables with identities reset). No mocks, and no interfaces invented for
+test seams — add an abstraction when a second implementation appears, not before.
+Fixtures seed rows through the create actions — the same path a frontend takes —
+so what a test reads back is persisted, not hand-built.
 
 - Table-driven where it fits, one case per invariant. Deterministic and
   order-independent.

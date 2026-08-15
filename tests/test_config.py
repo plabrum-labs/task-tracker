@@ -12,14 +12,12 @@ from pathlib import Path
 import pytest
 
 from tt.platform.config import (
-    Mirror,
     Prefs,
     SavedFilter,
     SavedView,
-    SyncConfig,
     ThemeName,
     load,
-    load_sync,
+    load_database_url,
     save,
     save_layout,
     save_theme,
@@ -155,78 +153,30 @@ def test_views_that_are_not_tables_load_as_none(config_file: Path) -> None:
 
 
 def test_save_preserves_a_table_it_does_not_own(config_file: Path) -> None:
-    # [sync] is hand-edited and not this module's to write, so persisting a
-    # preference must leave it — and its nested array of tables — untouched.
-    config_file.write_text('[sync]\ninterval = "15m"\n\n[[sync.mirror]]\nhost = "walter"\n')
+    # [database] is hand-edited and not this module's to write, so persisting a
+    # preference must leave it untouched.
+    config_file.write_text('[database]\nurl = "postgresql+psycopg://x@h/db"\n')
     save_theme(ThemeName.LIGHT)
     with config_file.open("rb") as handle:
         raw = tomllib.load(handle)
-    assert raw["sync"] == {"interval": "15m", "mirror": [{"host": "walter"}]}
+    assert raw["database"] == {"url": "postgresql+psycopg://x@h/db"}
     assert load().theme == ThemeName.LIGHT
 
 
-# --- the [sync] table -----------------------------------------------------
+# --- the [database] table -------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("written", "expected"),
-    [
-        ('interval = "30s"', 30),
-        ('interval = "15m"', 900),
-        ('interval = "1h"', 3600),
-        ("interval = 45", 45),
-        ('interval = "45"', 45),
-        # Anything unparseable or non-positive falls back to the 900s default.
-        ('interval = "nonsense"', 900),
-        ('interval = "0m"', 900),
-        ("interval = -5", 900),
-        ("interval = true", 900),
-        ("", 900),
-    ],
-)
-def test_interval_parsing(config_file: Path, written: str, expected: int) -> None:
-    config_file.write_text(f"[sync]\n{written}\n")
-    assert load_sync().interval == expected
+def test_a_database_url_comes_back_from_its_table(config_file: Path) -> None:
+    config_file.write_text('[database]\nurl = "postgresql+psycopg://x@h/db"\n')
+    assert load_database_url() == "postgresql+psycopg://x@h/db"
 
 
-def test_a_mirror_defaults_its_path(config_file: Path) -> None:
-    config_file.write_text("[[sync.mirror]]\nhost = 'walter'\n")
-    assert load_sync().mirrors == (Mirror(host="walter", path=".local/share/tt"),)
-
-
-def test_a_mirror_keeps_an_explicit_path(config_file: Path) -> None:
-    config_file.write_text("[[sync.mirror]]\nhost = 'walter'\npath = 'srv/tt'\n")
-    assert load_sync().mirrors == (Mirror(host="walter", path="srv/tt"),)
-
-
-def test_several_mirrors_load_in_order(config_file: Path) -> None:
-    config_file.write_text(
-        "[[sync.mirror]]\nhost = 'walter'\n\n[[sync.mirror]]\nhost = 'houston'\npath = 'tt'\n"
-    )
-    assert load_sync().mirrors == (
-        Mirror(host="walter"),
-        Mirror(host="houston", path="tt"),
-    )
-
-
-def test_a_hostless_mirror_is_dropped(config_file: Path) -> None:
-    # A mirror with nothing to rsync to is unusable; it goes the way a nameless view
-    # does, without taking the readable mirror with it.
-    config_file.write_text("[[sync.mirror]]\npath = 'orphan'\n\n[[sync.mirror]]\nhost = 'walter'\n")
-    assert load_sync().mirrors == (Mirror(host="walter"),)
-
-
-def test_a_missing_sync_table_is_empty_at_the_default_interval(config_file: Path) -> None:
+def test_a_missing_database_table_has_no_url(config_file: Path) -> None:
     config_file.write_text('[ui]\ntheme = "tt-dark"\n')
-    assert load_sync() == SyncConfig(mirrors=(), interval=900)
+    assert load_database_url() is None
 
 
-def test_a_malformed_sync_table_falls_back(config_file: Path) -> None:
-    # sync is not a table and mirror is not an array — both fall back rather than raise.
-    config_file.write_text('sync = "walter"\n')
-    assert load_sync() == SyncConfig()
-
-
-def test_a_missing_file_syncs_at_the_default(config_file: Path) -> None:
-    assert not config_file.exists()
-    assert load_sync() == SyncConfig()
+def test_a_malformed_database_table_has_no_url(config_file: Path) -> None:
+    # database is not a table, so it falls back to no url rather than raising.
+    config_file.write_text('database = "notatable"\n')
+    assert load_database_url() is None

@@ -26,7 +26,7 @@ class Comment(BaseDBModel):
         Index(
             "comments_by_issue",
             "issue_id",
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 

@@ -1,0 +1,26 @@
+# Throwaway local Postgres for development and the test suite.
+#
+# Bound to an esoteric host port (54329) so it never collides with a stock
+# Postgres on 5432 or another project's database. The data lives in a named
+# volume; `just db-down` with `-v` wipes it. This is a convenience container,
+# not the real tracker — that runs on a Postgres administered out of band.
+services:
+  db:
+    image: postgres:17
+    container_name: tt-postgres
+    environment:
+      POSTGRES_USER: tt
+      POSTGRES_PASSWORD: tt
+      POSTGRES_DB: tt
+    ports:
+      - "54329:5432"
+    volumes:
+      - tt-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tt -d tt"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  tt-pgdata:

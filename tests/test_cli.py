@@ -2,21 +2,20 @@
 
 ``cli.app`` is a pure command tree over the registries, so a test can inspect what
 subcommands it grew and invoke any argv against a seeded database through Typer's
-``CliRunner``. An in-memory ``sqlite://`` does not survive across separate
-invocations, so the fixture seeds a temp-file database and every invoke points
-``--db`` at the same path.
+``CliRunner``. Each invocation opens its own engine, so they must share one
+database: the fixture seeds the shared test database and every invoke points
+``--db`` at its url.
 """
 
 import json
 from pathlib import Path
 
 import pytest
+from sqlalchemy import Engine
 from typer.testing import CliRunner
 
-from tt import schema
 from tt.domains.project import api as project_api
 from tt.frontend import cli
-from tt.platform import db
 
 runner = CliRunner()
 
@@ -25,18 +24,13 @@ USAGE = 2
 
 
 @pytest.fixture
-def database(tmp_path: Path) -> str:
-    """A temp-file database with one project and one high-priority issue under it,
-    seeded through the same ``api`` the CLI itself writes through."""
-    url = f"sqlite:///{tmp_path / 'tt.db'}"
-    schema.upgrade(url)
-    engine = db.connect(url)
-    project_api.project_action(engine, "createProject", {"slug": "tt", "title": "task tracker"})
-    project_api.project_action(
-        engine, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt"
-    )
-    engine.dispose()
-    return url
+def database(db: Engine) -> str:
+    """A clean database with one project and one high-priority issue under it, seeded
+    through the same ``api`` the CLI itself writes through. Returns its url so every
+    invoke can point ``--db`` at the one database each invocation reopens."""
+    project_api.project_action(db, "createProject", {"slug": "tt", "title": "task tracker"})
+    project_api.project_action(db, "addIssue", {"title": "ship the mvp", "priority": "high"}, "tt")
+    return db.url.render_as_string(hide_password=False)
 
 
 def invoke(database: str, *args: str):
@@ -495,46 +489,3 @@ def test_issue_ls_filters_by_tag_and_sorts_by_the_chosen_field(database: str) ->
         ).output
     )
     assert [row["title"] for row in ascending] == ["later", "ship the mvp"]
-
-
-# --- sync -----------------------------------------------------------------
-
-
-@pytest.fixture
-def sync_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the sync commands at a tmp config and data home, so a test neither reads
-    the real ``~/.config`` nor the real database directory. Returns the config path a
-    case writes a ``[sync]`` table into."""
-    config = tmp_path / "config.toml"
-    monkeypatch.setenv("TT_CONFIG", str(config))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    return config
-
-
-def test_sync_has_the_expected_subcommands() -> None:
-    assert _names(cli.sync_app) == ["run", "pull", "push", "status", "install", "uninstall"]
-
-
-def test_sync_run_with_no_mirrors_is_a_clean_no_op(sync_env: Path, database: str) -> None:
-    # No [sync] table, so a pull cycle reaches no network and exits zero.
-    result = invoke(database, "sync", "run")
-    assert result.exit_code == 0
-    assert "no mirrors configured" in result.output
-
-
-def test_sync_status_reports_no_mirrors_and_the_default_cadence(
-    sync_env: Path, database: str
-) -> None:
-    result = invoke(database, "sync", "status")
-    assert result.exit_code == 0
-    assert "mirrors: none configured" in result.output
-    # The default interval is 900s, rendered as its coarsest whole unit.
-    assert "every 15m" in result.output
-
-
-def test_sync_status_reads_the_cadence_from_config(sync_env: Path, database: str) -> None:
-    # Cadence comes from [sync] and needs no mirror, so this stays off the network.
-    sync_env.write_text('[sync]\ninterval = "30m"\n')
-    result = invoke(database, "sync", "status")
-    assert result.exit_code == 0
-    assert "every 30m" in result.output

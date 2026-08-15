@@ -4,9 +4,8 @@ Numbers start at 1 and rise by one; each ``(project, type)`` keeps its own count
 so two projects both start at 1 and two type strings in one project do not share a
 run. Only issues draw a number today, but the counter keys on an arbitrary type, so
 the independence case exercises that keying with a second type string directly. The
-counter is exercised against a real in-memory SQLite engine, through the same
-``StaticPool`` connection the domain tests use, so the ``RETURNING`` bump is the
-real SQL edge and not a stand-in.
+counter is exercised against a real Postgres engine, the same one the domain tests
+use, so the ``RETURNING`` bump is the real SQL edge and not a stand-in.
 """
 
 from sqlalchemy import Engine

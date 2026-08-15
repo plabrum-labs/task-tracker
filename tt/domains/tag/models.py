@@ -26,7 +26,7 @@ issue_tags = Table(
 class Tag(BaseDBModel):
     __tablename__ = "tags"
     __table_args__ = (
-        Index("tags_name_live", "name", unique=True, sqlite_where=text("deleted_at IS NULL")),
+        Index("tags_name_live", "name", unique=True, postgresql_where=text("deleted_at IS NULL")),
     )
 
     name: Mapped[str] = mapped_column(Text)

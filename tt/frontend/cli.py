@@ -49,7 +49,7 @@ from tt.domains.project import api as project_api
 from tt.domains.project.schemas import ProjectListItem
 from tt.domains.tag import api as tag_api
 from tt.domains.tag.schemas import TagListItem
-from tt.platform import actions, config, db, sync
+from tt.platform import actions
 from tt.platform.actions import REFUSALS, Enum, Field, Invalid, Offer, Refused, Runnable
 from tt.platform.refs import NamedRef
 
@@ -1115,132 +1115,12 @@ _register_generated(
     _comment_current,
 )
 
-# --- sync -----------------------------------------------------------------
-#
-# Hand-written, not schema-generated: sync is not a domain action against a row,
-# it is a device operation over the mirror config and the scheduler. It reads the
-# [sync] table (config.load_sync) and the data directory (db.data_dir); it never
-# touches ctx.obj's engine, except through pull's own live-writer guard.
-
-sync_app = typer.Typer(help="Mirror sync: keep this device's database fresh.", no_args_is_help=True)
-
-
-def _duration(seconds: float) -> str:
-    """A rough human span — the coarsest whole unit — for a cadence or a freshness
-    delta. Sign is dropped; the caller says newer or older."""
-    magnitude = int(abs(seconds))
-    if magnitude < 60:
-        return f"{magnitude}s"
-    if magnitude < 3600:
-        return f"{magnitude // 60}m"
-    if magnitude < 86400:
-        return f"{magnitude // 3600}h"
-    return f"{magnitude // 86400}d"
-
-
-def _sync_message(result: sync.SyncResult) -> str:
-    """One pull/push outcome as a line, with any unreachable mirrors noted under it.
-    Every action is spelled out so a new one cannot be swept silently past the CLI."""
-    match result.action:
-        case sync.Action.PULLED:
-            head = f"pulled {result.source} -> local"
-        case sync.Action.PUSHED:
-            head = f"pushed local -> {result.source}" if result.source else "no reachable mirror"
-        case sync.Action.CURRENT:
-            head = "already current"
-        case sync.Action.BUSY:
-            head = "skipped: db busy"
-        case sync.Action.NO_MIRRORS:
-            head = "no mirrors configured"
-        case sync.Action.REFUSED:
-            head = f"refusing: {result.detail} has a newer database. Pull first, or push --force."
-    lines = [head]
-    if result.unreachable:
-        lines.append(f"unreachable: {', '.join(result.unreachable)}")
-    return "\n".join(lines)
-
-
-def _freshness(probe: sync.Probe, local_mtime: float) -> str:
-    """A mirror's recency relative to local, for the status table."""
-    if not probe.reachable:
-        return "unreachable"
-    if probe.mtime == 0.0:
-        return "no database"
-    delta = probe.mtime - local_mtime
-    if delta > 0:
-        return f"{_duration(delta)} newer"
-    if delta < 0:
-        return f"{_duration(delta)} older"
-    return "in sync"
-
-
-def _sync_status_text(report: sync.Status) -> str:
-    lines: list[str] = []
-    if report.mirrors:
-        lines.append("mirrors:")
-        lines.extend(
-            f"  {probe.mirror.host} ({probe.mirror.path})  {_freshness(probe, report.local_mtime)}"
-            for probe in report.mirrors
-        )
-    else:
-        lines.append("mirrors: none configured")
-    lines.append(f"cadence: every {_duration(report.interval)}")
-    lines.append(f"schedule: {'installed' if report.installed else 'not installed'}")
-    return "\n".join(lines)
-
-
-@sync_app.command("run", help="Run one pull cycle. This is what the scheduler calls.")
-def _sync_run_command() -> None:
-    typer.echo(_sync_message(sync.pull(config.load_sync(), db.data_dir())))
-
-
-@sync_app.command("pull", help="Pull the newest mirror in, if one is ahead of local.")
-def _sync_pull_command() -> None:
-    typer.echo(_sync_message(sync.pull(config.load_sync(), db.data_dir())))
-
-
-@sync_app.command("push", help="Mirror this device's database out to every reachable mirror.")
-def _sync_push_command(
-    force: Annotated[
-        bool,
-        typer.Option("--force", help="Push even though a mirror holds a newer database."),
-    ] = False,
-) -> None:
-    result = sync.push(config.load_sync(), db.data_dir(), force=force)
-    typer.echo(_sync_message(result))
-    # The newer-on-a-mirror guard is a refusal a human overrides with --force, so it
-    # exits non-zero the way the old recipe did rather than passing silently.
-    if result.action is sync.Action.REFUSED:
-        raise typer.Exit(code=1)
-
-
-@sync_app.command("status", help="Show mirrors, cadence, schedule state, and freshness vs local.")
-def _sync_status_command() -> None:
-    typer.echo(_sync_status_text(sync.status(config.load_sync(), db.data_dir())))
-
-
-@sync_app.command("install", help="Install the pull schedule at the configured cadence.")
-def _sync_install_command() -> None:
-    try:
-        message = sync.install(config.load_sync().interval, sync.tt_executable())
-    except sync.SyncError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=1) from error
-    typer.echo(message)
-
-
-@sync_app.command("uninstall", help="Remove the pull schedule.")
-def _sync_uninstall_command() -> None:
-    typer.echo(sync.uninstall())
-
-
 app.add_typer(project_app, name="project")
 app.add_typer(issue_app, name="issue")
 app.add_typer(epic_app, name="epic")
 app.add_typer(milestone_app, name="milestone")
 app.add_typer(tag_app, name="tag")
 app.add_typer(comment_app, name="comment")
-app.add_typer(sync_app, name="sync")
 
 
 def main() -> None:

@@ -6,8 +6,8 @@ connects to it and nothing more: it never migrates as a side effect of starting,
 so a read path carries no schema-changing DDL. Bringing a database to head is
 ``upgrade``, an explicit backend step (the ``db-upgrade`` recipe, or a deploy),
 run by whoever administers the database. ``create_all`` builds the whole schema
-at once on a throwaway database that has no history to migrate — the in-memory
-one a test fixture opens.
+at once on a throwaway database that has no history to migrate — the disposable
+Postgres schema a test fixture builds.
 
 Discovering the domain models is the point of this module living above them: the
 walk below imports every ``models.py`` under ``tt``, which is what registers each
@@ -57,9 +57,9 @@ def upgrade(url: str) -> None:
 def open_db(override: str | None = None) -> Engine:
     """Resolve the database a frontend should use and connect to it.
 
-    ``override`` is a frontend's explicit ``--db``; without one the shared
-    per-user file (or ``TT_DB``) is used. This does not migrate — a schema change
-    is applied out of band by ``upgrade`` — so opening a database never runs DDL
-    as a side effect of starting."""
+    ``override`` is a frontend's explicit ``--db``; without one the configured
+    server (``TT_DB``, or the local default) is used. This does not migrate — a
+    schema change is applied out of band by ``upgrade`` — so opening a database
+    never runs DDL as a side effect of starting."""
     url = override if override is not None else db.default_url()
     return db.connect(url)

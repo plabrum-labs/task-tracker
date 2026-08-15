@@ -36,7 +36,7 @@ class Epic(IssueContainer, BaseDBModel):
             "epics_by_project",
             "project_id",
             "status",
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
         # An epic is addressed by title within its project, so the title is unique
         # among a project's live epics; a deleted title is free to reuse.
@@ -45,7 +45,7 @@ class Epic(IssueContainer, BaseDBModel):
             "project_id",
             "title",
             unique=True,
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 

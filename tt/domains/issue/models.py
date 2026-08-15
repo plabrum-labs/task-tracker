@@ -57,7 +57,7 @@ class Issue(BaseDBModel):
             "issues_by_project",
             "project_id",
             "status",
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
         # A number is permanent and never reissued — the sequence only rises — so
         # its uniqueness within a project holds over deleted rows too, not just live

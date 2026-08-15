@@ -35,7 +35,7 @@ class Milestone(IssueContainer, BaseDBModel):
         Index(
             "milestones_by_project",
             "project_id",
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
         # A milestone is addressed by title within its project, so the title is unique
         # among a project's live milestones; a deleted title is free to reuse.
@@ -44,7 +44,7 @@ class Milestone(IssueContainer, BaseDBModel):
             "project_id",
             "title",
             unique=True,
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 
